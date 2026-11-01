@@ -50,7 +50,7 @@ Collect everything below that applies, and ask it all in one AskUserQuestion rou
 - **Stale models:** a model the vendor page no longer lists. Offer to drop its row or keep it.
 - **Dev command:** the `dev` script doesn't start the server itself (it calls a custom wrapper such as `node infra/scripts/dev-config.mjs`, or a task runner like `turbo dev`), so you can't tell with confidence how the server takes its port. Say in one sentence which file picks the port, then offer to edit that file so each workspace gets its own port, or to skip for now (every workspace keeps the current port). Never guess.
 - **Template:** the team has issue templates, but not exactly one whose name or description says "implementation". Which one do agents use to write implementation issues? Offer each template by name, plus "None" (agents write them without a Linear template).
-- **Scripts:** `AGENTS.md` has a `## Scripts` section whose text differs from the Scripts row's rule. Offer to replace the section's text with the rule (recommended) or keep it.
+- **Scripts:** `AGENTS.md` has a `## Scripts` section whose text differs from the Scripts row's rule, with its Linear mentions written as links. Offer to replace the section's text with the rule (recommended) or keep it.
 - **Drift:** on a re-run, a value in the doc that Linear contradicts (a renamed status, a deleted view). Offer to update the doc line or keep it.
 
 Labels Linear has that the template doesn't use (like a `Release` label) are fine: say nothing about them.
@@ -66,7 +66,7 @@ If the user skips a question that fills a slot, write `TODO:` and the question i
    The workspace values the skills read are in [`docs/issue-tracker.md`](docs/issue-tracker.md).
    ```
 
-3. **Scripts:** if the Tool Stack has a Scripts row and `AGENTS.md` has no `## Scripts` section, append one: the heading, then the row's rule verbatim as its only paragraph. If the user picked replace in step 3, swap the section's text for the rule. No Tool Stack or no Scripts row: skip this, and say nothing about it.
+3. **Scripts:** if the Tool Stack has a Scripts row and `AGENTS.md` has no `## Scripts` section, append one: the heading, then the row's rule verbatim as its only paragraph, writing each Linear mention as a plain Markdown link (`[name](url)`). If the user picked replace in step 3, swap the section's text for the rule. No Tool Stack or no Scripts row: skip this, and say nothing about it.
 4. **Linear:** make the changes the user picked in step 3, and nothing else.
 
 Don't commit yet; [Finish](#7-finish) offers that.
