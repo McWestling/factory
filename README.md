@@ -43,13 +43,13 @@ People who plan their work in Linear and want coding agents to do more of the bu
 
 `do-` is the factory's verb prefix: each skill is something the factory does.
 
-| Skill              | What it does                                                             |
-| ------------------ | ------------------------------------------------------------------------ |
-| `do-post-its`      | Turns photos of Post-its, or dictated notes, into Triage issues          |
-| `do-triage`        | Works the Triage queue with you and routes each item                     |
-| `do-refine`        | Charts maps, resolves decision tickets, and slices implementation issues |
-| `do-implement`     | Takes one implementation issue to a verified draft PR                    |
-| `do-factory-setup` | Writes a repo's tracker doc and scripts rule, and installs dev ports     |
+| Skill              | What it does                                                                        |
+| ------------------ | ----------------------------------------------------------------------------------- |
+| `do-post-its`      | Turns photos of Post-its, or dictated notes, into Triage issues                     |
+| `do-triage`        | Works the Triage queue with you and routes each item                                |
+| `do-refine`        | Charts maps, resolves decision tickets, and slices implementation issues            |
+| `do-implement`     | Takes one implementation issue to a verified draft PR                               |
+| `do-factory-setup` | Writes a repo's tracker doc and scripts rule, runs setup blocks, installs dev ports |
 
 ## Install
 
@@ -68,6 +68,8 @@ To adopt Factory, [install the skills](#install), then run this in your coding a
 ```
 
 It writes `docs/issue-tracker.md`, the file the other skills read your workspace values from, and points `AGENTS.md` at it. It copies the scripts-language rule from your Tool Stack document, if it has one, into `AGENTS.md`. In a repo with a dev server, it installs the [dev-port convention](tools/orca/README.md) so parallel workspaces don't fight over ports. If your README's plain-language intro is missing any parts, it drafts them for you to approve.
+
+Setup can also set the repo up with the services your Tool Stack lists. Write an **Adding a repo** block on a service's own Linear page, linked from your Tool Stack document: a `toml` code block under a `## Adding a repo` heading that says when the service applies, how to tell it's done, and the commands to run. Setup asks before running each one. Start from [the example block](skills/do-factory-setup/adding-a-repo.example.toml). The hook, its runner and the block format are generic and live here; the blocks are yours, on your own Tool Stack pages. McWestling keeps its own blocks privately in its Linear workspace, so this repo has none to copy.
 
 To set it up by hand instead, copy [McWestling's `docs/issue-tracker.md`](docs/issue-tracker.md) and replace the values.
 

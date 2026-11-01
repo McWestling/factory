@@ -1,0 +1,34 @@
+# An "Adding a repo" block, for a made-up service called Example Vault.
+#
+# Put a block like this on a service's own page, a Linear document linked
+# directly from your Tool Stack document: the first ```toml code block under
+# a heading that reads exactly "## Adding a repo". do-factory-setup finds it,
+# asks before running it, and runs it with adopt.py beside this file.
+#
+# Commands run through the shell from the repo root, with two variables added:
+#   REPO         owner/name, from the origin remote ("acme/my-app")
+#   REPO_PREFIX  the repo name upper-cased, non-alphanumerics as _ ("MY_APP")
+# Their output is never shown, so they must not need answers on the terminal.
+# Setup never installs your tools or fetches credentials: the maintainer's
+# machine must already have both.
+
+# Optional. Without it, the block applies to every repo. With it, the block
+# applies only when a file matching glob exists (and, if given, contains the
+# text in contains).
+[applies]
+glob = ".env.*"
+contains = "EXAMPLE_VAULT"
+
+# Optional. A command that exits 0 when the repo is already set up; setup
+# then skips the block. Setup runs it before asking, so it must only read.
+done = 'example-vault project show "$REPO_PREFIX"'
+
+# Steps run in order and stop at the first failure.
+[[step]]
+name = "Register the repo"
+run = 'example-vault project create "$REPO_PREFIX" --repo "$REPO"'
+
+# A maintainer step is never run: setup lists it for a person to do.
+[[step]]
+name = "Create the CI token"
+maintainer = "Create an Example Vault token for the project and store it as the repo's EXAMPLE_VAULT_TOKEN CI secret"
