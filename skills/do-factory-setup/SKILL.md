@@ -1,6 +1,6 @@
 ---
 name: do-factory-setup
-description: Set up a repo for the factory skills. Writes the repo's values-only tracker doc (`docs/issue-tracker.md`) from Linear and a fixed template, asking only what neither settles. It points AGENTS.md at it, fills in any missing parts of the README's non-developer intro, and installs the dev-port convention in a repo with a dev server. Re-running fills gaps only. It ends by offering a draft PR of what it wrote.
+description: Set up a repo for the factory skills. Writes the repo's values-only tracker doc (`docs/issue-tracker.md`) from Linear and a fixed template, asking only what neither settles. It points AGENTS.md at it, copies the Tool Stack's scripts-language rule into AGENTS.md, fills in any missing parts of the README's non-developer intro, and installs the dev-port convention in a repo with a dev server. Re-running fills gaps only. It ends by offering a draft PR of what it wrote.
 disable-model-invocation: true
 ---
 
@@ -18,7 +18,7 @@ Use the Linear MCP server for every read (in an Orca workspace, `orca linear` al
 
 1. **Tracker doc path:** if `AGENTS.md` names a tracker doc, use that path. Otherwise use `docs/issue-tracker.md`.
 2. **Existing doc:** if it exists, read it. Every value already in it is settled: you never overwrite it, only fill gaps. A **gap** is a template heading that is missing or empty, or a line starting `TODO:`.
-3. **AGENTS.md:** note whether it links the tracker doc.
+3. **AGENTS.md:** note whether it links the tracker doc, and whether it has a `## Scripts` section.
 4. **README:** read `README.md`, if any, and note which parts of the intro it has, using [step 5](#5-readme-intro)'s check.
 5. **Dev server:** read the `dev` script in the root `package.json` (the workspace root's, in a monorepo), `scripts/dev-port`, and `orca.yaml`. No `package.json` or no `dev` script means no dev server: skip [Dev ports](#6-dev-ports).
 6. **Working tree:** note the current branch and which files `git status` already shows as changed, so [Finish](#7-finish) can tell setup's changes from the user's.
@@ -34,7 +34,7 @@ Read in parallel:
 - **Initiatives:** `list_initiatives`, with each description's first line.
 - **Views:** `list_custom_views`.
 - **Templates:** `list_templates` for the team, type `issue`.
-- **Tool stack:** `list_documents` with query `Tool Stack`.
+- **Tool stack:** `list_documents` with query `Tool Stack`, then `get_document` on the one titled exactly `Tool Stack`. Its **Scripts row** is the table row whose first cell is `Scripts`; its rule is that row's second cell.
 - **Models:** fetch each page under the template's Sources, following redirects, and check every model in the template's table is still listed.
 
 ## 3. Ask, once
@@ -50,6 +50,7 @@ Collect everything below that applies, and ask it all in one AskUserQuestion rou
 - **Stale models:** a model the vendor page no longer lists. Offer to drop its row or keep it.
 - **Dev command:** the `dev` script doesn't start the server itself (it calls a custom wrapper such as `node infra/scripts/dev-config.mjs`, or a task runner like `turbo dev`), so you can't tell with confidence how the server takes its port. Say in one sentence which file picks the port, then offer to edit that file so each workspace gets its own port, or to skip for now (every workspace keeps the current port). Never guess.
 - **Template:** the team has issue templates, but not exactly one whose name or description says "implementation". Which one do agents use to write implementation issues? Offer each template by name, plus "None" (agents write them without a Linear template).
+- **Scripts:** `AGENTS.md` has a `## Scripts` section whose text differs from the Scripts row's rule, with its Linear mentions written as links. Offer to replace the section's text with the rule (recommended) or keep it.
 - **Drift:** on a re-run, a value in the doc that Linear contradicts (a renamed status, a deleted view). Offer to update the doc line or keep it.
 
 Labels Linear has that the template doesn't use (like a `Release` label) are fine: say nothing about them.
@@ -65,7 +66,8 @@ If the user skips a question that fills a slot, write `TODO:` and the question i
    The workspace values the skills read are in [`docs/issue-tracker.md`](docs/issue-tracker.md).
    ```
 
-3. **Linear:** make the changes the user picked in step 3, and nothing else.
+3. **Scripts:** if the Tool Stack has a Scripts row and `AGENTS.md` has no `## Scripts` section, append one: the heading, then the row's rule verbatim as its only paragraph, writing each Linear mention as a plain Markdown link (`[name](url)`). If the user picked replace in step 3, swap the section's text for the rule. No Tool Stack or no Scripts row: skip this, and say nothing about it.
+4. **Linear:** make the changes the user picked in step 3, and nothing else.
 
 Don't commit yet; [Finish](#7-finish) offers that.
 

@@ -10,6 +10,10 @@ The workspace values the skills read are in [`docs/issue-tracker.md`](docs/issue
 
 The tool stack and its defaults live in Linear. [`docs/issue-tracker.md`](docs/issue-tracker.md#tool-stack) links the document.
 
+## Scripts
+
+Write scripts in TypeScript by default, run directly with Node (no build step). Use Python 3 with only the standard library for tools that ship into repos regardless of their stack, like [Factory Verify](https://linear.app/mcwestling/project/factory-verify-00114d9892fe/overview), or when Python's standard library makes the script much simpler, like parsing TOML. Don't add Ruby, or shell scripts longer than a few lines.
+
 ## Where things go
 
 The repo is organised by kind of thing. Add a folder only when its first file lands; never commit empty folders.

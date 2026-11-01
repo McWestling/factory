@@ -49,7 +49,7 @@ People who plan their work in Linear and want coding agents to do more of the bu
 | `do-triage`        | Works the Triage queue with you and routes each item                     |
 | `do-refine`        | Charts maps, resolves decision tickets, and slices implementation issues |
 | `do-implement`     | Takes one implementation issue to a verified draft PR                    |
-| `do-factory-setup` | Writes a repo's tracker doc from Linear and installs dev ports           |
+| `do-factory-setup` | Writes a repo's tracker doc and scripts rule, and installs dev ports     |
 
 ## Install
 
@@ -67,7 +67,7 @@ To adopt Factory, [install the skills](#install), then run this in your coding a
 /do-factory-setup
 ```
 
-It writes `docs/issue-tracker.md`, the file the other skills read your workspace values from, and points `AGENTS.md` at it. In a repo with a dev server, it installs the [dev-port convention](tools/orca/README.md) so parallel workspaces don't fight over ports. If your README's plain-language intro is missing any parts, it drafts them for you to approve.
+It writes `docs/issue-tracker.md`, the file the other skills read your workspace values from, and points `AGENTS.md` at it. It copies the scripts-language rule from your Tool Stack document, if it has one, into `AGENTS.md`. In a repo with a dev server, it installs the [dev-port convention](tools/orca/README.md) so parallel workspaces don't fight over ports. If your README's plain-language intro is missing any parts, it drafts them for you to approve.
 
 To set it up by hand instead, copy [McWestling's `docs/issue-tracker.md`](docs/issue-tracker.md) and replace the values.
 
