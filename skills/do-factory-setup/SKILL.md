@@ -1,6 +1,6 @@
 ---
 name: do-factory-setup
-description: Set up a repo for the factory skills. Writes the repo's values-only tracker doc (`docs/issue-tracker.md`) from Linear and a fixed template, asking only what neither settles. It points AGENTS.md at it, copies the Tool Stack's scripts-language rule into AGENTS.md, fills in any missing parts of the README's non-developer intro, and installs the dev-port convention in a repo with a dev server. Re-running fills gaps only. It ends by offering a draft PR of what it wrote.
+description: Set up a repo for the factory skills. Writes the repo's values-only tracker doc (`docs/issue-tracker.md`) from Linear and a fixed template, asking only what neither settles. It points AGENTS.md at it, copies the Tool Stack's scripts-language rule into AGENTS.md, offers to run the Adding a repo blocks on the Tool Stack's service pages, fills in any missing parts of the README's non-developer intro, and installs the dev-port convention in a repo with a dev server. Re-running fills gaps only. It ends by offering a draft PR of what it wrote.
 disable-model-invocation: true
 ---
 
@@ -19,9 +19,9 @@ Use the Linear MCP server for every read (in an Orca workspace, `orca linear` al
 1. **Tracker doc path:** if `AGENTS.md` names a tracker doc, use that path. Otherwise use `docs/issue-tracker.md`.
 2. **Existing doc:** if it exists, read it. Every value already in it is settled: you never overwrite it, only fill gaps. A **gap** is a template heading that is missing or empty, or a line starting `TODO:`.
 3. **AGENTS.md:** note whether it links the tracker doc, and whether it has a `## Scripts` section.
-4. **README:** read `README.md`, if any, and note which parts of the intro it has, using [step 5](#5-readme-intro)'s check.
-5. **Dev server:** read the `dev` script in the root `package.json` (the workspace root's, in a monorepo), `scripts/dev-port`, and `orca.yaml`. No `package.json` or no `dev` script means no dev server: skip [Dev ports](#6-dev-ports).
-6. **Working tree:** note the current branch and which files `git status` already shows as changed, so [Finish](#7-finish) can tell setup's changes from the user's.
+4. **README:** read `README.md`, if any, and note which parts of the intro it has, using [step 6](#6-readme-intro)'s check.
+5. **Dev server:** read the `dev` script in the root `package.json` (the workspace root's, in a monorepo), `scripts/dev-port`, and `orca.yaml`. No `package.json` or no `dev` script means no dev server: skip [Dev ports](#7-dev-ports).
+6. **Working tree:** note the current branch and which files `git status` already shows as changed, so [Finish](#8-finish) can tell setup's changes from the user's.
 7. **Setup version:** the doc's `**Setup version:**` line records which version of this template wrote it; this skill's version is the one in its template. The same version means fill gaps only. A doc with no such line predates versioning: treat it as `2026-10-25` and add the line as a gap. A doc with a newer version than the skill means the skill is out of date: stop and tell the user to update the factory skills.
 
 ## 2. Read Linear
@@ -35,6 +35,7 @@ Read in parallel:
 - **Views:** `list_custom_views`.
 - **Templates:** `list_templates` for the team, type `issue`.
 - **Tool stack:** `list_documents` with query `Tool Stack`, then `get_document` on the one titled exactly `Tool Stack`. Its **Scripts row** is the table row whose first cell is `Scripts`; its rule is that row's second cell.
+- **Adding a repo blocks:** `get_document` on each Linear document the Tool Stack links to, one hop only (never follow links from those pages). A page's **block** is the first ```` ```toml ```` code block under a heading that reads exactly `## Adding a repo`. Most pages have none; skip them silently.
 - **Models:** fetch each page under the template's Sources, following redirects, and check every model in the template's table is still listed.
 
 ## 3. Ask, once
@@ -51,6 +52,7 @@ Collect everything below that applies, and ask it all in one AskUserQuestion rou
 - **Dev command:** the `dev` script doesn't start the server itself (it calls a custom wrapper such as `node infra/scripts/dev-config.mjs`, or a task runner like `turbo dev`), so you can't tell with confidence how the server takes its port. Say in one sentence which file picks the port, then offer to edit that file so each workspace gets its own port, or to skip for now (every workspace keeps the current port). Never guess.
 - **Template:** the team has issue templates, but not exactly one whose name or description says "implementation". Which one do agents use to write implementation issues? Offer each template by name, plus "None" (agents write them without a Linear template).
 - **Scripts:** `AGENTS.md` has a `## Scripts` section whose text differs from the Scripts row's rule, with its Linear mentions written as links. Offer to replace the section's text with the rule (recommended) or keep it.
+- **Adding a repo:** pipe each block to `python3 adopt.py check` (the `adopt.py` beside this file), from the repo root. For each page whose check prints `applies: yes` and `done: no`, ask: **Run** (recommended) or **Skip for now**, naming the page, with the check's `run:` and `maintainer:` lines verbatim in the option's preview. Ask nothing for a page that doesn't apply or is already done. Without Python 3.11+, skip the blocks and name their pages in [Finish](#8-finish).
 - **Drift:** on a re-run, a value in the doc that Linear contradicts (a renamed status, a deleted view). Offer to update the doc line or keep it.
 
 Labels Linear has that the template doesn't use (like a `Release` label) are fine: say nothing about them.
@@ -69,9 +71,17 @@ If the user skips a question that fills a slot, write `TODO:` and the question i
 3. **Scripts:** if the Tool Stack has a Scripts row and `AGENTS.md` has no `## Scripts` section, append one: the heading, then the row's rule verbatim as its only paragraph, writing each Linear mention as a plain Markdown link (`[name](url)`). If the user picked replace in step 3, swap the section's text for the rule. No Tool Stack or no Scripts row: skip this, and say nothing about it.
 4. **Linear:** make the changes the user picked in step 3, and nothing else.
 
-Don't commit yet; [Finish](#7-finish) offers that.
+Don't commit yet; [Finish](#8-finish) offers that.
 
-## 5. README intro
+## 5. Adding a repo
+
+Skip this step if no page has a block or the user picked Run for none. Otherwise, for each page they picked, in Tool Stack order, pipe its block to `python3 adopt.py run` from the repo root. It runs the steps in order, stops at the first failure, and prints only `ok:` and `failed:` lines (never the commands' output) and the `maintainer:` steps it didn't run. Keep those lines for [Finish](#8-finish).
+
+A failed page doesn't stop setup: carry on with the next page and the steps below. Never retry, fix or work around a failed step, install a tool a step needs, or fetch a credential for it; the maintainer does that.
+
+The hook is generic: this step, `adopt.py` and the block format in [`adding-a-repo.example.toml`](adding-a-repo.example.toml). The blocks are each workspace's own, written on its own Tool Stack pages in Linear; this repo holds none.
+
+## 6. README intro
 
 The README opens with an intro for non-developers. It has a loose, fixed shape, plain headings and no machine markers:
 
@@ -93,7 +103,7 @@ Draft it from the repo itself (code, existing docs, the product's initiative des
 
 **Public safety:** say what it does and who it's for. Never include secrets, internal URLs, workspace or machine ids, personal data, or client details, unless the client is already public about it.
 
-## 6. Dev ports
+## 7. Dev ports
 
 Skip this step if step 1 found no dev server. Otherwise do each part that isn't already in place. Never touch the per-machine registry; the script manages it.
 
@@ -115,9 +125,9 @@ Skip this step if step 1 found no dev server. Otherwise do each part that isn't 
 
    Use `vite --port "$PORT"` for Vite, and no flag for a server that reads `PORT` itself. Keep the rest of the command as it was. If the [questions](#3-ask-once) covered the dev command and the user said edit, change that file to take its port from `PORT` and start the `dev` script with the `PORT=…` prefix above. If they skipped, leave it.
 
-## 7. Finish
+## 8. Finish
 
-Say "Looks good, we're set up!". Add a few words if dev ports were skipped for having no dev server, or if you replaced a `scripts/dev-port` that had drifted. If you wrote nothing, stop there.
+Say "Looks good, we're set up!". Add a few words if dev ports were skipped for having no dev server, or if you replaced a `scripts/dev-port` that had drifted. If an Adding a repo block ran, failed or was skipped for want of Python, add one line naming the maintainer steps left to do and any page that failed, with its failed step and exit code. If you wrote nothing, stop there.
 
 If you wrote files, name them in one line, then ask once (AskUserQuestion): **Open a draft PR** (recommended) or **Leave the changes for me**. Leaving them ends the run with the working tree as it is, for the user to review with `git diff`.
 

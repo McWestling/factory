@@ -15,3 +15,9 @@ _Avoid_: step, job, gate
 **Trigger paths**:
 The globs, relative to the repo root, whose change selects a check. They may point into any app in the repo.
 _Avoid_: path filters, watch paths
+
+## Setup
+
+**Adding a repo block**:
+The first `toml` code block under an exact `## Adding a repo` heading on a service page linked from a workspace's Tool Stack document. It lists the commands and maintainer steps that set a repo up for that service; `do-factory-setup` runs it through `adopt.py`. Format: `skills/do-factory-setup/adding-a-repo.example.toml`.
+_Avoid_: setup script, onboarding steps
