@@ -3,6 +3,7 @@
 Uses a temporary git repo with a fake origin remote."""
 
 import atexit
+import os
 import shutil
 import subprocess
 import sys
@@ -70,5 +71,29 @@ print("ok: failure stops the run, maintainer steps listed, output hidden")
 code, out = adopt("run", '[[step]]\nname = "Both"\nrun = "true"\nmaintainer = "x"\n')
 assert code != 0 and "exactly one" in out, out
 print("ok: bad step rejected")
+
+# The shipped example, against a fake service whose project already exists.
+bin_dir = Path(tmp) / "bin"
+bin_dir.mkdir()
+fake = bin_dir / "example-vault"
+fake.write_text('#!/bin/sh\n[ "$2" = create ] && touch "$PWD/registered"\nexit 0\n')
+fake.chmod(0o755)
+(repo / ".env.dev").write_text("EXAMPLE_VAULT=1\n")
+example = (script.parent / "adding-a-repo.example.toml").read_text()
+env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+
+
+def adopt_example(mode):
+    r = subprocess.run([sys.executable, str(script), mode], input=example,
+                       capture_output=True, text=True, cwd=repo, env=env)
+    return r.returncode, r.stdout + r.stderr
+
+
+_, out = adopt_example("check")
+assert out == "applies: yes\ndone: yes\n", out
+code, out = adopt_example("run")
+assert code == 0 and out == "done: yes\n", out
+assert not (repo / "registered").exists(), "a done example should skip registration"
+print("ok: shipped example's done check is top-level")
 
 print("all adopt checks passed")

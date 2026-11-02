@@ -12,16 +12,17 @@
 # Setup never installs your tools or fetches credentials: the maintainer's
 # machine must already have both.
 
+# Optional. A command that exits 0 when the repo is already set up; setup
+# then skips the block. Setup runs it before asking, so it must only read.
+# Keep it above [applies]: TOML puts any key below a table header inside it.
+done = 'example-vault project show "$REPO_PREFIX"'
+
 # Optional. Without it, the block applies to every repo. With it, the block
 # applies only when a file matching glob exists (and, if given, contains the
 # text in contains).
 [applies]
 glob = ".env.*"
 contains = "EXAMPLE_VAULT"
-
-# Optional. A command that exits 0 when the repo is already set up; setup
-# then skips the block. Setup runs it before asking, so it must only read.
-done = 'example-vault project show "$REPO_PREFIX"'
 
 # Steps run in order and stop at the first failure.
 [[step]]
