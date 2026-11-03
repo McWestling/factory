@@ -6,10 +6,10 @@ export type DispatchConfig = {
 };
 
 function readModel(description: string): string | undefined {
-  const opening = /^ {0,3}(`{3,}|~{3,})dispatch\b[^\n]*$/m.exec(description);
+  const opening = /^ {0,3}(`{3,}|~{3,})[ \t]*dispatch\b[^\n]*$/m.exec(description);
   if (opening) {
     const fence = opening[1];
-    if (opening[0].trim() !== `${fence}dispatch`) return;
+    if (opening[0].trim().slice(fence.length).trim() !== 'dispatch') return;
     const rest = description.slice(opening.index + opening[0].length);
     const closing = new RegExp(`^ {0,3}${fence[0]}{${fence.length},}[ \\t]*$`, 'm').exec(rest);
     if (!closing) return;

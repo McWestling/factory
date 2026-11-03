@@ -101,3 +101,9 @@ test('refuses an invalid dispatch fence instead of using the legacy line', () =>
     expected: 'a dispatch block with one nonempty model field or a legacy Suggested dispatch line with target and model code spans',
   });
 });
+
+test('prefers a dispatch fence with whitespace before its language over the legacy line', () => {
+  assert.deepEqual(parseIssue(`${block.replace('```dispatch', '``` \tdispatch')}\n${legacy}\n${repo}`), {
+    repo: 'example/project', model: 'Example Model',
+  });
+});
