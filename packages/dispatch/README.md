@@ -27,3 +27,23 @@ from the required `[repo=owner/name]` tag, including Linear's escaped form.
 Without config, the parser checks syntax only. The daemon must pass its config
 to enforce the exact model name in `models` (a name-to-settings map) and repo
 membership in `repos` (an allowlist). `target` and `reason` do not affect dispatch.
+
+## Relay
+
+`relay/worker.ts` is the Cloudflare Worker, configured in `wrangler.toml`. It holds
+one SQLite-backed Durable Object per machine, addressed only by the machine's name.
+It refuses every request until three secrets are set (`.dev.vars.example` shows
+their shape): `LINEAR_ORG_ID`, `ADMIN_SECRET`, and `MACHINES`, a JSON object of
+machine name to its Linear client id and secret, webhook signing secret and bearer
+secret. Adding a machine means updating `MACHINES`.
+
+- `GET /install/<machine>` redirects to Linear's authorize URL as the app, with
+  `read,write,app:assignable` and a single-use state that expires in 10 minutes.
+  Once the machine has a token, a reinstall asks for the admin secret as the
+  HTTP Basic password.
+- `GET /callback/<machine>` checks the state, exchanges the code, and stores the
+  tokens and app user id only when the workspace is `LINEAR_ORG_ID`.
+
+The Durable Object's internal `getAccessToken()` returns the cached access token and
+is the only place it is refreshed. `relay/auth.ts` holds this logic so `node:test`
+can run it; check the Worker bundle with `npx wrangler deploy --dry-run`.

@@ -12,6 +12,14 @@ _Avoid_: task, dispatch payload
 One of `queued`, `claimed`, `launched`, or `failed`, tracked by the queue separately from the job payload.
 _Avoid_: job status
 
+**Machine**:
+A computer that runs jobs, with its own Linear app and its own Durable Object in the relay, named by its key in the relay's `MACHINES` secret.
+_Avoid_: host, runner
+
+**Relay**:
+The always-on Cloudflare Worker that installs each machine's Linear app and holds its token.
+_Avoid_: proxy, server
+
 ## Verify
 
 **Verify contract**:
