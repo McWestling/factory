@@ -18,6 +18,9 @@ _Avoid_: path filters, watch paths
 
 ## Setup
 
+**Dispatch block**:
+The fenced `dispatch` block in an implementation issue's **Next** section. It names the planned target, exact Preferred models name and human-readable reason; see [`docs/issue-format.md`](docs/issue-format.md).
+
 **Adding a repo block**:
 The first `toml` code block under an exact `## Adding a repo` heading on a service page linked from a workspace's Tool Stack document. It lists the commands and maintainer steps that set a repo up for that service; `do-factory-setup` runs it through `adopt.py`. Format: `skills/do-factory-setup/adding-a-repo.example.toml`.
 _Avoid_: setup script, onboarding steps
