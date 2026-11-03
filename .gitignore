@@ -10,3 +10,6 @@ Thumbs.db
 # Real config: commit the *.example beside it, never the real file
 *.local
 *.local.*
+
+# Node packages
+node_modules/

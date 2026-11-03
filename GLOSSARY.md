@@ -2,6 +2,16 @@
 
 The workflow skills, contracts and configs that every factory repo shares.
 
+## Dispatch
+
+**Job**:
+The `{issueId, sessionId}` payload the relay queues for a machine's daemon; the daemon reads the issue from Linear at pickup.
+_Avoid_: task, dispatch payload
+
+**Job state**:
+One of `queued`, `claimed`, `launched`, or `failed`, tracked by the queue separately from the job payload.
+_Avoid_: job status
+
 ## Verify
 
 **Verify contract**:
