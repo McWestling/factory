@@ -84,7 +84,7 @@ Each product has an initiative with the same name as its Product label. Its desc
 | `Codex`         | Codex outside Orca                                                               |
 | `Linear/Cursor` | Cursor Cloud, delegated from Linear. Legacy; retired when Factory Dispatch ships |
 
-The label records where the work was dispatched from, not where the session runs or which model ran. Set it when work starts: a session with any `ORCA_*` environment variable set is `Orca`, and Orca sets the label itself on the Cursor Cloud agents it launches. The issue's Suggested dispatch line is the plan; the label records what actually ran.
+The label records where the work was dispatched from, not where the session runs or which model ran. Set it when work starts: a session with any `ORCA_*` environment variable set is `Orca`, and Orca sets the label itself on the Cursor Cloud agents it launches. The issue's dispatch block target is the plan; the label records what actually ran. The parser also reads the legacy Suggested dispatch line until open issues are converted; see [the issue-format contract](issue-format.md).
 
 **Default target:** `Orca`, for every model below.
 

@@ -4,7 +4,7 @@ Every implementation issue is written to this template, whoever writes it (`do-r
 
 ## Template
 
-```markdown
+````markdown
 ## What this is
 
 <One plain sentence a newcomer to the project can follow.>
@@ -17,7 +17,13 @@ Every implementation issue is written to this template, whoever writes it (`do-r
 
 Implement this ticket in one PR and run the verification below.
 
-**Suggested dispatch:** `<target>` · `<model>` — <one-clause reason>
+See the [issue format contract](../../docs/issue-format.md).
+
+```dispatch
+target: <target>
+model: <exact Preferred models name>
+reason: <one clause explaining why this model fits>
+```
 
 ---
 
@@ -53,14 +59,15 @@ Implement this ticket in one PR and run the verification below.
 - **Dispatch:** ready → in progress when the implementing agent starts.
 - **While the PR is open:** stay in progress while the PR is a draft. Only the automation named under **Issue statuses** moves it to review; agents never do. Don't set it done or post a completion comment before the merge.
 - **Closeout (after merge only):** whoever merges, or the implementing agent, sets it done, links the merged PR, checks off the acceptance criteria, and adds a completion comment with a dateline per **Comment shape**.
-```
+````
 
 ## Filling it in
 
-- **What this is / Status / Next** form the front door: a reader should understand the issue without knowing the project. When the scope changes, update Status, Next and Suggested dispatch together. History goes in comments, not in new dated sections of the description.
+- **What this is / Status / Next** form the front door: a reader should understand the issue without knowing the project. When the scope changes, update Status, Next and the dispatch block together. History goes in comments, not in new dated sections of the description.
 - **Model freshness:** check the **Checked** date under **Preferred models** against its re-check rule. If it is due, or a listed model has retired, re-read its **Sources** and propose an update to the user (new rows, retired rows, a new Checked date) before suggesting a model.
-- **Suggested dispatch, model:** pick one from **Preferred models**, weighing how hard and risky the work is against cost. Keep the strongest models for cross-cutting or ambiguous work (schema changes, auth, concurrency, architecture calls, hard debugging) and cheaper ones for mechanical or pattern-following changes. Never suggest a model that isn't in the table. The reason clause says why the model fits.
-- **Suggested dispatch, target:** pick one from **Dispatch targets** that can run that model: the default target unless the model or the work needs another (a model only one tool runs, a local stack, live input from the user). It's a suggestion: whoever dispatches may override it, and the Dispatch target label records where the work was actually dispatched from.
+- **Dispatch block, model:** pick an exact name from **Preferred models**, weighing how hard and risky the work is against cost. Keep the strongest models for cross-cutting or ambiguous work (schema changes, auth, concurrency, architecture calls, hard debugging) and cheaper ones for mechanical or pattern-following changes. The reason clause says why the model fits.
+- **Dispatch block, target:** choose a tool from **Dispatch targets** that can run that model: the default target unless the model or work needs another (a model only one tool runs, a local stack, live input from the user). This is the plan; the Dispatch target label records what actually ran.
+- **Dispatch block, reason:** give one human-readable clause for the model choice. The agent and skill come from the model mapping and daemon config described in the [issue format contract](../../docs/issue-format.md).
 - **Touches:** the directories and files from your code survey. Dispatch compares these lines to batch issues that don't overlap.
 - **Verification:** use the repo's own check command, from its `AGENTS.md` or README.
 - **Lifecycle:** use the status names from **Issue statuses**. If the repo has no PR automation (see **Pull requests**), say who marks the PR ready and merges.

@@ -253,7 +253,7 @@ Each product has an initiative with the same name as its Product label. Its desc
 | --------------- | -------------------------------------------------------------------------------- |
 {{dispatch target rows}}
 
-The label records where the work was dispatched from, not where the session runs or which model ran. Set it when work starts{{orca rule}}. The issue's Suggested dispatch line is the plan; the label records what actually ran.
+The label records where the work was dispatched from, not where the session runs or which model ran. Set it when work starts{{orca rule}}. The issue's dispatch block target is the plan; the label records what actually ran.
 
 **Default target:** `{{default target}}`, for every model below.
 

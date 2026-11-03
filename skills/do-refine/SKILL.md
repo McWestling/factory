@@ -213,7 +213,7 @@ The user names an idea or a map (by URL or name), and maybe a ticket. Pick the m
 
 End every session by listing what changed, by name: tickets resolved, created or canceled, and issues sliced. Then add **What you can do next**, with a link on every line:
 
-- **Dispatch now:** each unblocked, ready implementation issue on the map, with its Suggested dispatch and a prompt to paste for that target. For a target that is delegated from inside the tracker, say so (for example, "delegate to Cursor from the issue"). Otherwise give the **Kickoff prompt** per **Comment shape** (for example `/do-implement ABC-123`), to run on the named target (for example, an Orca workspace). Compare the issues' **Touches:** lines, flag pairs that overlap, and say which to run first.
+- **Dispatch now:** each unblocked, ready implementation issue on the map, with its dispatch block and a prompt to paste for its target. For a target that is delegated from inside the tracker, say so (for example, "delegate to Cursor from the issue"). Otherwise give the **Kickoff prompt** per **Comment shape** (for example `/do-implement ABC-123`), to run on the named target (for example, an Orca workspace). Compare the issues' **Touches:** lines, flag pairs that overlap, and say which to run first.
 - **Refine next:** the next decision ticket on the frontier, with `/do-refine <map URL>` to paste into a fresh session. Name any research tickets still running.
 - **Waiting on you:** HITL tickets and open questions.
 

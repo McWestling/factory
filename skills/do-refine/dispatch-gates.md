@@ -11,7 +11,7 @@ An implementation issue may be dispatched only when it passes every gate below. 
 | **Human gates**         | No open interview with the user and no unresolved product decision                                                  |
 | **Size**                | Fits one PR. Use the repo's size budget if it sets one; otherwise about 400 changed lines of app code is a soft cap |
 | **Repo**                | Resolves to one repo per the tracker doc's **Repo routing**                                                         |
-| **Suggested dispatch**  | A target and model chosen per [brief-template.md](brief-template.md)                                                |
+| **Dispatch block**      | A target, exact Preferred models name and reason chosen per [brief-template.md](brief-template.md)                 |
 
 Decision tickets (`wayfinder:<type>`) are never dispatched, whatever gates they pass.
 
