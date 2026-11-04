@@ -1,6 +1,6 @@
 # Issue format
 
-Factory Dispatch reads the repo tag and dispatch instructions from an implementation issue's description. New briefs use the dispatch block; the parser keeps the legacy line available until open issues have been converted, then removes that fallback.
+Factory Dispatch reads the repo tag and dispatch instructions from an implementation issue's description. Every brief must use the dispatch block.
 
 ## Repo tag
 
@@ -28,15 +28,11 @@ reason: <one clause explaining why this model fits>
 - The agent is determined by the configured model mapping, so the block has no `agent` field.
 - The skill is not part of the issue format. Daemon config's optional `skill` key selects it and defaults to `do-implement`; its value must match `^[a-z0-9-]+$`. Dispatch prompts the session with `/<skill> <issue id>`. Orca setup runs only for `do-implement` and is skipped for other skills. The configured skill decides what it accepts; a `wayfinder:` label is not a Dispatch gate.
 
-## Legacy format
-
-Until all open issues have been converted, the parser accepts the legacy `**Suggested dispatch:**` line when there is no dispatch block. Its model is the second code span. A dispatch block takes precedence when both forms are present.
-
 ## Refusals
 
 Each refusal names the field and what was expected:
 
-- `dispatch`: expected a parseable fenced `dispatch` block or a parseable legacy line.
+- `dispatch`: expected a parseable fenced `dispatch` block with one nonempty model field.
 - `model`: expected a model name configured on this machine and listed under **Preferred models**.
 - `repo`: expected a `[repo=owner/name]` tag matching `^[\w.-]+/[\w.-]+$`.
 - `repo`: expected the tagged repo to appear on this machine's allowlist.

@@ -19,9 +19,8 @@ There are no runtime dependencies; development tools are pinned in the lockfile.
 
 `parse-issue.ts` exports `parseIssue(description, config?)`. It returns either
 `{repo, model}` or a refusal `{field, expected}`. Test for `field` to distinguish
-a refusal. It reads a fenced `dispatch` block first, falling back to the second
-code span of the legacy `**Suggested dispatch:**` line only when no block exists.
-A malformed block refuses dispatch even if a legacy line exists. The repo comes
+a refusal. It requires a fenced `dispatch` block with one nonempty model field;
+a missing or malformed block refuses dispatch. The repo comes
 from the required `[repo=owner/name]` tag, including Linear's escaped form.
 
 Without config, the parser checks syntax only. The daemon must pass its config

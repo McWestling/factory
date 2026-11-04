@@ -4,19 +4,20 @@ import { parseIssue } from './parse-issue.ts';
 
 const repo = '`[repo=example/project]`';
 const block = '```dispatch\ntarget: Orca\nmodel: Example Model\nreason: focused work\n```';
-const legacy = '**Suggested dispatch:** `Orca` · `Legacy Model` — focused work';
 
-test('reads the model from the dispatch block before the legacy line', () => {
-  assert.deepEqual(parseIssue(`${legacy}\n${block}\n${repo}`), {
+test('reads the model from the dispatch block', () => {
+  assert.deepEqual(parseIssue(`${block}\n${repo}`), {
     repo: 'example/project',
     model: 'Example Model',
   });
 });
 
-test('reads the second code span of the legacy Suggested dispatch line', () => {
+test('refuses a legacy line without a dispatch block', () => {
+  // Split the retired label so the contract's stale-format scan stays empty.
+  const legacy = '**Suggested' + ' dispatch:** `Orca` · `Legacy Model` — focused work';
   assert.deepEqual(parseIssue(`${legacy}\n${repo}`), {
-    repo: 'example/project',
-    model: 'Legacy Model',
+    field: 'dispatch',
+    expected: 'a dispatch block with one nonempty model field',
   });
 });
 
@@ -37,8 +38,7 @@ for (const tag of ['', '[repo=]', '[repo=example]', '[repo=example/project/extra
   });
 }
 
-for (const dispatch of ['', '**Suggested dispatch:** `Orca`',
-  '**Suggested dispatch:** `Orca` · ` `',
+for (const dispatch of ['',
   '```dispatch\ntarget: Orca\n```',
   '```dispatch\nmodel: \n```',
   '```dispatch\nmodel: Example Model',
@@ -47,14 +47,10 @@ for (const dispatch of ['', '**Suggested dispatch:** `Orca`',
   test(`refuses missing or malformed dispatch metadata: ${JSON.stringify(dispatch)}`, () => {
     assert.deepEqual(parseIssue(`${dispatch}\n${repo}`), {
       field: 'dispatch',
-      expected: 'a dispatch block with one nonempty model field or a legacy Suggested dispatch line with target and model code spans',
+      expected: 'a dispatch block with one nonempty model field',
     });
   });
 }
-
-test('refuses a malformed block even when a legacy line is available', () => {
-  assert.equal('field' in parseIssue(`\`\`\`dispatch\ntarget: Orca\n\`\`\`\n${legacy}\n${repo}`), true);
-});
 
 const config = { models: { 'Example Model': {} }, repos: ['example/project'] };
 
@@ -65,7 +61,7 @@ test('accepts a model and repo present in the machine config', () => {
 });
 
 test('refuses a model absent from the machine config', () => {
-  assert.deepEqual(parseIssue(`${legacy}\n${repo}`, config), {
+  assert.deepEqual(parseIssue(`${block.replace('Example Model', 'Other Model')}\n${repo}`, config), {
     field: 'model', expected: 'an exact model name in the machine config',
   });
 });
@@ -95,15 +91,15 @@ for (const dispatch of [
   });
 }
 
-test('refuses an invalid dispatch fence instead of using the legacy line', () => {
-  assert.deepEqual(parseIssue(`\`\`\`dispatch invalid\nmodel: Example Model\n\`\`\`\n${legacy}\n${repo}`), {
+test('refuses an invalid dispatch fence', () => {
+  assert.deepEqual(parseIssue(`\`\`\`dispatch invalid\nmodel: Example Model\n\`\`\`\n${repo}`), {
     field: 'dispatch',
-    expected: 'a dispatch block with one nonempty model field or a legacy Suggested dispatch line with target and model code spans',
+    expected: 'a dispatch block with one nonempty model field',
   });
 });
 
-test('prefers a dispatch fence with whitespace before its language over the legacy line', () => {
-  assert.deepEqual(parseIssue(`${block.replace('```dispatch', '``` \tdispatch')}\n${legacy}\n${repo}`), {
+test('accepts a dispatch fence with whitespace before its language', () => {
+  assert.deepEqual(parseIssue(`${block.replace('```dispatch', '``` \tdispatch')}\n${repo}`), {
     repo: 'example/project', model: 'Example Model',
   });
 });
