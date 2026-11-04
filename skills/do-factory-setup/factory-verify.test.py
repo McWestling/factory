@@ -167,8 +167,7 @@ class FactoryVerifyTests(unittest.TestCase):
             (("plan", "--base", "deadbeef", "--head", self.base), "revision"),
         ]:
             with self.subTest(args=args):
-                result = self.verify(*args)
-                self.assert_fails_cleanly(result, message)
+                self.assert_fails_cleanly(self.verify(*args), message)
 
     def test_invalid_contracts_fail_before_any_check_runs(self):
         valid = 'version = 1\n[checks.good]\nrun = "printf must-not-run"\npaths = ["**"]\n'
@@ -196,8 +195,7 @@ class FactoryVerifyTests(unittest.TestCase):
         for text, message in cases:
             with self.subTest(contract=text):
                 self.write_contract(text)
-                result = self.verify("run", "--all")
-                self.assert_fails_cleanly(result, ".factory/verify.toml", message)
+                self.assert_fails_cleanly(self.verify("run", "--all"), ".factory/verify.toml", message)
 
     def test_toml_syntax_errors_name_file_and_line(self):
         for text, location in [
@@ -207,8 +205,7 @@ class FactoryVerifyTests(unittest.TestCase):
         ]:
             with self.subTest(contract=text):
                 self.write_contract(text)
-                result = self.verify("run", "--all")
-                self.assert_fails_cleanly(result, ".factory/verify.toml", location)
+                self.assert_fails_cleanly(self.verify("run", "--all"), ".factory/verify.toml", location)
 
     def test_standard_toml_and_literal_path_arguments(self):
         self.write_contract(r"""
@@ -258,11 +255,9 @@ class FactoryVerifyTests(unittest.TestCase):
 
     def test_missing_file_and_invalid_encoding(self):
         self.contract.unlink()
-        result = self.verify("run", "--all")
-        self.assert_fails_cleanly(result, ".factory/verify.toml")
+        self.assert_fails_cleanly(self.verify("run", "--all"), ".factory/verify.toml")
         self.contract.write_bytes(b"version = 1\n# \xff")
-        result = self.verify("run", "--all")
-        self.assert_fails_cleanly(result, ".factory/verify.toml")
+        self.assert_fails_cleanly(self.verify("run", "--all"), ".factory/verify.toml")
 
 
 if __name__ == "__main__":
