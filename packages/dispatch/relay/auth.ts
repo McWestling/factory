@@ -93,12 +93,15 @@ export type Storage = {
 };
 
 type PendingState = { value: string; expiresAt: number; reinstall: boolean };
-type StoredToken = { accessToken: string; refreshToken: string; expiresAt: number; appUserId: string };
+// orgId and clientId bind the token to the config that installed it.
+type StoredToken = {
+  accessToken: string; refreshToken: string; expiresAt: number; appUserId: string; orgId: string; clientId: string;
+};
 type Grant = { access_token: string; refresh_token: string; expires_in: number };
 
 export type InstallResult =
   | { ok: true; appUserId: string }
-  | { ok: false; reason: 'state' | 'reinstall' | 'exchange' | 'org' };
+  | { ok: false; reason: 'state' | 'reinstall' | 'superseded' | 'exchange' | 'org' };
 
 /** One machine's install and token, kept in that machine's Durable Object storage. */
 export class MachineAuth {
@@ -151,9 +154,8 @@ export class MachineAuth {
     if (!pending || !timingSafeEqual(state, pending.value)) return { ok: false, reason: 'state' };
     await this.#storage.delete('oauthState');
     if (pending.expiresAt <= this.#now()) return { ok: false, reason: 'state' };
-    if (!pending.reinstall && (await this.#storage.get('token'))) {
-      return { ok: false, reason: 'reinstall' };
-    }
+    const before = await this.#storage.get<StoredToken>('token');
+    if (!pending.reinstall && before) return { ok: false, reason: 'reinstall' };
 
     const grant = await this.#grant({ grant_type: 'authorization_code', code, redirect_uri: redirectUri });
     if (!grant) return { ok: false, reason: 'exchange' };
@@ -161,6 +163,13 @@ export class MachineAuth {
     if (!viewer) return { ok: false, reason: 'exchange' };
     if (!timingSafeEqual(viewer.orgId, this.#orgId)) return { ok: false, reason: 'org' };
 
+
+    // Requests interleave during the fetches above. Recheck with no await but storage's
+    // between this read and the put, so the Durable Object's input gate makes it atomic.
+    const current = await this.#storage.get<StoredToken>('token');
+    if (current?.refreshToken !== before?.refreshToken) {
+      return { ok: false, reason: pending.reinstall ? 'superseded' : 'reinstall' };
+    }
     await this.#storage.put('token', this.#toStored(grant, viewer.id));
     return { ok: true, appUserId: viewer.id };
   }
@@ -169,6 +178,10 @@ export class MachineAuth {
   async getAccessToken(): Promise<string> {
     const token = await this.#storage.get<StoredToken>('token');
     if (!token) throw new Error('Machine is not installed');
+    // Also catches records from before the identity was stored.
+    if (token.orgId !== this.#orgId || token.clientId !== this.#client.clientId) {
+      throw new Error('Machine must be reinstalled: its token is for another org or client');
+    }
     if (token.expiresAt - this.#now() > REFRESH_MARGIN_MS) return token.accessToken;
     // One refresh at a time: Linear rotates the refresh token.
     this.#refreshing ??= this.#refresh(token).finally(() => {
@@ -180,6 +193,10 @@ export class MachineAuth {
   async #refresh(token: StoredToken): Promise<string> {
     const grant = await this.#grant({ grant_type: 'refresh_token', refresh_token: token.refreshToken });
     if (!grant) throw new Error('Token refresh failed');
+    // The refresh token is the record's version: a reinstall or another refresh changes
+    // it. Same atomic read-then-put as completeInstall.
+    const current = await this.#storage.get<StoredToken>('token');
+    if (current?.refreshToken !== token.refreshToken) throw new Error('Token was replaced during refresh');
     await this.#storage.put('token', this.#toStored(grant, token.appUserId));
     return grant.access_token;
   }
@@ -190,6 +207,8 @@ export class MachineAuth {
       refreshToken: grant.refresh_token,
       expiresAt: this.#now() + grant.expires_in * 1000,
       appUserId,
+      orgId: this.#orgId,
+      clientId: this.#client.clientId,
     };
   }
 

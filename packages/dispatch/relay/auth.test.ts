@@ -17,23 +17,41 @@ function memoryStorage(): Storage & { data: Map<string, unknown> } {
   };
 }
 
-/** Fakes Linear: the token endpoint and a viewer in `org`. Records each call. */
+/**
+ * Fakes Linear: the token endpoint and a viewer in `org`. Records each call.
+ * `pause()` holds the next token response: await `reached`, then call `release`.
+ */
 function fakeLinear(org = ORG) {
   const calls: { url: string; body: string }[] = [];
   let issued = 0;
+  let hold: { reached: () => void; released: Promise<void> } | undefined;
+  const pause = () => {
+    let release!: () => void;
+    let reached!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    const waiting = new Promise<void>((resolve) => { reached = resolve; });
+    hold = { reached, released };
+    return { waiting, release };
+  };
   const fetchFn: typeof fetch = async (input, init) => {
     const url = String(input);
     calls.push({ url, body: String(init?.body) });
     if (url === 'https://api.linear.app/oauth/token') {
-      issued++;
-      return Response.json({ access_token: `access-${issued}`, refresh_token: `refresh-${issued}`, expires_in: 86400 });
+      const n = ++issued;
+      const held = hold;
+      hold = undefined;
+      if (held) {
+        held.reached();
+        await held.released;
+      }
+      return Response.json({ access_token: `access-${n}`, refresh_token: `refresh-${n}`, expires_in: 86400 });
     }
     if (url === 'https://api.linear.app/graphql') {
       return Response.json({ data: { viewer: { id: 'app-user-example', organization: { id: org } } } });
     }
     return new Response(null, { status: 404 });
   };
-  return { fetchFn, calls };
+  return { fetchFn, calls, pause };
 }
 
 function setup(org = ORG) {
@@ -63,6 +81,7 @@ test('a valid callback stores the tokens and the app user id', async () => {
   assert.deepEqual(await auth.completeInstall(state, 'code', REDIRECT), { ok: true, appUserId: 'app-user-example' });
   assert.deepEqual(storage.data.get('token'), {
     accessToken: 'access-1', refreshToken: 'refresh-1', expiresAt: 1_000_000 + 86_400_000, appUserId: 'app-user-example',
+    orgId: ORG, clientId: client.clientId,
   });
 });
 
@@ -181,4 +200,82 @@ test('a failed or unparseable token exchange stores nothing', async () => {
     assert.deepEqual(await auth.completeInstall(state, 'code', REDIRECT), { ok: false, reason: 'exchange' });
     assert.equal(storage.data.has('token'), false);
   }
+});
+
+const install = async (auth: MachineAuth, admin = false) =>
+  auth.completeInstall(stateOf((await auth.startInstall(REDIRECT, admin))!), 'code', REDIRECT);
+const storedAccess = (storage: { data: Map<string, unknown> }) =>
+  (storage.data.get('token') as { accessToken: string }).accessToken;
+
+test('an initial callback that finishes late cannot replace one that finished first', async () => {
+  const { auth, linear, storage } = setup();
+  const stateA = stateOf((await auth.startInstall(REDIRECT, false))!);
+  const paused = linear.pause();
+  const a = auth.completeInstall(stateA, 'code-a', REDIRECT);
+  await paused.waiting;
+  assert.equal((await install(auth)).ok, true);
+  paused.release();
+  assert.deepEqual(await a, { ok: false, reason: 'reinstall' });
+  assert.equal(storedAccess(storage), 'access-2');
+});
+
+test('an admin callback that finishes late cannot replace a newer install', async () => {
+  const { auth, linear, storage } = setup();
+  await install(auth);
+  const stateA = stateOf((await auth.startInstall(REDIRECT, true))!);
+  const paused = linear.pause();
+  const a = auth.completeInstall(stateA, 'code-a', REDIRECT);
+  await paused.waiting;
+  assert.equal((await install(auth, true)).ok, true);
+  paused.release();
+  assert.deepEqual(await a, { ok: false, reason: 'superseded' });
+  assert.equal(storedAccess(storage), 'access-3');
+});
+
+test('a refresh that finishes after an admin reinstall neither stores nor returns its token', async () => {
+  const { auth, clock, linear, storage } = setup();
+  await install(auth);
+  clock.now += 23 * 60 * 60_000 + 1;
+  const paused = linear.pause();
+  const refresh = auth.getAccessToken();
+  await paused.waiting;
+  assert.equal((await install(auth, true)).ok, true);
+  paused.release();
+  await assert.rejects(refresh, /replaced/);
+  assert.equal(storedAccess(storage), 'access-3');
+  assert.equal(await auth.getAccessToken(), 'access-3');
+});
+
+for (const [label, orgId, clientId, legacy] of [
+  ['the org id changes', 'org-new', client.clientId, false],
+  ['the client id changes', ORG, 'client-new', false],
+  ['the record has no identity', ORG, client.clientId, true],
+] as const) {
+  test(`when ${label}, the token is neither lent nor refreshed until an admin reinstall`, async () => {
+    const { auth, clock, linear, storage } = setup();
+    await install(auth);
+    if (legacy) {
+      const { orgId: _o, clientId: _c, ...old } = storage.data.get('token') as Record<string, unknown>;
+      storage.data.set('token', old);
+    }
+    const moved = setup(orgId === ORG ? ORG : 'org-new').linear;
+    const changed = new MachineAuth(storage, { ...client, clientId }, orgId, moved.fetchFn, () => clock.now);
+    await assert.rejects(changed.getAccessToken(), /reinstalled/);
+    clock.now += 23 * 60 * 60_000 + 1;
+    await assert.rejects(changed.getAccessToken(), /reinstalled/);
+    assert.equal(moved.calls.length, 0);
+
+    assert.equal(await changed.startInstall(REDIRECT, false), undefined);
+    assert.equal((await install(changed, true)).ok, true);
+    assert.equal(await changed.getAccessToken(), 'access-1');
+    assert.equal(linear.calls.length, 2);
+  });
+}
+
+test('rotating only the client secret keeps the install', async () => {
+  const { auth, clock, storage, linear } = setup();
+  await install(auth);
+  const rotated = new MachineAuth(storage, { ...client, clientSecret: 'client-secret-new' }, ORG, linear.fetchFn,
+    () => clock.now);
+  assert.equal(await rotated.getAccessToken(), 'access-1');
 });

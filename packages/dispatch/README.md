@@ -37,13 +37,38 @@ their shape): `LINEAR_ORG_ID`, `ADMIN_SECRET`, and `MACHINES`, a JSON object of
 machine name to its Linear client id and secret, webhook signing secret and bearer
 secret. Adding a machine means updating `MACHINES`.
 
+A `MACHINES` key is a stable storage identifier, not a display name: it selects the
+machine's Durable Object. Renaming a key selects a new, empty Durable Object, and
+the old installation stays in the old one, along with any jobs queued for it later.
+Treat a rename as adding a new machine and installing it again.
+
 - `GET /install/<machine>` redirects to Linear's authorize URL as the app, with
   `read,write,app:assignable` and a single-use state that expires in 10 minutes.
   Once the machine has a token, a reinstall asks for the admin secret as the
   HTTP Basic password.
 - `GET /callback/<machine>` checks the state, exchanges the code, and stores the
-  tokens and app user id only when the workspace is `LINEAR_ORG_ID`.
+  tokens and app user id only when the workspace is `LINEAR_ORG_ID`. It stores them
+  with the org id and the machine's client id, and only if no other install landed
+  while it waited on Linear.
 
 The Durable Object's internal `getAccessToken()` returns the cached access token and
-is the only place it is refreshed. `relay/auth.ts` holds this logic so `node:test`
+is the only place it is refreshed. It refuses a token whose stored org id or client id
+differs from the current config, including tokens stored before those ids were, until
+an admin reinstall. Rotating only the client secret keeps the install. A refresh that
+finishes after a reinstall is discarded and fails, so it never returns the old
+installation's token. `relay/auth.ts` holds this logic so `node:test`
 can run it; check the Worker bundle with `npx wrangler deploy --dry-run`.
+
+### Trust model
+
+The relay is trusted to influence what work runs. It holds each machine's Linear
+token with `read,write`, so a compromised relay can edit an issue, keep valid repo
+and model fields and the delegation, and deliver a genuine issue and session id. The
+daemon's checks at pickup (delegated to this app, creator allowlisted, repo and model
+allowed) would all pass on the changed task. Those checks stop forged sessions and
+out-of-policy work; they do not stop a relay that rewrites the task inside policy.
+
+Per-machine Durable Objects separate storage, not trust: one Worker holds every
+machine's secrets and tokens, so compromising it reaches every machine. This risk is
+open, not eliminated. It needs an explicit security acceptance, or a separate
+decision on a mitigation, before the daemon launches work.

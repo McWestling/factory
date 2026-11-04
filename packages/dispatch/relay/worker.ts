@@ -14,6 +14,7 @@ interface Env {
 const FAILURES: Record<Extract<InstallResult, { ok: false }>['reason'], string> = {
   state: 'Install failed: the link is invalid, used or expired. Start again from /install.',
   reinstall: 'Install failed: this machine is already installed. Reinstall with the admin secret.',
+  superseded: 'Install failed: another install finished first. Start again from /install.',
   exchange: 'Install failed: Linear did not complete the token exchange.',
   org: 'Install failed: the app was installed in the wrong workspace.',
 };
