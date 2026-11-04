@@ -20,10 +20,6 @@ function readModel(description: string): string | undefined {
     const models = fields.filter(field => field?.[1] === 'model');
     return models.length === 1 ? models[0]?.[2].trim() : undefined;
   }
-
-  const legacy = /^\*\*Suggested dispatch:\*\*[^\n]*/m.exec(description)?.[0];
-  const spans = Array.from(legacy?.matchAll(/`([^`\n]+)`/g) ?? []);
-  return spans[0]?.[1].trim() ? spans[1]?.[1].trim() : undefined;
 }
 
 export function parseIssue(description: string, config?: DispatchConfig): DispatchIssue | Refusal {
@@ -31,7 +27,7 @@ export function parseIssue(description: string, config?: DispatchConfig): Dispat
   if (!model) {
     return {
       field: 'dispatch',
-      expected: 'a dispatch block with one nonempty model field or a legacy Suggested dispatch line with target and model code spans',
+      expected: 'a dispatch block with one nonempty model field',
     };
   }
   const tag = /\\\[repo=([^\]\r\n]*)\\\]|\[repo=([^\]\r\n]*)\]/.exec(description);
