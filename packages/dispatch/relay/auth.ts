@@ -54,6 +54,8 @@ export function readConfig(env: Record<string, unknown>): Config | string {
   return { orgId, adminSecret, machines: machines as Record<string, MachineConfig> };
 }
 
+export const hex = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+
 /** Compares in time that depends only on the lengths, which aren't secret. */
 export function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
@@ -93,10 +95,13 @@ export type Storage = {
 };
 
 type PendingState = { value: string; expiresAt: number; reinstall: boolean };
-// orgId and clientId bind the token to the config that installed it.
+// orgId and clientId bind the token to the config that installed it. appName is the
+// app's name in Linear; installs from before it was stored lack it.
 type StoredToken = {
-  accessToken: string; refreshToken: string; expiresAt: number; appUserId: string; orgId: string; clientId: string;
+  accessToken: string; refreshToken: string; expiresAt: number; appUserId: string; appName?: string;
+  orgId: string; clientId: string;
 };
+type AppUser = { appUserId: string; appName?: string };
 type Grant = { access_token: string; refresh_token: string; expires_in: number };
 
 export type InstallResult =
@@ -132,8 +137,7 @@ export class MachineAuth {
    */
   async startInstall(redirectUri: string, admin: boolean): Promise<string | undefined> {
     if (!admin && (await this.#storage.get('token'))) return undefined;
-    const value = Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) =>
-      b.toString(16).padStart(2, '0')).join('');
+    const value = hex(crypto.getRandomValues(new Uint8Array(32)));
     const pending: PendingState = { value, expiresAt: this.#now() + STATE_TTL_MS, reinstall: admin };
     await this.#storage.put('oauthState', pending);
     const url = new URL(AUTHORIZE_URL);
@@ -170,8 +174,14 @@ export class MachineAuth {
     if (current?.refreshToken !== before?.refreshToken) {
       return { ok: false, reason: pending.reinstall ? 'superseded' : 'reinstall' };
     }
-    await this.#storage.put('token', this.#toStored(grant, viewer.id));
+    await this.#storage.put('token', this.#toStored(grant, { appUserId: viewer.id, appName: viewer.name }));
     return { ok: true, appUserId: viewer.id };
+  }
+
+  /** The app user this machine was installed as, or undefined before the install. */
+  async installation(): Promise<AppUser | undefined> {
+    const token = await this.#storage.get<StoredToken>('token');
+    return token && { appUserId: token.appUserId, appName: token.appName };
   }
 
   /** Returns the cached access token, refreshing it when under an hour remains. */
@@ -197,16 +207,17 @@ export class MachineAuth {
     // it. Same atomic read-then-put as completeInstall.
     const current = await this.#storage.get<StoredToken>('token');
     if (current?.refreshToken !== token.refreshToken) throw new Error('Token was replaced during refresh');
-    await this.#storage.put('token', this.#toStored(grant, token.appUserId));
+    await this.#storage.put('token', this.#toStored(grant, token));
     return grant.access_token;
   }
 
-  #toStored(grant: Grant, appUserId: string): StoredToken {
+  #toStored(grant: Grant, { appUserId, appName }: AppUser): StoredToken {
     return {
       accessToken: grant.access_token,
       refreshToken: grant.refresh_token,
       expiresAt: this.#now() + grant.expires_in * 1000,
       appUserId,
+      appName,
       orgId: this.#orgId,
       clientId: this.#client.clientId,
     };
@@ -229,15 +240,17 @@ export class MachineAuth {
     return body as Grant;
   }
 
-  async #viewer(accessToken: string): Promise<{ id: string; orgId: string } | undefined> {
+  async #viewer(accessToken: string): Promise<{ id: string; name?: string; orgId: string } | undefined> {
     const res = await this.#fetch(GRAPHQL_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ query: '{ viewer { id organization { id } } }' }),
+      body: JSON.stringify({ query: '{ viewer { id name organization { id } } }' }),
     });
-    const body = (await json(res)) as { data?: { viewer?: { id?: unknown; organization?: { id?: unknown } } } } | undefined;
-    const id = body?.data?.viewer?.id;
-    const orgId = body?.data?.viewer?.organization?.id;
-    return typeof id === 'string' && typeof orgId === 'string' ? { id, orgId } : undefined;
+    type Viewer = { id?: unknown; name?: unknown; organization?: { id?: unknown } };
+    const viewer = ((await json(res)) as { data?: { viewer?: Viewer } } | undefined)?.data?.viewer;
+    const { id, name } = viewer ?? {};
+    const orgId = viewer?.organization?.id;
+    if (typeof id !== 'string' || typeof orgId !== 'string') return undefined;
+    return { id, name: typeof name === 'string' ? name : undefined, orgId };
   }
 }

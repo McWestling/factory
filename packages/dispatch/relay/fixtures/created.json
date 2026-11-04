@@ -1,0 +1,24 @@
+{
+  "type": "AgentSessionEvent",
+  "action": "created",
+  "createdAt": "2026-11-04T12:00:00.000Z",
+  "organizationId": "org-example",
+  "oauthClientId": "client-example",
+  "appUserId": "app-user-example",
+  "webhookId": "webhook-example",
+  "webhookTimestamp": 0,
+  "agentSession": {
+    "id": "session-1",
+    "status": "pending",
+    "appUserId": "app-user-example",
+    "creatorId": "user-example",
+    "issueId": "issue-1",
+    "issue": { "id": "issue-1", "identifier": "ABC-123", "title": "Example issue", "url": "https://linear.app/example/issue/ABC-123" },
+    "comment": null,
+    "createdAt": "2026-11-04T12:00:00.000Z",
+    "updatedAt": "2026-11-04T12:00:00.000Z"
+  },
+  "previousComments": [],
+  "guidance": [],
+  "promptContext": "<issue identifier=\"ABC-123\"><title>Example issue</title></issue>"
+}

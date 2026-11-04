@@ -51,13 +51,40 @@ Treat a rename as adding a new machine and installing it again.
   with the org id and the machine's client id, and only if no other install landed
   while it waited on Linear.
 
-The Durable Object's internal `getAccessToken()` returns the cached access token and
+Point each machine's Linear app webhook (Agent session events) at `POST /webhook`.
+`relay/routes.ts` handles it before the machine's queue sees anything: it finds the
+machine by `oauthClientId`, verifies `Linear-Signature` over the raw body, and requires
+`webhookTimestamp` within 60 s and `organizationId` equal to `LINEAR_ORG_ID`. The queue
+then requires `appUserId` to match the install. A `created` event queues the job,
+deduped on the session id, and posts the queued `thought`; a newer delegation of the
+same issue replaces its waiting job and posts "Replaced by a newer dispatch." on the
+old session. A `prompted` stop signal posts the stopped `response` and drops a job not
+yet claimed; any other prompt gets a `thought` saying replies aren't read. The relay
+posts activities only and changes no issue fields. The thought names the app as Linear
+shows it, stored at install; installs from before that use the `MACHINES` key.
+
+The daemon API authenticates with `Authorization: Bearer <bearerSecret>`, and the
+machine comes only from the secret that matched. A job's id is its session id.
+
+- `POST /jobs/claim` returns the oldest waiting job as `{issueId, sessionId}` (204 when
+  none) and leases it for 10 minutes. An expired lease goes back on the queue, unless
+  a newer job for the same issue is waiting, which replaces it.
+- `POST /jobs/<id>/launched` and `POST /jobs/<id>/failed` record a claimed job's
+  outcome: 204, or 409 if it isn't claimed.
+- `GET /token` returns `{accessToken}`, at most once per 10 s per machine (429 with
+  `Retry-After` otherwise).
+
+Launched and failed jobs, and the dedupe records, are kept 30 days. `relay/queue.ts`
+holds the queue, on the Durable Object's SQLite storage.
+
+`MachineAuth.getAccessToken()`, behind `GET /token` and the relay's own posts, returns the cached access token and
 is the only place it is refreshed. It refuses a token whose stored org id or client id
 differs from the current config, including tokens stored before those ids were, until
 an admin reinstall. Rotating only the client secret keeps the install. A refresh that
 finishes after a reinstall is discarded and fails, so it never returns the old
-installation's token. `relay/auth.ts` holds this logic so `node:test`
-can run it; check the Worker bundle with `npx wrangler deploy --dry-run`.
+installation's token. `relay/auth.ts`, `relay/queue.ts` and `relay/routes.ts`
+hold this logic so `node:test` can run it, with `node:sqlite` standing in for the
+Durable Object's SQL and webhook payloads in `relay/fixtures/`; check the Worker bundle with `npx wrangler deploy --dry-run`.
 
 ### Trust model
 

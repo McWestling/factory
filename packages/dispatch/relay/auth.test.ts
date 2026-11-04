@@ -47,7 +47,7 @@ function fakeLinear(org = ORG) {
       return Response.json({ access_token: `access-${n}`, refresh_token: `refresh-${n}`, expires_in: 86400 });
     }
     if (url === 'https://api.linear.app/graphql') {
-      return Response.json({ data: { viewer: { id: 'app-user-example', organization: { id: org } } } });
+      return Response.json({ data: { viewer: { id: 'app-user-example', name: 'Example Machine', organization: { id: org } } } });
     }
     return new Response(null, { status: 404 });
   };
@@ -81,7 +81,7 @@ test('a valid callback stores the tokens and the app user id', async () => {
   assert.deepEqual(await auth.completeInstall(state, 'code', REDIRECT), { ok: true, appUserId: 'app-user-example' });
   assert.deepEqual(storage.data.get('token'), {
     accessToken: 'access-1', refreshToken: 'refresh-1', expiresAt: 1_000_000 + 86_400_000, appUserId: 'app-user-example',
-    orgId: ORG, clientId: client.clientId,
+    appName: 'Example Machine', orgId: ORG, clientId: client.clientId,
   });
 });
 
