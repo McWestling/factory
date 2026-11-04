@@ -7,10 +7,11 @@
     "node": "^26.0.0"
   },
   "scripts": {
-    "test": "npm run typecheck && node --test *.test.ts",
-    "typecheck": "tsc --noEmit"
+    "test": "npm run typecheck && node --test *.test.ts relay/*.test.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p relay"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "5.20261103.1",
     "@types/node": "26.6.6",
     "typescript": "7.0.2",
     "wrangler": "4.157.0"

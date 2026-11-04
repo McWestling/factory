@@ -13,3 +13,7 @@ Thumbs.db
 
 # Node packages
 node_modules/
+
+# Wrangler local secrets and state
+.dev.vars
+.wrangler/

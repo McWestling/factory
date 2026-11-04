@@ -1,0 +1,13 @@
+# The relay Worker. Secrets (LINEAR_ORG_ID, ADMIN_SECRET, MACHINES) are set with
+# `wrangler secret put`; see .dev.vars.example for their shape. Nothing private here.
+name = "factory-dispatch-relay"
+main = "relay/worker.ts"
+compatibility_date = "2026-11-01"
+
+[[durable_objects.bindings]]
+name = "MACHINE"
+class_name = "Machine"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Machine"]
