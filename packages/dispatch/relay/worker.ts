@@ -93,7 +93,16 @@ export class Machine extends DurableObject<Env> {
   }
 
   #queueFor(machine: string): MachineQueue {
-    return (this.#queue ??= new MachineQueue(this.ctx.storage.sql, this.#for(machine), machine));
+    // Remembered so the alarm, which gets no arguments, can rebuild the queue.
+    if (!this.#queue) this.ctx.storage.kv.put('machine', machine);
+    return (this.#queue ??= new MachineQueue(this.ctx.storage.sql, this.#for(machine), machine,
+      (at) => void this.ctx.storage.setAlarm(at)));
+  }
+
+  /** Delivers the outbox. Fires right after a queue change and again for each retry. */
+  async alarm() {
+    const machine = this.ctx.storage.kv.get<string>('machine');
+    if (machine) await this.#queueFor(machine).deliver();
   }
 
   webhook(machine: string, event: AgentEvent) {

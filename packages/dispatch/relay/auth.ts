@@ -121,7 +121,8 @@ export class MachineAuth {
     storage: Storage,
     client: Pick<MachineConfig, 'clientId' | 'clientSecret'>,
     orgId: string,
-    fetchFn: typeof fetch = (input, init) => fetch(input, init),
+    // Bounded, so a slow Linear can't hold a refresh, and the deliveries behind it, open.
+    fetchFn: typeof fetch = (input, init) => fetch(input, { signal: AbortSignal.timeout(10_000), ...init }),
     now: () => number = Date.now,
   ) {
     this.#storage = storage;

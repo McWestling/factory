@@ -63,6 +63,17 @@ yet claimed; any other prompt gets a `thought` saying replies aren't read. The r
 posts activities only and changes no issue fields. The thought names the app as Linear
 shows it, stored at install; installs from before that use the `MACHINES` key.
 
+The webhook is answered once the queue change and the activities it needs are stored
+together in the machine's outbox, without waiting on Linear. The Durable Object's
+alarm then posts them, one request at a time with a 10 s timeout on each Linear call
+(token refresh included). A failed post, or a failed token refresh, stays in the outbox
+and is retried with backoff from 10 s up to an hour, surviving restarts; only a success
+removes it, and an activity still failing after 30 days is dropped and logged. Each
+session's activities go out in the order they were written. Ending a session (replaced
+or stopped) cancels its thoughts not yet posted, so a final response is never followed
+by a queued thought. Delivery is at least once: a post that Linear applies but whose
+answer is lost is sent again.
+
 The daemon API authenticates with `Authorization: Bearer <bearerSecret>`, and the
 machine comes only from the secret that matched. A job's id is its session id.
 
@@ -75,7 +86,7 @@ machine comes only from the secret that matched. A job's id is its session id.
   `Retry-After` otherwise).
 
 Launched and failed jobs, and the dedupe records, are kept 30 days. `relay/queue.ts`
-holds the queue, on the Durable Object's SQLite storage.
+holds the queue and outbox, on the Durable Object's SQLite storage.
 
 `MachineAuth.getAccessToken()`, behind `GET /token` and the relay's own posts, returns the cached access token and
 is the only place it is refreshed. It refuses a token whose stored org id or client id
@@ -84,7 +95,8 @@ an admin reinstall. Rotating only the client secret keeps the install. A refresh
 finishes after a reinstall is discarded and fails, so it never returns the old
 installation's token. `relay/auth.ts`, `relay/queue.ts` and `relay/routes.ts`
 hold this logic so `node:test` can run it, with `node:sqlite` standing in for the
-Durable Object's SQL and webhook payloads in `relay/fixtures/`; check the Worker bundle with `npx wrangler deploy --dry-run`.
+Durable Object's SQL and synthetic webhook payloads in `relay/fixtures/` (written from
+Linear's documented schema, not captured); check the Worker bundle with `npx wrangler deploy --dry-run`.
 
 ### Trust model
 
