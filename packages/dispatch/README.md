@@ -59,7 +59,10 @@ then requires `appUserId` to match the install. A `created` event queues the job
 deduped on the session id, and posts the queued `thought`; a newer delegation of the
 same issue replaces its waiting job and posts "Replaced by a newer dispatch." on the
 old session. A `prompted` stop signal posts the stopped `response` and drops a job not
-yet claimed; any other prompt gets a `thought` saying replies aren't read. The relay
+yet claimed; any other prompt gets a `thought` saying replies aren't read. A stopped
+or replaced session is remembered as ended for 30 days: a late `created` doesn't queue
+it again, a reply gets no thought, and a claimed job of a stopped session isn't
+requeued when its lease expires. The relay
 posts activities only and changes no issue fields. The thought names the app as Linear
 shows it, stored at install; installs from before that use the `MACHINES` key.
 
@@ -71,8 +74,11 @@ and is retried with backoff from 10 s up to an hour, surviving restarts; only a 
 removes it, and an activity still failing after 30 days is dropped and logged. Each
 session's activities go out in the order they were written. Ending a session (replaced
 or stopped) cancels its thoughts not yet posted, so a final response is never followed
-by a queued thought. Delivery is at least once: a post that Linear applies but whose
-answer is lost is sent again.
+by a queued thought. Claiming a job hands the session to the daemon and cancels its
+queued thought, even mid-retry or mid-refresh, so it never lands after the daemon's
+own activities; replies and final responses still go out. Delivery is at least once:
+a post that Linear applies but whose answer is lost is sent again, and a queued
+thought already sent when the claim lands may still appear.
 
 The daemon API authenticates with `Authorization: Bearer <bearerSecret>`, and the
 machine comes only from the secret that matched. A job's id is its session id.
@@ -85,7 +91,7 @@ machine comes only from the secret that matched. A job's id is its session id.
 - `GET /token` returns `{accessToken}`, at most once per 10 s per machine (429 with
   `Retry-After` otherwise).
 
-Launched and failed jobs, and the dedupe records, are kept 30 days. `relay/queue.ts`
+Launched and failed jobs, the dedupe records and the ended sessions are kept 30 days. `relay/queue.ts`
 holds the queue and outbox, on the Durable Object's SQLite storage.
 
 `MachineAuth.getAccessToken()`, behind `GET /token` and the relay's own posts, returns the cached access token and

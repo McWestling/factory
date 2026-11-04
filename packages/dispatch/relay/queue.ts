@@ -38,7 +38,7 @@ export type AgentEvent = {
   stop: boolean;
 };
 
-export type WebhookResult = 'queued' | 'duplicate' | 'answered' | 'no-issue' | 'app-user';
+export type WebhookResult = 'queued' | 'duplicate' | 'answered' | 'ended' | 'no-issue' | 'app-user';
 export type Outcome = 'launched' | 'failed';
 export type LendResult = { ok: true; accessToken: string } | { ok: false; retryAfter?: number };
 type ActivityType = 'thought' | 'response';
@@ -53,6 +53,10 @@ const HEAD = 'NOT EXISTS (SELECT 1 FROM outbox p WHERE p.session_id = o.session_
  *
  * Queue changes write the activities they need to the outbox in the same synchronous
  * step and call `schedule`; `deliver()` (the Durable Object's alarm) sends them later.
+ *
+ * A stopped or replaced session is recorded in `ended`, so a late `created` or reply
+ * can't queue it again or post after its final response. Claiming a job cancels its
+ * queued thought: once the daemon owns the session, that thought is obsolete.
  */
 export class MachineQueue {
   #sql: Sql;
@@ -81,9 +85,11 @@ export class MachineQueue {
     sql.exec(`CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, issue_id TEXT NOT NULL,
       state TEXT NOT NULL, lease_until INTEGER, updated_at INTEGER NOT NULL)`);
     sql.exec('CREATE TABLE IF NOT EXISTS seen (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
+    sql.exec('CREATE TABLE IF NOT EXISTS ended (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
+    // `queued` marks the queued thought, which a claim cancels.
     sql.exec(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL,
       type TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
-      next_at INTEGER NOT NULL)`);
+      next_at INTEGER NOT NULL, queued INTEGER NOT NULL DEFAULT 0)`);
   }
 
   /** Acts on a webhook whose signature, timestamp and org the Worker already checked. */
@@ -92,12 +98,15 @@ export class MachineQueue {
     if (!app || app.appUserId !== event.appUserId) return 'app-user';
     // No await from here on, so each change and the activities it needs are atomic.
     const now = this.#now();
+    const ended = this.#sql.exec('SELECT 1 FROM ended WHERE session_id = ?', event.sessionId).toArray().length > 0;
 
     if (event.action === 'prompted') {
       if (event.stop) {
         // A stopped session that hasn't been picked up yet shouldn't start later.
         this.#sql.exec("DELETE FROM jobs WHERE id = ? AND state = 'queued'", event.sessionId);
         this.#end(event.sessionId, MESSAGES.stopped, now);
+      } else if (ended) {
+        return 'ended';
       } else {
         this.#enqueue(event.sessionId, 'thought', MESSAGES.replies, now);
       }
@@ -106,6 +115,7 @@ export class MachineQueue {
     }
 
     if (!event.issueId) return 'no-issue';
+    if (ended) return 'ended';
     const fresh = this.#sql.exec(
       'INSERT INTO seen (session_id, at) VALUES (?, ?) ON CONFLICT DO NOTHING RETURNING session_id',
       event.sessionId, now).toArray();
@@ -113,7 +123,7 @@ export class MachineQueue {
     this.#sql.exec("INSERT INTO jobs (id, issue_id, state, updated_at) VALUES (?, ?, 'queued', ?)",
       event.sessionId, event.issueId, now);
     this.#settle(now);
-    this.#enqueue(event.sessionId, 'thought', MESSAGES.queued(app.appName ?? this.#machine), now);
+    this.#enqueue(event.sessionId, 'thought', MESSAGES.queued(app.appName ?? this.#machine), now, true);
     this.#wake();
     return 'queued';
   }
@@ -126,7 +136,11 @@ export class MachineQueue {
       `UPDATE jobs SET state = 'claimed', lease_until = ?, updated_at = ?
        WHERE id = (SELECT id FROM jobs WHERE state = 'queued' ORDER BY rowid LIMIT 1) RETURNING id, issue_id`,
       now + LEASE_MS, now).toArray();
-    return row && { issueId: String(row.issue_id), sessionId: String(row.id) };
+    if (!row) return undefined;
+    // The daemon owns the session now, so its queued thought is obsolete. One already in
+    // flight is never retried: a failure updates a row that is gone.
+    this.#sql.exec('DELETE FROM outbox WHERE session_id = ? AND queued = 1', String(row.id));
+    return { issueId: String(row.issue_id), sessionId: String(row.id) };
   }
 
   /** Records a claimed job's outcome. False if the job isn't claimed. */
@@ -170,7 +184,7 @@ export class MachineQueue {
       const id = Number(row.id);
       const sessionId = String(row.session_id);
       const type = String(row.type) as ActivityType;
-      if (await this.#post(sessionId, type, String(row.body))) {
+      if (await this.#post(id, sessionId, type, String(row.body))) {
         this.#sql.exec('DELETE FROM outbox WHERE id = ?', id);
       } else {
         const attempts = Number(row.attempts) + 1;
@@ -188,13 +202,14 @@ export class MachineQueue {
     if (row?.at != null) this.#schedule(Number(row.at));
   }
 
-  #enqueue(sessionId: string, type: ActivityType, body: string, now: number) {
-    this.#sql.exec('INSERT INTO outbox (session_id, type, body, created_at, next_at) VALUES (?, ?, ?, ?, ?)',
-      sessionId, type, body, now, now);
+  #enqueue(sessionId: string, type: ActivityType, body: string, now: number, queued = false) {
+    this.#sql.exec('INSERT INTO outbox (session_id, type, body, created_at, next_at, queued) VALUES (?, ?, ?, ?, ?, ?)',
+      sessionId, type, body, now, now, queued ? 1 : 0);
   }
 
-  /** Posts a session's final response, cancelling its thoughts not yet sent. */
+  /** Marks a session ended and posts its final response, cancelling its thoughts not yet sent. */
   #end(sessionId: string, body: string, now: number) {
+    this.#sql.exec('INSERT INTO ended (session_id, at) VALUES (?, ?) ON CONFLICT DO NOTHING', sessionId, now);
     this.#sql.exec("DELETE FROM outbox WHERE session_id = ? AND type = 'thought'", sessionId);
     this.#enqueue(sessionId, 'response', body, now);
   }
@@ -206,6 +221,10 @@ export class MachineQueue {
   #settle(now: number): boolean {
     this.#sql.exec("DELETE FROM jobs WHERE state IN ('launched', 'failed') AND updated_at <= ?", now - HISTORY_MS);
     this.#sql.exec('DELETE FROM seen WHERE at <= ?', now - HISTORY_MS);
+    this.#sql.exec('DELETE FROM ended WHERE at <= ?', now - HISTORY_MS);
+    // A stopped session whose lease expired isn't requeued.
+    this.#sql.exec(`DELETE FROM jobs WHERE state = 'claimed' AND lease_until <= ?
+      AND id IN (SELECT session_id FROM ended)`, now);
     // ponytail: an activity Linear keeps refusing is dropped after the history window.
     for (const { session_id, type } of this.#sql.exec(
       'DELETE FROM outbox WHERE created_at <= ? RETURNING session_id, type', now - HISTORY_MS).toArray()) {
@@ -230,9 +249,11 @@ export class MachineQueue {
   }
 
   /** Posts an agent activity. True on success; a failure, including the token's, is never thrown. */
-  async #post(sessionId: string, type: ActivityType, body: string): Promise<boolean> {
+  async #post(id: number, sessionId: string, type: ActivityType, body: string): Promise<boolean> {
     try {
       const token = await this.#auth.getAccessToken();
+      // Cancelled while the token refreshed: nothing left to send.
+      if (!this.#sql.exec('SELECT 1 FROM outbox WHERE id = ?', id).toArray().length) return true;
       const res = await this.#fetch(GRAPHQL_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },

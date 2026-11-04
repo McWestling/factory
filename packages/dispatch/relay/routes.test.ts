@@ -46,7 +46,7 @@ function setup() {
   });
   // Fakes Linear. `posts` records each activity Linear accepted, in order. `failNext`
   // fails that many activity requests; `refreshFails` fails token refreshes; `hold()`
-  // holds the next activity request until released.
+  // holds the next request, activity or token refresh, until released.
   const posts: { auth: string; sessionId: string; type: string; body: string }[] = [];
   const linear = { failNext: 0, refreshFails: false, attempts: 0, hold };
   let held: { reached: () => void; released: Promise<void> } | undefined;
@@ -59,18 +59,18 @@ function setup() {
     return { waiting, release };
   }
   const fetchFn: typeof fetch = async (input, init) => {
-    if (String(input) === 'https://api.linear.app/oauth/token') {
-      if (linear.refreshFails) return new Response(null, { status: 500 });
-      return Response.json({ access_token: 'access-refreshed', refresh_token: 'refresh-2', expires_in: 86400 });
-    }
-    assert.equal(String(input), 'https://api.linear.app/graphql');
-    linear.attempts++;
     const pause = held;
     held = undefined;
     if (pause) {
       pause.reached();
       await pause.released;
     }
+    if (String(input) === 'https://api.linear.app/oauth/token') {
+      if (linear.refreshFails) return new Response(null, { status: 500 });
+      return Response.json({ access_token: 'access-refreshed', refresh_token: 'refresh-2', expires_in: 86400 });
+    }
+    assert.equal(String(input), 'https://api.linear.app/graphql');
+    linear.attempts++;
     if (linear.failNext > 0) {
       linear.failNext--;
       return new Response(null, { status: 503 });
@@ -94,6 +94,7 @@ function setup() {
     jobs: db.prepare('SELECT id, issue_id, state FROM jobs ORDER BY rowid').all().map((row) => ({ ...row })),
     seen: db.prepare('SELECT session_id FROM seen').all().map((row) => ({ ...row })),
     outbox: db.prepare('SELECT session_id, type FROM outbox ORDER BY id').all().map((row) => ({ ...row })),
+    ended: db.prepare('SELECT session_id FROM ended ORDER BY session_id').all().map((row) => ({ ...row })),
   });
 
   /** Delivers a webhook without firing the alarm. */
@@ -164,7 +165,7 @@ for (const [label, tamper, status] of [
     const { clock, deliver, posts, rows } = setup();
     const [payload, sign] = tamper(fixture('created'), clock.now);
     assert.equal((await deliver(payload, sign)).status, status);
-    assert.deepEqual(rows(), { jobs: [], seen: [], outbox: [] });
+    assert.deepEqual(rows(), { jobs: [], seen: [], outbox: [], ended: [] });
     assert.equal(posts.length, 0);
   });
 }
@@ -276,7 +277,7 @@ test('history and dedupe records are kept for 30 days', async () => {
   assert.equal(rows().jobs.length, 1);
   clock.now += 1;
   await claim();
-  assert.deepEqual(rows(), { jobs: [], seen: [], outbox: [] });
+  assert.deepEqual(rows(), { jobs: [], seen: [], outbox: [], ended: [] });
 });
 
 test('the token endpoint lends the cached token, rate-limited per machine', async () => {
@@ -335,6 +336,7 @@ test('a failed activity stays pending across a restart and is retried without qu
   assert.deepEqual(sent(posts), [['session-1', 'thought', QUEUED]]);
   assert.deepEqual(rows(), {
     jobs: [{ id: 'session-1', issue_id: 'issue-1', state: 'queued' }], seen: [{ session_id: 'session-1' }], outbox: [],
+    ended: [],
   });
 });
 
@@ -404,4 +406,96 @@ test("a session's later activity waits for its failed earlier one; other session
   clock.now += 10_000;
   await flush();
   assert.deepEqual(sent(posts).slice(1), [['session-1', 'thought', QUEUED], ['session-1', 'thought', MESSAGES.replies]]);
+});
+
+test('a created webhook arriving after its stop never queues the session', async () => {
+  const { deliver, created, claim, posts, rows, stoppedPayload } = setup();
+  await deliver(stoppedPayload('session-a'));
+  assert.equal((await created('session-a')).status, 200);
+  assert.deepEqual(sent(posts), [['session-a', 'response', MESSAGES.stopped]]);
+  assert.deepEqual(rows().jobs, []);
+  assert.equal(await claim(), undefined);
+});
+
+test('a reply arriving after its session was replaced gets no thought', async () => {
+  const { created, deliver, claim, posts, rows } = setup();
+  await created('session-1');
+  await created('session-2');
+  assert.equal((await deliver(fixture('prompted'))).status, 200);
+  assert.deepEqual(sent(posts), [
+    ['session-1', 'thought', QUEUED],
+    ['session-1', 'response', MESSAGES.replaced],
+    ['session-2', 'thought', QUEUED],
+  ]);
+  assert.deepEqual(rows().ended, [{ session_id: 'session-1' }]);
+  assert.deepEqual(await claim(), { issueId: 'issue-1', sessionId: 'session-2' });
+  assert.equal(await claim(), undefined);
+});
+
+test('a session stopped after its claim is not requeued when the lease expires', async () => {
+  const { clock, created, deliver, claim, daemon, rows } = setup();
+  await created('session-1');
+  await claim();
+  await deliver(fixture('stopped'));
+  clock.now += LEASE_MS;
+  assert.equal(await claim(), undefined);
+  assert.deepEqual(rows().jobs, []);
+  assert.equal((await daemon('POST', '/jobs/session-1/launched')).status, 409);
+});
+
+test('the ended marker expires with the rest of the history', async () => {
+  const { clock, deliver, claim, rows } = setup();
+  await deliver(fixture('stopped'));
+  clock.now += 30 * 86_400_000;
+  await claim();
+  assert.deepEqual(rows().ended, []);
+});
+
+test('a failed queued thought is not retried once the daemon claims and fails the job', async () => {
+  const { created, claim, daemon, flush, linear, posts, rows, clock } = setup();
+  linear.failNext = 1;
+  await created('session-1');
+  await claim();
+  posts.push({ auth: 'daemon', sessionId: 'session-1', type: 'error', body: 'Launch failed.' });
+  assert.equal((await daemon('POST', '/jobs/session-1/failed')).status, 204);
+  clock.now += 10_000;
+  await flush();
+  assert.deepEqual(sent(posts), [['session-1', 'error', 'Launch failed.']]);
+  assert.deepEqual(rows().outbox, []);
+  assert.equal(linear.attempts, 1);
+});
+
+test('a claim during the token refresh cancels the queued thought before it is sent', async () => {
+  const { send, daemon, flush, linear, posts, rows, clock, data, createdPayload } = setup();
+  (data.get('token') as { expiresAt: number }).expiresAt = clock.now + 1000;
+  await send(createdPayload('session-1'));
+  const { waiting, release } = linear.hold();
+  const delivering = flush();
+  await waiting; // Linear holds the token refresh.
+  assert.equal((await daemon('POST', '/jobs/claim')).status, 200);
+  release();
+  await delivering;
+  assert.equal(linear.attempts, 0);
+  assert.deepEqual(posts, []);
+  assert.deepEqual(rows().outbox, []);
+});
+
+test('a queued thought in flight at claim is not retried when it fails', async () => {
+  const { created, send, deliver, daemon, flush, linear, posts, rows, clock, createdPayload } = setup();
+  await send(createdPayload('session-1'));
+  await send(fixture('prompted'));
+  const { waiting, release } = linear.hold();
+  linear.failNext = 1;
+  const delivering = flush();
+  await waiting; // Linear holds the queued thought.
+  assert.equal((await daemon('POST', '/jobs/claim')).status, 200);
+  release();
+  await delivering;
+  clock.now += 10_000;
+  await flush();
+  await deliver(fixture('stopped'));
+  // The reply and the final response still go out; the queued thought never does.
+  assert.deepEqual(sent(posts), [['session-1', 'thought', MESSAGES.replies], ['session-1', 'response', MESSAGES.stopped]]);
+  assert.deepEqual(rows().outbox, []);
+  assert.equal(linear.attempts, 3);
 });
