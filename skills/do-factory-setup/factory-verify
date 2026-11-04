@@ -10,7 +10,6 @@ if sys.version_info < (3, 11):
     )
 
 import argparse
-from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
@@ -18,24 +17,12 @@ import subprocess
 import tomllib
 
 
-@dataclass
-class Check:
-    name: str
-    run: str
-    paths: list[str]
-
-
 def read_checks(root):
     path = Path(".factory/verify.toml")
     try:
-        source = (root / path).read_text(encoding="utf-8")
-        data = tomllib.loads(source)
+        data = tomllib.loads((root / path).read_text(encoding="utf-8"))
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
-        message = str(error)
-        if isinstance(error, tomllib.TOMLDecodeError) and "at end of document" in message:
-            line = source.count("\n") + 1
-            message += f"; line {line}"
-        raise ValueError(f"{path}: {message}") from error
+        raise ValueError(f"{path}: {error}") from error
 
     def invalid(message):
         raise ValueError(f"{path}: {message}")
@@ -48,7 +35,6 @@ def read_checks(root):
     tables = data.get("checks", {})
     if not isinstance(tables, dict):
         invalid("checks must be a table")
-    checks = []
     for name, fields in tables.items():
         if not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name):
             invalid(f"invalid check name: {name}")
@@ -69,35 +55,30 @@ def read_checks(root):
                 f"checks.{name}.paths must be a non-empty array of "
                 "non-empty strings without NUL characters"
             )
-        checks.append(Check(name, command, paths))
-    return checks
+    return tables
 
 
 def run_check(root, check):
-    status = subprocess.run(["sh", "-c", check.run], cwd=root).returncode
+    status = subprocess.run(["sh", "-c", check["run"]], cwd=root).returncode
     return status if status >= 0 else 128 - status
 
 
 def git_output(root, *args):
-    return subprocess.check_output(
-        ["git", *args], cwd=root, text=True, stderr=subprocess.PIPE,
-    ).rstrip("\n")
+    return subprocess.check_output(["git", *args], cwd=root, text=True).rstrip("\n")
 
 
 def plan_checks(root, checks, base, head):
     for sha in (base, head):
-        if not re.fullmatch(r"[0-9a-fA-F]+", sha):
-            raise ValueError(f"expected a commit SHA: {sha}")
         git_output(root, "rev-parse", "--verify", f"{sha}^{{commit}}")
     selected = []
-    for check in checks:
+    for name, check in checks.items():
         diff = subprocess.run(
             ["git", "diff", "--quiet", "--no-ext-diff", "--no-textconv",
-             f"{base}...{head}", "--", *[f":(glob){path}" for path in check.paths]],
-            cwd=root, text=True, capture_output=True,
+             f"{base}...{head}", "--", *[f":(glob){path}" for path in check["paths"]]],
+            cwd=root,
         )
         if diff.returncode == 1:
-            selected.append(check.name)
+            selected.append(name)
         elif diff.returncode != 0:
             diff.check_returncode()
     return {"base": base, "head": head, "checks": selected}
@@ -119,15 +100,14 @@ def main():
     if args.command == "run":
         if args.all:
             failed = False
-            for check in checks:
+            for name, check in checks.items():
                 status = run_check(root, check)
                 failed |= status != 0
-                print(f"{'FAIL' if status else 'PASS'} {check.name}", flush=True)
+                print(f"{'FAIL' if status else 'PASS'} {name}", flush=True)
             return int(failed)
-        for check in checks:
-            if check.name == args.check:
-                return run_check(root, check)
-        raise ValueError(f"unknown check: {args.check}")
+        if args.check not in checks:
+            raise ValueError(f"unknown check: {args.check}")
+        return run_check(root, checks[args.check])
     print(json.dumps(plan_checks(root, checks, args.base, args.head)))
     return 0
 
@@ -136,6 +116,6 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except subprocess.CalledProcessError as error:
-        sys.exit(f"factory-verify: {(error.stderr or str(error)).strip()}")
+        sys.exit(error.returncode)
     except (OSError, ValueError) as error:
         sys.exit(f"factory-verify: {error}")
