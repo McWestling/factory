@@ -141,6 +141,10 @@ To open the PR:
 
 End with the PR link.
 
+## Stale skills check
+
+This is per machine, so it isn't part of a setup run. To get warned about out-of-date factory skills, add a `SessionStart` command hook that runs `node ~/.agents/skills/do-factory-setup/check-skills.ts`.
+
 ## Template
 
 Slots are `{{…}}`. Fill them from Linear; everything else is copied exactly, including the `<…>` placeholders in the comment shape and pull request lines. Where a slot is a table row or list item, repeat it for each match, in the order given.
