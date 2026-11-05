@@ -76,3 +76,13 @@ To set it up by hand instead, copy [McWestling's `docs/issue-tracker.md`](docs/i
 ## Contributing
 
 Contributions are accepted under this repo's [MIT license](LICENSE) (inbound=outbound).
+
+### Check installed Factory skills at session start
+
+After installing the skills, add a `SessionStart` command hook that runs:
+
+```sh
+node ~/.agents/skills/do-factory-setup/check-skills.ts
+```
+
+Claude Code adds successful `SessionStart` stdout to the session context; it does not reliably display it as a user-facing message. Codex also treats `SessionStart` stdout as developer context. In both tools, the agent can see the warning and tell you to run the listed update command. The check never updates skills itself. Configure the command in Claude Code's `hooks` settings or Codex's `SessionStart` hook configuration; hook setup is intentionally left to each machine.
