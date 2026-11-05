@@ -59,7 +59,22 @@ Collect everything below that applies, and ask it all in one AskUserQuestion rou
 - **Dev command:** the `dev` script doesn't start the server itself (it calls a custom wrapper such as `node infra/scripts/dev-config.mjs`, or a task runner like `turbo dev`), so you can't tell with confidence how the server takes its port. Say in one sentence which file picks the port, then offer to edit that file so each workspace gets its own port, or to skip for now (every workspace keeps the current port). Never guess.
 - **Template:** the team has issue templates, but not exactly one whose name or description says "implementation". Which one do agents use to write implementation issues? Offer each template by name, plus "None" (agents write them without a Linear template).
 - **Scripts:** `AGENTS.md` has a `## Scripts` section whose text differs from the Scripts row's rule, with its Linear mentions written as links. Offer to replace the section's text with the rule (recommended) or keep it.
-- **Adding a repo:** before checking any blocks, try `python3.14`, `python3.13`, `python3.12`, `python3.11`, then `python3`, in that order. Pick the first command that exists and whose `--version` reports Python 3.11 or newer, and use that interpreter for every `adopt.py` call in this setup run. Pipe each block to `<python> adopt.py check` (the `adopt.py` beside this file), from the repo root. For each page whose check prints `applies: yes` and `done: no`, ask: **Run** (recommended) or **Skip for now**, naming the page, with the check's `run:` and `maintainer:` lines verbatim in the option's preview. Ask nothing for a page that doesn't apply or is already done. If no candidate qualifies, skip the blocks and name their pages in [Finish](#8-finish).
+- **Adding a repo:** before checking any blocks, run this to find Python. It goes through the absolute `PATH` entries in order, tries each one's `python3` and `python3.<minor>`, and prints the first that runs and reports Python 3.11 or newer. It skips relative entries, so a repo can't supply the interpreter.
+
+  ```sh
+  sh -c 'IFS=:
+  for dir in $PATH; do
+    case $dir in /*) ;; *) continue ;; esac
+    for py in "$dir"/python3 "$dir"/python3.[0-9] "$dir"/python3.[0-9][0-9]; do
+      [ -x "$py" ] || continue
+      version=$("$py" --version 2>&1 </dev/null) || continue
+      case $version in "Python 3.1"[1-9].* | "Python 3."[2-9][0-9].*) echo "$py"; exit 0 ;; esac
+    done
+  done
+  exit 1'
+  ```
+
+  Use the printed path as `<python>` for every `adopt.py` call in this setup run. If it prints nothing, skip the blocks and name their pages in [Finish](#8-finish). Otherwise pipe each block to `<python> adopt.py check` (the `adopt.py` beside this file), from the repo root. The check only reads: it runs none of the block's commands, so it can't tell whether a service is already set up, and you must not run them yourself to find out. For each page whose check prints `applies: yes`, ask: **Run** (recommended) or **Skip for now**, naming the page, with the check's `done-check:`, `run:` and `maintainer:` lines verbatim in the option's preview. Say that **Run** does the done check first and skips the service if it's already set up. Ask nothing for a page that doesn't apply.
 - **Template change:** a newer [changelog](#changelog) entry whose line differs in the doc. Ask: "Factory now recommends <new text> because <why>. Switch, or keep yours?", with **Switch** first.
 - **Drift:** on a re-run, a value in the doc that Linear contradicts (a renamed status, a deleted view). Offer to update the doc line or keep it.
 
@@ -83,7 +98,7 @@ Don't commit yet; [Finish](#8-finish) offers that.
 
 ## 5. Adding a repo
 
-Skip this step if no page has a block or the user picked Run for none. Otherwise, for each page they picked, in Tool Stack order, pipe its block to `<python> adopt.py run` from the repo root, using the interpreter selected in [the interview](#3-ask-once). It runs the steps in order, stops at the first failure, and prints only `ok:` and `failed:` lines (never the commands' output) and the `maintainer:` steps it didn't run. Keep those lines for [Finish](#8-finish).
+Skip this step if no page has a block or the user picked Run for none. Otherwise, for each page they picked, in Tool Stack order, pipe its block to `<python> adopt.py run` from the repo root, using the interpreter selected in [the interview](#3-ask-once). It does the done check first: if the service is already set up, it prints `done: yes` and runs nothing else. Otherwise it runs the steps in order, stops at the first failure, and prints only `ok:` and `failed:` lines (never the commands' output) and the `maintainer:` steps it didn't run. Keep those lines for [Finish](#8-finish).
 
 A failed page doesn't stop setup: carry on with the next page and the steps below. Never retry, fix or work around a failed step, install a tool a step needs, or fetch a credential for it; the maintainer does that.
 
