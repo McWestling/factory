@@ -40,10 +40,10 @@ People who plan their work in Linear and want coding agents to do more of the bu
 
 You need Git, Node.js 22.20+ with npm, the [GitHub CLI](https://cli.github.com), a coding agent and a Linear workspace. Python 3.11+ enables service setup; a POSIX shell and `nc` enable dev ports.
 
-1. **Install Factory.** Replace `codex` with your [agent’s identifier](https://skills.sh/docs/cli), such as `claude-code` or `cursor`. Keep `-a` to avoid installing for every agent.
+1. **Install Factory.** Run this in your terminal and select your agents when prompted.
 
    ```sh
-   npx skills add mcwestling/factory --skill '*' -g -a codex -y
+   npx skills add mcwestling/factory --skill '*' -g
    ```
 
 2. **Connect Linear and GitHub.** Add [Linear’s MCP server](https://linear.app/docs/mcp) to your agent and sign in, then run `gh auth login`.
