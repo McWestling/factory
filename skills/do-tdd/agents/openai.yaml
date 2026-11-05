@@ -1,3 +1,0 @@
-interface:
-  display_name: "Do TDD"
-  short_description: "Test-driven red-green-refactor"

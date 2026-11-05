@@ -8,7 +8,7 @@ The other factory skills (`do-post-its`, `do-triage`, `do-refine`, `do-implement
 
 Setup is opinionated and deterministic: the same Linear workspace always gives the same doc. The doc is the [template](#template) below, copied verbatim, with only its `{{…}}` slots filled from Linear. Never reword, reorder or add to the template's text.
 
-The run asks at most one round of easy questions, then ends with "Looks good, we're set up!" and, when it wrote files, an offer to open a draft PR. Never end with a list of notes for the user to parse.
+The run asks at most one round of easy questions. It reports whether dependencies are usable, saying "Looks good, we're set up!" only when they are, and offers a draft PR when it wrote files. Never end with a list of notes for the user to parse.
 
 ## Linear
 
@@ -19,7 +19,36 @@ Use the Linear MCP server for every read (in an Orca workspace, `orca linear` al
 Run this before anything else; it asks nothing, so it doesn't count toward the question round.
 
 - **`gh`:** run `gh auth status`. If `gh` is missing or the command fails, stop and tell the user to install it or run `gh auth login`, then run setup again.
+- **Upstream skills:** inspect the current agent's advertised skills for `grilling`, `domain-modeling`, `research`, `prototype`, `tdd`, `codebase-design` and `code-review`, either all prefixed `mattpocock-skills:` or all bare from `mattpocock/skills`. The last two support upstream TDD. Use the agent's existing plugin list and skills-CLI list/lock to distinguish an enabled installation from one merely cached on disk. An installation that this session cannot discover is pending, not usable. Do not invoke a dependency just to check setup: it may start an interview or edit files.
 - **Orca:** recommended, never required. It's found if any `ORCA_*` environment variable is set or `orca` is on the `PATH`. If not, carry on and mention it in [Finish](#8-finish).
+
+### Dependency installation
+
+Factory owns the workflow; [Matt's upstream skills](https://github.com/mattpocock/skills#installation-30-second-setup) supply the supporting practices. Install the full upstream set so its sibling calls and references are supplied too. Use one form per agent, and only target the agent running setup.
+
+- **Already usable:** keep the existing form; offer no install. If both forms are present, report the duplication for the maintainer to resolve; do not install or remove anything.
+- **Installed but undiscovered:** request a fresh session of the current agent and rerun setup; do not install another form.
+- **Missing or partial:** include the dependency question in step 3. Prefer the plugin when the current agent supports it. Keep an existing CLI installation on the CLI route rather than adding a plugin over it. Use the current upstream installation instructions for other plugin-capable agents.
+
+Commands for a missing plugin:
+
+```sh
+# Claude Code only
+claude plugin install mattpocock-skills@claude-plugins-official
+# Codex only
+codex plugin marketplace add mattpocock/skills
+codex plugin add mattpocock-skills@mattpocock
+```
+
+For an agent without plugin support, or to complete an existing CLI installation:
+
+```sh
+npx skills add mattpocock/skills --skill '*' -g -a <current-agent> -y
+```
+
+Replace `<current-agent>` with that agent's skills-CLI identifier (for example `cursor`); resolve it from the installer's supported agents, never guess or use `--all`. Never run `-y` without `-a`. This may use the installer's shared canonical store; it must create links only for the selected agent. Never install the CLI form for an agent already using the plugin. Before a CLI install, check whether its shared store would also expose bare skills to another plugin-enabled agent on this machine. If it would, defer the install and report the conflict so the maintainer can choose one form for the affected agents; do not build alternate storage or wrappers.
+
+After the step 3 answer, run only the approved route, then recheck the current agent's discovery. On failure or skipped install, report missing dependencies. When installed but not advertised, say: "Dependencies installed; start a fresh session and rerun do-factory-setup before using do-refine or do-implement." Continue independent repo setup, but keep overall setup pending.
 
 ## 1. Find what exists
 
@@ -49,6 +78,7 @@ Read in parallel:
 
 Collect everything below that applies, and ask it all in one AskUserQuestion round (at most 4 questions per call; more calls only if needed). Write each question for someone new to the factory: say what you found in plain words, say what each option will do, and put the recommended one first. If someone new couldn't answer it, don't ask: use the default. Skip anything the existing doc already settles.
 
+- **Dependencies:** when the machine check finds missing upstream skills, offer **Install for this agent** (recommended) or **Skip for now**, naming the route and exact commands from [Dependency installation](#dependency-installation). If the current agent cannot be identified, ask which agent to target in this same round before running any installer.
 - **Team:** more than one active team. Which one does this repo's work live in?
 - **Repo line:** a product initiative whose first description line isn't exactly `Repo: owner/name` or `Repo: none`. Offer the likely repo (this one, if the name fits), `Repo: none`, and leaving it for later. Offer to write the answer to the initiative.
 - **Product label:** an initiative with no Product label of the same name, or the reverse. Offer to create the missing label or skip.
@@ -150,7 +180,7 @@ Skip this step if step 1 found no dev server. Otherwise do each part that isn't 
 
 ## 8. Finish
 
-Say "Looks good, we're set up!". Add a few words if dev ports were skipped for having no dev server, or if you replaced a `scripts/dev-port` that had drifted. If an Adding a repo block ran, failed or was skipped for want of Python, add one line naming the maintainer steps left to do and any page that failed, with its failed step and exit code. If the [machine check](#machine-check) didn't find Orca, add one line recommending it, with the link <https://onorca.dev/download>. If you wrote nothing, stop there.
+If all dependencies are advertised and usable, say "Looks good, we're set up!". Otherwise say "Repo setup finished; supporting skills are still pending", name the missing skills or failed install, and give the fresh-session instruction above when needed. Add a few words if dev ports were skipped for having no dev server, or if you replaced a `scripts/dev-port` that had drifted. If an Adding a repo block ran, failed or was skipped for want of Python, add one line naming the maintainer steps left to do and any page that failed, with its failed step and exit code. If the [machine check](#machine-check) didn't find Orca, add one line recommending it, with the link <https://onorca.dev/download>. If you wrote nothing, stop there.
 
 If you wrote files, name them in one line, then ask once (AskUserQuestion): **Open a draft PR** (recommended) or **Leave the changes for me**. Leaving them ends the run with the working tree as it is, for the user to review with `git diff`.
 

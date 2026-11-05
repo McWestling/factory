@@ -50,11 +50,6 @@ People who plan their work in Linear and want coding agents to do more of the bu
 | `do-refine`        | Charts maps, resolves decision tickets, and slices implementation issues            |
 | `do-implement`     | Takes one implementation issue to a verified draft PR                               |
 | `do-factory-setup` | Writes a repo's tracker doc and scripts rule, runs setup blocks, installs dev ports |
-| `do-grill`         | Interviews you in rounds to stress-test a plan or decision                          |
-| `do-model`         | Sharpens a project's domain language, glossary and decision records                 |
-| `do-research`      | Researches a question against primary sources and writes up the findings            |
-| `do-prototype`     | Builds a throwaway prototype to answer a design question                            |
-| `do-tdd`           | Builds test-first, in a red-green loop                                              |
 
 ## New machine
 
@@ -65,11 +60,36 @@ This sets up the machine; [Adopting](#adopting) sets up each repo. Install these
 - Python 3.11+ for service setup blocks; setup skips them and reports it when unavailable.
 - A POSIX shell and `nc` for dev ports (both included with macOS).
 
-1. **Install the skills.** The skills link to each other, so install all of them. Run this in your own terminal and pick your agents when prompted. Inside a coding agent the installer skips that prompt, and `-y` without `-a` does the same: either way it creates dot-directories for every agent it knows.
+1. **Install Factory for your agent.** Install all five workflow skills, targeting only the agent you use. Replace `codex` with its [skills-CLI identifier](https://skills.sh/docs/cli) (for example `claude-code` or `cursor`). Always include `-a` in an unattended run; without it the installer can create directories for every agent.
 
    ```sh
-   npx skills add mcwestling/factory --skill '*' -g
+   npx skills add mcwestling/factory --skill '*' -g -a codex -y
    ```
+
+   **Install Matt's supporting skills once per agent.** Prefer his plugin where supported; keep an existing upstream CLI installation rather than installing both forms. For Codex:
+
+   ```sh
+   codex plugin marketplace add mattpocock/skills
+   codex plugin add mattpocock-skills@mattpocock
+   ```
+
+   For Claude Code:
+
+   ```sh
+   claude plugin install mattpocock-skills@claude-plugins-official
+   ```
+
+   For agents without plugin support, use the skills CLI instead, targeting that agent only:
+
+   ```sh
+   npx skills add mattpocock/skills --skill '*' -g -a cursor -y
+   ```
+
+   The full upstream set supplies sibling dependencies too. Factory directly uses `grilling`, `domain-modeling`, `research`, `prototype` and `tdd`; upstream TDD also calls `codebase-design` and refers to `code-review`. Plugin names have the `mattpocock-skills:` prefix; CLI names are bare. Factory keeps its own `do-refine` workflow and `do-implement`'s manual review.
+
+   The CLI uses a shared skill store, which can also be discovered by other agents. If a CLI install would duplicate skills in an agent already using the plugin, settle on one form for those agents before installing.
+
+   Follow [Matt's installation instructions](https://github.com/mattpocock/skills#installation-30-second-setup) for other supported plugins. Start a fresh agent session after installation if the new skills aren't discovered. Setup also recognizes existing dependencies and offers to install missing ones in its question round; installation alone does not mean they are usable.
 
 2. **Sign in to Linear.** Add Linear's MCP server to your coding agent and sign in, following [Linear's MCP guide](https://linear.app/docs/mcp).
 3. **Sign in to GitHub.** Install the [GitHub CLI](https://cli.github.com), then run `gh auth login`.
