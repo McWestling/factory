@@ -60,7 +60,7 @@ People who plan their work in Linear and want coding agents to do more of the bu
 
 This sets up the machine; [Adopting](#adopting) sets up each repo. You need a coding agent and a Linear workspace first.
 
-1. **Install the skills.** The skills link to each other, so install all of them, and pick your agents when prompted. Don't add `-y` without `-a`: on its own, it creates dot-directories for every agent the installer knows.
+1. **Install the skills.** The skills link to each other, so install all of them. Run this in your own terminal and pick your agents when prompted. Inside a coding agent the installer skips that prompt, and `-y` without `-a` does the same: either way it creates dot-directories for every agent it knows.
 
    ```sh
    npx skills add mcwestling/factory --skill '*' -g
