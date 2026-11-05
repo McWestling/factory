@@ -4,7 +4,7 @@ Factory is the thing that makes our things.  It turns ideas into finished softw
 
 ## What it does
 
-Factory is an opinionated set of workflow skills for our coding agents. Together they cover the path from a rough idea to a merged change:
+Factory builds on selected skills from [mattpocock/skills](https://github.com/mattpocock/skills) for research, design, prototyping and testing. It connects those practices into a workflow for Linear users, from a rough idea to a merged change:
 
 - **Capture:** turn photos of handwritten sticky notes, or dictated thoughts, into triage tickets in Linear.
 - **Triage:** review new tickets in triage with you, the human, and route each one: build it, plan it further, or drop it.
