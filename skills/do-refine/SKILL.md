@@ -117,9 +117,9 @@ Each decision ticket is **HITL** (worked live with a person who answers for them
 
 | Label                 | Mode        | Resolve it by                                                                                                                                                                                                                                                                                     |
 | --------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `wayfinder:research`  | AFK         | A subagent that calls the Skill tool with "research", to find a fact outside this checkout: docs, third-party APIs, knowledge bases. The resolution states every precondition the answer hangs on (a paid plan, a license, an account, a cost), not only the research branch.                                                                                                                                                              |
-| `wayfinder:prototype` | HITL        | Calling the Skill tool with "prototype" to make something rough and concrete to react to (an outline, a stub, a bit of UI or logic). Use it when the question is how something should look or behave. Link the prototype.                                                                         |
-| `wayfinder:grilling`  | HITL        | Conversation, in rounds (see [Grilling](#grilling)). Call the Skill tool for "grilling", and also for "domain-modeling" when the decision introduces or changes domain terms. The default type.                                                                                                                                                              |
+| `wayfinder:research`  | AFK         | A subagent that calls the Skill tool with "do-research", to find a fact outside this checkout: docs, third-party APIs, knowledge bases. The resolution states every precondition the answer hangs on (a paid plan, a license, an account, a cost), not only the research branch.                                                                                                                                                              |
+| `wayfinder:prototype` | HITL        | Calling the Skill tool with "do-prototype" to make something rough and concrete to react to (an outline, a stub, a bit of UI or logic). Use it when the question is how something should look or behave. Link the prototype.                                                                         |
+| `wayfinder:grilling`  | HITL        | Conversation, in rounds (see [Grilling](#grilling)). Call the Skill tool for "do-grill", and also for "do-model" when the decision introduces or changes domain terms. The default type.                                                                                                                                                              |
 | `wayfinder:task`      | HITL or AFK | Doing the manual work a decision is waiting on: sign up for a service, get access, move data so its shape is visible. Do it yourself where you can; otherwise give the user an exact checklist. Record what was done and any facts later tickets need (where credentials live, new URLs, counts). |
 
 Work that delivers the destination is an implementation issue, not a task.
@@ -178,21 +178,21 @@ The user names an idea or a map (by URL or name), and maybe a ticket. Pick the m
 
 ### Chart a map
 
-1. **Name the destination.** Call the Skill tool for "grilling" (and for "domain-modeling" when the effort brings new domain terms) to settle what the map is heading for. Do this first; it fixes the scope.
+1. **Name the destination.** Call the Skill tool for "do-grill" (and for "do-model" when the effort brings new domain terms) to settle what the map is heading for. Do this first; it fixes the scope.
 2. **Survey the way.** Grill again, broad rather than deep: cover the whole space to surface the open decisions, the build work and the first steps that can be taken now. If nothing is left open, skip decision tickets: make the map with an empty frontier and go straight to [Slicing](#slicing) in this session.
 3. **Make the map.** Create the project with its summary and description: Destination and Notes filled in, Decisions so far empty, fog sketched into **Not yet specified**, in the product's initiative, with a charted status.
 
    Given a stub map from triage, chart that project instead of making a new one. Keep its summary and links, confirm or rewrite its draft Destination, and turn its **Not yet specified** captures and any issues triage moved into it into decision tickets, implementation issues or fog. When you rewrite a captured issue, keep its original words at the bottom of the body under `## Origin`.
 
 4. **Ticket what you can.** Create the decision tickets you can state now, flat in the project and in the ready status. Then, in a second pass, wire `blocks` / `blockedBy` and write any cross-references with the real ids. Wiring sorts tickets into the frontier and the blocked. Everything else stays fog. Build work that's already settled can be sliced now.
-5. **Start the research.** For each `wayfinder:research` ticket you created, start a subagent that calls the Skill tool with "research" and resolves it in parallel. It writes its findings to a throwaway `research/<name>` branch, pushed but never opened as a PR, and links that branch from the ticket.
+5. **Start the research.** For each `wayfinder:research` ticket you created, start a subagent that calls the Skill tool with "do-research" and resolves it in parallel. It writes its findings to a throwaway `research/<name>` branch, pushed but never opened as a PR, and links that branch from the ticket.
 6. **Stop.** Charting is a whole session. It resolves nothing by hand.
 
 ### Resolve a decision
 
 1. **Load the map:** the project summary and description, not every ticket.
 2. **Choose and claim.** Take the ticket the user named, or else the first one on the frontier. Claim it before doing anything else. If it's the first claim on the map, set the project to a started status.
-3. **Resolve it** the way its `wayfinder:` label says (see [Ticket types](#ticket-types)). Fetch other tickets' full bodies and resolutions only when you need them. Call the skills that **Notes** names; when unsure, call "grilling".
+3. **Resolve it** the way its `wayfinder:` label says (see [Ticket types](#ticket-types)). Fetch other tickets' full bodies and resolutions only when you need them. Call the skills that **Notes** names; when unsure, call "do-grill".
 4. **Record it.** Post the answer as the **Decision resolved** comment per **Comment shape**, set the ticket to the done status, and patch one gist line into **Decisions so far**.
 5. **Follow through.**
    - Add any new decision tickets the answer surfaced (create, then wire).

@@ -19,7 +19,7 @@ People who plan their work in Linear and want coding agents to do more of the bu
 
 ## Learn more
 
-- [Install the skills](#install)
+- [Set up a new machine](#new-machine)
 - [Adopt Factory in your own project](#adopting)
 - [McWestling's settings file, a worked example](docs/issue-tracker.md)
 - [License](LICENSE)
@@ -50,18 +50,29 @@ People who plan their work in Linear and want coding agents to do more of the bu
 | `do-refine`        | Charts maps, resolves decision tickets, and slices implementation issues            |
 | `do-implement`     | Takes one implementation issue to a verified draft PR                               |
 | `do-factory-setup` | Writes a repo's tracker doc and scripts rule, runs setup blocks, installs dev ports |
+| `do-grill`         | Interviews you in rounds to stress-test a plan or decision                          |
+| `do-model`         | Sharpens a project's domain language, glossary and decision records                 |
+| `do-research`      | Researches a question against primary sources and writes up the findings            |
+| `do-prototype`     | Builds a throwaway prototype to answer a design question                            |
+| `do-tdd`           | Builds test-first, in a red-green loop                                              |
 
-## Install
+## New machine
 
-```sh
-npx skills add mcwestling/factory --skill '*' -g
-```
+This sets up the machine; [Adopting](#adopting) sets up each repo. You need a coding agent and a Linear workspace first.
 
-The skills link to each other, so install all of them.
+1. **Install the skills.** The skills link to each other, so install all of them, and pick your agents when prompted. Don't add `-y` without `-a`: on its own, it creates dot-directories for every agent the installer knows.
+
+   ```sh
+   npx skills add mcwestling/factory --skill '*' -g
+   ```
+
+2. **Sign in to Linear.** Add Linear's MCP server to your coding agent and sign in, following [Linear's MCP guide](https://linear.app/docs/mcp).
+3. **Sign in to GitHub.** Install the [GitHub CLI](https://cli.github.com), then run `gh auth login`.
+4. **Install Orca (recommended).** [Orca](https://onorca.dev/download) runs your coding agents in parallel workspaces, on macOS, Windows and Linux. Factory works without it.
 
 ## Adopting
 
-To adopt Factory, [install the skills](#install), then run this in your coding agent, in your repo:
+To adopt Factory, [set up your machine](#new-machine), then run this in your coding agent, in your repo:
 
 ```text
 /do-factory-setup
