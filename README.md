@@ -58,7 +58,12 @@ People who plan their work in Linear and want coding agents to do more of the bu
 
 ## New machine
 
-This sets up the machine; [Adopting](#adopting) sets up each repo. You need a coding agent and a Linear workspace first.
+This sets up the machine; [Adopting](#adopting) sets up each repo. Install these tools first:
+
+- Git, Node.js 22.20+ (26 LTS recommended, with npm and `npx`), and the GitHub CLI (`gh`).
+- A coding agent and access to a Linear workspace.
+- Python 3.11+ for service setup blocks; setup skips them and reports it when unavailable.
+- A POSIX shell and `nc` for dev ports (both included with macOS).
 
 1. **Install the skills.** The skills link to each other, so install all of them. Run this in your own terminal and pick your agents when prompted. Inside a coding agent the installer skips that prompt, and `-y` without `-a` does the same: either way it creates dot-directories for every agent it knows.
 
