@@ -62,7 +62,7 @@ If the user skips a question that fills a slot, write `TODO:` and the question i
 
 ## 4. Write
 
-1. **Tracker doc:** apply the newer [changelog](#changelog) entries, then fill the gaps from the template, keeping every other line as it was. Set the `**Setup version:**` line to this skill's version, adding it if it's missing. For a new doc, write the whole template. Keep tables column-aligned.
+1. **Tracker doc:** fill the gaps from the template, then apply the newer [changelog](#changelog) entries, keeping every other line as it was. Set the `**Setup version:**` line to this skill's version, adding it if it's missing. For a new doc, write the whole template. Keep tables column-aligned.
 2. **AGENTS.md:** if it doesn't link the doc, add this under an `## Issue tracker` heading, using the path from step 1, and touch nothing else. Create `AGENTS.md` with just that if the repo has none.
 
    ```markdown
@@ -323,16 +323,13 @@ Datelines in use:
 
 ## Changelog
 
-Every change to the template's text bumps its setup version to the day of the change and adds an entry here, newest last. If two changes land on the same day, the later version gets a suffix, like `2026-10-25.2`. There are no semantic versions and no archive of old templates.
+Every change to the template's text bumps its setup version to the day of the change and adds an entry here, newest last. If two changes land on the same day, the later version gets a suffix, like `2026-10-25.2`.
 
 Apply each entry newer than the doc's version, in order. Compare with slots filled and table padding ignored:
 
 - **The doc has the old text:** switch it to the new text without asking. An entry whose old text is _none_ adds a new line: the doc has the old text when the line's heading has nothing on that subject.
 - **The doc already has the new text:** nothing to do.
 - **The doc's line differs:** the user changed it on purpose. Ask in [step 3](#3-ask-once), and switch only if they pick **Switch**.
-- **The entry's heading is missing:** skip the entry; filling the gap writes the current text.
-
-Updating the stamp records the outcome, so a line the user kept isn't asked about again.
 
 ### 2026-11-05
 
