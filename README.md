@@ -19,7 +19,7 @@ People who plan their work in Linear and want coding agents to do more of the bu
 
 ## Learn more
 
-- [Set up a new machine](#new-machine)
+- [Install the skills](#install)
 - [Adopt Factory in your own project](#adopting)
 - [McWestling's settings file, a worked example](docs/issue-tracker.md)
 - [License](LICENSE)
@@ -36,22 +36,19 @@ People who plan their work in Linear and want coding agents to do more of the bu
 | `do-implement`     | Takes one implementation issue to a verified draft PR                               |
 | `do-factory-setup` | Writes a repo's tracker doc and scripts rule, runs setup blocks, installs dev ports |
 
-## New machine
+## Install
 
-You need Git, Node.js 22.20+ with npm, the [GitHub CLI](https://cli.github.com), a coding agent and a Linear workspace. Python 3.11+ enables service setup; a POSIX shell and `nc` enable dev ports.
+```sh
+npx skills add mcwestling/factory --skill '*' -g
+```
 
-1. **Install Factory.** Run this in your terminal and select your agents when prompted.
+Run this in your terminal and select your agents when prompted. Install all the skills; they work together.
 
-   ```sh
-   npx skills add mcwestling/factory --skill '*' -g
-   ```
-
-2. **Connect Linear and GitHub.** Add [Linear’s MCP server](https://linear.app/docs/mcp) to your agent and sign in, then run `gh auth login`.
-3. **Consider Orca.** [Orca](https://onorca.dev/download) manages parallel agent workspaces. It’s recommended, not required.
+You need Git, Node.js 22.20+ with npm, the [GitHub CLI](https://cli.github.com), and [Linear’s MCP server](https://linear.app/docs/mcp) connected to your agent. Run `gh auth login` to sign in to GitHub. Python 3.11+ enables service setup; a POSIX shell and `nc` enable dev ports. [Orca](https://onorca.dev/download) is recommended for parallel agent workspaces.
 
 ## Adopting
 
-In each repo, run:
+After [installing the skills](#install), run this in your agent, in each repo:
 
 ```text
 /do-factory-setup
