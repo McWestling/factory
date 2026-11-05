@@ -4,7 +4,7 @@ Factory is the thing that makes our things.  It turns ideas into finished softw
 
 ## What it does
 
-Factory builds on selected skills from [mattpocock/skills](https://github.com/mattpocock/skills) for research, design, prototyping and testing. It connects those practices into a workflow for Linear users, from a rough idea to a merged change:
+Factory connects [Matt Pocock’s skills](https://github.com/mattpocock/skills) into a workflow for Linear users:
 
 - **Capture:** turn photos of handwritten sticky notes, or dictated thoughts, into triage tickets in Linear.
 - **Triage:** review new tickets in triage with you, the human, and route each one: build it, plan it further, or drop it.
@@ -26,22 +26,7 @@ People who plan their work in Linear and want coding agents to do more of the bu
 
 ---
 
-## Layout
-
-```text
-.
-├── AGENTS.md              # Rules for agents working in this repo
-├── docs/
-│   └── issue-tracker.md   # McWestling's tracker values; the worked example
-├── skills/
-│   └── <name>/            # One folder per skill: SKILL.md, agents/openai.yaml
-└── tools/
-    └── orca/              # The dev-port convention (script ships with do-factory-setup)
-```
-
 ## Skills
-
-`do-` is the factory's verb prefix: each skill is something the factory does.
 
 | Skill              | What it does                                                                        |
 | ------------------ | ----------------------------------------------------------------------------------- |
@@ -53,61 +38,32 @@ People who plan their work in Linear and want coding agents to do more of the bu
 
 ## New machine
 
-This sets up the machine; [Adopting](#adopting) sets up each repo. Install these tools first:
+You need Git, Node.js 22.20+ with npm, the [GitHub CLI](https://cli.github.com), a coding agent and a Linear workspace. Python 3.11+ enables service setup; a POSIX shell and `nc` enable dev ports.
 
-- Git, Node.js 22.20+ (26 LTS recommended, with npm and `npx`), and the GitHub CLI (`gh`).
-- A coding agent and access to a Linear workspace.
-- Python 3.11+ for service setup blocks; setup skips them and reports it when unavailable.
-- A POSIX shell and `nc` for dev ports (both included with macOS).
-
-1. **Install Factory for your agent.** Install all five workflow skills, targeting only the agent you use. Replace `codex` with its [skills-CLI identifier](https://skills.sh/docs/cli) (for example `claude-code` or `cursor`). Always include `-a` in an unattended run; without it the installer can create directories for every agent.
+1. **Install Factory.** Replace `codex` with your [agent’s identifier](https://skills.sh/docs/cli), such as `claude-code` or `cursor`. Keep `-a` to avoid installing for every agent.
 
    ```sh
    npx skills add mcwestling/factory --skill '*' -g -a codex -y
    ```
 
-   **Install Matt's supporting skills once per agent.** Prefer his plugin where supported; keep an existing upstream CLI installation rather than installing both forms. For Codex:
-
-   ```sh
-   codex plugin marketplace add mattpocock/skills
-   codex plugin add mattpocock-skills@mattpocock
-   ```
-
-   For Claude Code:
-
-   ```sh
-   claude plugin install mattpocock-skills@claude-plugins-official
-   ```
-
-   For agents without plugin support, use the skills CLI instead, targeting that agent only:
-
-   ```sh
-   npx skills add mattpocock/skills --skill '*' -g -a cursor -y
-   ```
-
-   The full upstream set supplies sibling dependencies too. Factory directly uses `grilling`, `domain-modeling`, `research`, `prototype` and `tdd`; upstream TDD also calls `codebase-design` and refers to `code-review`. Plugin names have the `mattpocock-skills:` prefix; CLI names are bare. Factory keeps its own `do-refine` workflow and `do-implement`'s manual review.
-
-   The CLI uses a shared skill store, which can also be discovered by other agents. If a CLI install would duplicate skills in an agent already using the plugin, settle on one form for those agents before installing.
-
-   Follow [Matt's installation instructions](https://github.com/mattpocock/skills#installation-30-second-setup) for other supported plugins. Start a fresh agent session after installation if the new skills aren't discovered. Setup also recognizes existing dependencies and offers to install missing ones in its question round; installation alone does not mean they are usable.
-
-2. **Sign in to Linear.** Add Linear's MCP server to your coding agent and sign in, following [Linear's MCP guide](https://linear.app/docs/mcp).
-3. **Sign in to GitHub.** Install the [GitHub CLI](https://cli.github.com), then run `gh auth login`.
-4. **Install Orca (recommended).** [Orca](https://onorca.dev/download) runs your coding agents in parallel workspaces, on macOS, Windows and Linux. Factory works without it.
+2. **Connect Linear and GitHub.** Add [Linear’s MCP server](https://linear.app/docs/mcp) to your agent and sign in, then run `gh auth login`.
+3. **Consider Orca.** [Orca](https://onorca.dev/download) manages parallel agent workspaces. It’s recommended, not required.
 
 ## Adopting
 
-To adopt Factory, [set up your machine](#new-machine), then run this in your coding agent, in your repo:
+In each repo, run:
 
 ```text
 /do-factory-setup
 ```
 
-It writes `docs/issue-tracker.md`, the file the other skills read your workspace values from, and points `AGENTS.md` at it. It copies the scripts-language rule from your Tool Stack document, if it has one, into `AGENTS.md`. In a repo with a dev server, it installs the [dev-port convention](tools/orca/README.md) so parallel workspaces don't fight over ports. If your README's plain-language intro is missing any parts, it drafts them for you to approve.
+Setup writes the repo’s tracker settings, links them from `AGENTS.md`, and offers to install missing supporting skills. It prefers [Matt’s plugin](https://github.com/mattpocock/skills#installation-30-second-setup) where supported, with a skills-CLI fallback. Both routes supply the full upstream set, including sibling dependencies.
 
-Setup can also set the repo up with the services your Tool Stack lists. Write an **Adding a repo** block on a service's own Linear page, linked from your Tool Stack document: a `toml` code block under a `## Adding a repo` heading that says when the service applies, how to tell it's done, and the commands to run. Setup asks before running each one. Start from [the example block](skills/do-factory-setup/adding-a-repo.example.toml). The hook, its runner and the block format are generic and live here; the blocks are yours, on your own Tool Stack pages. McWestling keeps its own blocks privately in its Linear workspace, so this repo has none to copy.
+Use one upstream installation form per agent. The CLI’s shared store can expose skills to other agents too, so resolve duplication with plugin installs before proceeding. If newly installed skills aren’t discovered, start a fresh agent session and rerun setup; setup remains pending until they’re usable.
 
-To set it up by hand instead, copy [McWestling's `docs/issue-tracker.md`](docs/issue-tracker.md) and replace the values.
+Setup also adds [dev ports](tools/orca/README.md) for repos with a dev server, fills missing README intro sections, and offers approved service commands from your Tool Stack’s Linear pages. To define those commands, start with the [Adding a repo example](skills/do-factory-setup/adding-a-repo.example.toml).
+
+For manual adoption, copy [McWestling’s tracker settings](docs/issue-tracker.md) and replace the values. See the [setup skill](skills/do-factory-setup/SKILL.md) for the full procedure.
 
 ## Contributing
 
