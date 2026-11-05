@@ -47,7 +47,7 @@ A small, reversible call inside the brief's requirements is yours to make. Note 
 ## 4. Build
 
 1. **Branch.** Name it per **Pull requests**; if the doc is silent, use the branch name the tracker gives the issue. If that branch already exists, locally or on `origin`, switch to it. Otherwise, if the current branch is a fresh one the host made for this workspace (no commits beyond the default branch), rename it (`git branch -m <name>`); orchestrators often create their own prefixed branches. Otherwise create the branch from the latest default branch. Never rename the default branch, or a branch holding another issue's commits. A host that must choose its own branch name (for example a Cursor Cloud agent) keeps it. If the repo's PR autopilot needs a label for that branch, per **Pull requests**, apply it when you open the PR.
-2. **Test first.** Where the change has a testable seam, call the `tdd` skill and write the failing test before the code. Without the skill, follow the same red-green loop by hand.
+2. **Test first.** Where the change has a testable seam, invoke the advertised `mattpocock-skills:tdd` skill, or bare `tdd` from the skills CLI, and write the failing test before the code. Use the agent's skill mechanism (the Skill tool where available, otherwise read the advertised SKILL.md). If neither is available, stop and ask the user to run `do-factory-setup`.
 3. **Check as you go.** Run the repo's typecheck and the test files you touch, per `AGENTS.md`.
 4. **Stay in scope.** Build only the brief's requirements, and respect its **Out of scope**. File anything else you find as a new issue in the triage status per **Issue statuses**: a short title, what you saw, this issue's project, and a Product label when the product is obvious. Keep it flat (no parent issue, even if a host tool offers one) and link it to this issue as related. Link it in the PR too.
 5. **Follow the repo's rules.** Follow every repo playbook the change touches, and never edit what `AGENTS.md` says not to.
@@ -58,7 +58,7 @@ For changes a person can see or use (UI, sign-in), run the app per `AGENTS.md` a
 
 ## 6. Review your own diff
 
-Call the `code-review` skill on the diff against the default branch (or make an equally careful pass by hand). Fix what it finds, or say in the PR summary why a finding stands.
+Make a careful pass by hand over the diff against the default branch. Fix what it finds, or say in the PR summary why a finding stands.
 
 ## 7. Verify and push
 

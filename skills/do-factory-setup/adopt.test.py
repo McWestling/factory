@@ -4,6 +4,7 @@ Uses a temporary git repo with a fake origin remote."""
 
 import atexit
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -36,13 +37,17 @@ _, out = adopt("check", "")
 assert out.startswith("applies: yes\n"), out
 print("ok: applies and skip")
 
-_, out = adopt("check", 'done = "true"\n')
-assert out == "applies: yes\ndone: yes\n", out
-_, out = adopt("check", 'done = "false"\n[[step]]\nname = "Add"\nrun = "echo hi"\n')
-assert out == "applies: yes\ndone: no\nrun: Add: echo hi\n", out
+_, out = adopt("check", 'done = "touch ran-before-approval"\n[[step]]\nname = "Add"\nrun = "echo hi"\n')
+assert out == "applies: yes\ndone-check: touch ran-before-approval\nrun: Add: echo hi\n", out
+assert not (repo / "ran-before-approval").exists(), "check must not run the done command"
+print("ok: check previews the done command without running it")
+
 code, out = adopt("run", 'done = "true"\n[[step]]\nname = "Add"\nrun = "touch ran"\n')
 assert code == 0 and out == "done: yes\n" and not (repo / "ran").exists(), out
-print("ok: done and not done")
+code, out = adopt("run", 'done = "touch done-ran; false"\n[[step]]\nname = "Add"\nrun = "touch ran"\n')
+assert code == 0 and out == "ok: Add\n", out
+assert (repo / "done-ran").exists() and (repo / "ran").exists()
+print("ok: run does the done check, then skips or runs the steps")
 
 block = '''
 [[step]]
@@ -90,10 +95,56 @@ def adopt_example(mode):
 
 
 _, out = adopt_example("check")
-assert out == "applies: yes\ndone: yes\n", out
+assert out == ('applies: yes\ndone-check: example-vault project show "$REPO_PREFIX"\n'
+               'run: Register the repo: example-vault project create "$REPO_PREFIX" --repo "$REPO"\n'
+               "maintainer: Create the CI token: Create an Example Vault token for the project "
+               "and store it as the repo's EXAMPLE_VAULT_TOKEN CI secret\n"), out
 code, out = adopt_example("run")
 assert code == 0 and out == "done: yes\n", out
 assert not (repo / "registered").exists(), "a done example should skip registration"
 print("ok: shipped example's done check is top-level")
+
+# The interpreter search in SKILL.md, run as written against fake PATHs.
+find_python = re.search(r"```sh\n\s*(sh -c 'IFS=:.*?)\n\s*```",
+                        (script.parent / "SKILL.md").read_text(), re.S).group(1)
+tools = Path(tmp) / "tools"
+tools.mkdir()
+(tools / "sh").symlink_to("/bin/sh")  # all the search may use from PATH: sh, to start itself
+
+
+def fake_python(path, version, code=0):
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(f'#!/bin/sh\necho "Python {version}"\nexit {code}\n')
+    path.chmod(0o755)
+    return path
+
+
+def search(*dirs, cwd=tmp):
+    path = ":".join(str(d) for d in (tools, *dirs))
+    return subprocess.run(["/bin/sh", "-c", find_python], capture_output=True, text=True,
+                          cwd=cwd, env={"PATH": path})
+
+
+old, new, too_old, broken = (Path(tmp) / d for d in ("old", "new", "too-old", "broken"))
+fake_python(old / "python3", "3.9.6")
+newest = fake_python(new / "python3", "3.15.0")
+r = search(old, new)
+assert r.returncode == 0 and r.stdout == f"{newest}\n", r
+print("ok: an older python3 first doesn't hide a newer one later on PATH")
+
+versioned = fake_python(Path(tmp) / "versioned" / "python3.11", "3.11.4")
+r = search(old, versioned.parent)
+assert r.returncode == 0 and r.stdout == f"{versioned}\n", r
+print("ok: a versioned command qualifies, down to 3.11")
+
+fake_python(too_old / "python3.10", "3.10.14")
+fake_python(broken / "python3", "3.15.0", code=1)
+r = search(old, too_old, broken)
+assert r.returncode == 1 and r.stdout == "", r
+path_with_relative = f"{tools}::."  # empty and "." both mean the current directory
+r = subprocess.run(["/bin/sh", "-c", find_python], capture_output=True, text=True,
+                   cwd=new, env={"PATH": path_with_relative})
+assert r.returncode == 1 and r.stdout == "", r
+print("ok: nothing qualifies when versions are too old, broken or only on relative entries")
 
 print("all adopt checks passed")
