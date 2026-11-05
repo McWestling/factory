@@ -1,6 +1,6 @@
 ---
 name: do-factory-setup
-description: Set up a repo for the factory skills. Writes the repo's values-only tracker doc (`docs/issue-tracker.md`) from Linear and a fixed template, asking only what neither settles. It points AGENTS.md at it, copies the Tool Stack's scripts-language rule into AGENTS.md, offers to run the Adding a repo blocks on the Tool Stack's service pages, fills in any missing parts of the README's non-developer intro, and installs the dev-port convention in a repo with a dev server. Re-running fills gaps only. It ends by offering a draft PR of what it wrote.
+description: Set up a repo for the factory skills. Writes the repo's values-only tracker doc (`docs/issue-tracker.md`) from Linear and a fixed template, asking only what neither settles. It points AGENTS.md at it, copies the Tool Stack's scripts-language rule into AGENTS.md, offers to run the Adding a repo blocks on the Tool Stack's service pages, fills in any missing parts of the README's non-developer intro, and installs the dev-port convention in a repo with a dev server. Re-running fills gaps and applies template changes from the skill's changelog. It ends by offering a draft PR of what it wrote.
 disable-model-invocation: true
 ---
 
@@ -17,12 +17,12 @@ Use the Linear MCP server for every read (in an Orca workspace, `orca linear` al
 ## 1. Find what exists
 
 1. **Tracker doc path:** if `AGENTS.md` names a tracker doc, use that path. Otherwise use `docs/issue-tracker.md`.
-2. **Existing doc:** if it exists, read it. Every value already in it is settled: you never overwrite it, only fill gaps. A **gap** is a template heading that is missing or empty, or a line starting `TODO:`.
+2. **Existing doc:** if it exists, read it. Every value already in it is settled: you never overwrite it, only fill gaps and apply [changelog](#changelog) entries. A **gap** is a template heading that is missing or empty, or a line starting `TODO:`.
 3. **AGENTS.md:** note whether it links the tracker doc, and whether it has a `## Scripts` section.
 4. **README:** read `README.md`, if any, and note which parts of the intro it has, using [step 6](#6-readme-intro)'s check.
 5. **Dev server:** read the `dev` script in the root `package.json` (the workspace root's, in a monorepo), `scripts/dev-port`, and `orca.yaml`. No `package.json` or no `dev` script means no dev server: skip [Dev ports](#7-dev-ports).
 6. **Working tree:** note the current branch and which files `git status` already shows as changed, so [Finish](#8-finish) can tell setup's changes from the user's.
-7. **Setup version:** the doc's `**Setup version:**` line records which version of this template wrote it; this skill's version is the one in its template. The same version means fill gaps only. A doc with no such line predates versioning: treat it as `2026-10-25` and add the line as a gap. A doc with a newer version than the skill means the skill is out of date: stop and tell the user to update the factory skills.
+7. **Setup version:** the doc's `**Setup version:**` line records which version of this template wrote it; this skill's version is the one in its template. Versions sort by date, then by suffix, and no suffix sorts first (`2026-10-25` < `2026-10-25.2`). The same version means fill gaps only. An older version also means applying each newer [changelog](#changelog) entry. A doc with no such line predates versioning: treat it as `2026-10-25`. A doc with a newer version than the skill means the skill is out of date: stop and tell the user to update the factory skills.
 
 ## 2. Read Linear
 
@@ -53,6 +53,7 @@ Collect everything below that applies, and ask it all in one AskUserQuestion rou
 - **Template:** the team has issue templates, but not exactly one whose name or description says "implementation". Which one do agents use to write implementation issues? Offer each template by name, plus "None" (agents write them without a Linear template).
 - **Scripts:** `AGENTS.md` has a `## Scripts` section whose text differs from the Scripts row's rule, with its Linear mentions written as links. Offer to replace the section's text with the rule (recommended) or keep it.
 - **Adding a repo:** before checking any blocks, try `python3.14`, `python3.13`, `python3.12`, `python3.11`, then `python3`, in that order. Pick the first command that exists and whose `--version` reports Python 3.11 or newer, and use that interpreter for every `adopt.py` call in this setup run. Pipe each block to `<python> adopt.py check` (the `adopt.py` beside this file), from the repo root. For each page whose check prints `applies: yes` and `done: no`, ask: **Run** (recommended) or **Skip for now**, naming the page, with the check's `run:` and `maintainer:` lines verbatim in the option's preview. Ask nothing for a page that doesn't apply or is already done. If no candidate qualifies, skip the blocks and name their pages in [Finish](#8-finish).
+- **Template change:** a newer [changelog](#changelog) entry whose line differs in the doc. Ask: "Factory now recommends <new text> because <why>. Switch, or keep yours?", with **Switch** first.
 - **Drift:** on a re-run, a value in the doc that Linear contradicts (a renamed status, a deleted view). Offer to update the doc line or keep it.
 
 Labels Linear has that the template doesn't use (like a `Release` label) are fine: say nothing about them.
@@ -61,7 +62,7 @@ If the user skips a question that fills a slot, write `TODO:` and the question i
 
 ## 4. Write
 
-1. **Tracker doc:** fill only its gaps from the template, keeping every existing line as it was. For a new doc, write the whole template. Keep tables column-aligned.
+1. **Tracker doc:** apply the newer [changelog](#changelog) entries, then fill the gaps from the template, keeping every other line as it was. Set the `**Setup version:**` line to this skill's version, adding it if it's missing. For a new doc, write the whole template. Keep tables column-aligned.
 2. **AGENTS.md:** if it doesn't link the doc, add this under an `## Issue tracker` heading, using the path from step 1, and touch nothing else. Create `AGENTS.md` with just that if the repo has none.
 
    ```markdown
@@ -181,7 +182,7 @@ The model table and its Checked date are the factory's curated pick. Copy them a
 
 This is {{workspace}}'s config; to adopt, copy it and replace the values.
 
-**Setup version:** 2026-10-25
+**Setup version:** 2026-11-05
 
 The skills hold the procedure. This file holds only the values they look up, under the headings below. Keep the headings stable: skills cite them by name.
 
@@ -195,6 +196,7 @@ The skills hold the procedure. This file holds only the values they look up, und
 - **Name:** {{team}}
 - **Key:** `{{KEY}}` (issue ids look like `{{KEY}}-<number>`)
 - **Scope:** the one team holds every product and company issue.
+- **Flat issues:** issues have no parents, including follow-ups. Link related work as related instead.
 
 ## Issue statuses
 
@@ -318,3 +320,23 @@ Datelines in use:
 - **Branch:** exactly the issue's Linear branch name (`gitBranchName` from `get_issue`). Never invent or prefix one.
 - **Review:** no PR autopilot in this repo. PRs open as drafts; the maintainer marks them ready and merges.
 ```
+
+## Changelog
+
+Every change to the template's text bumps its setup version to the day of the change and adds an entry here, newest last. If two changes land on the same day, the later version gets a suffix, like `2026-10-25.2`. There are no semantic versions and no archive of old templates.
+
+Apply each entry newer than the doc's version, in order. Compare with slots filled and table padding ignored:
+
+- **The doc has the old text:** switch it to the new text without asking. An entry whose old text is _none_ adds a new line: the doc has the old text when the line's heading has nothing on that subject.
+- **The doc already has the new text:** nothing to do.
+- **The doc's line differs:** the user changed it on purpose. Ask in [step 3](#3-ask-once), and switch only if they pick **Switch**.
+- **The entry's heading is missing:** skip the entry; filling the gap writes the current text.
+
+Updating the stamp records the outcome, so a line the user kept isn't asked about again.
+
+### 2026-11-05
+
+- **Where:** `## Team`, after **Scope**.
+- **Old text:** _none_
+- **New text:** `- **Flat issues:** issues have no parents, including follow-ups. Link related work as related instead.`
+- **Why:** agents following other tools' wording created sub-issues, and the rule wasn't written where every repo's agents read it.

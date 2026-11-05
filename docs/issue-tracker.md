@@ -2,7 +2,7 @@
 
 This is McWestling's config; to adopt, copy it and replace the values.
 
-**Setup version:** 2026-10-25
+**Setup version:** 2026-11-05
 
 The skills hold the procedure. This file holds only the values they look up, under the headings below. Keep the headings stable: skills cite them by name.
 
@@ -16,6 +16,7 @@ The skills hold the procedure. This file holds only the values they look up, und
 - **Name:** McWestling
 - **Key:** `DO` (issue ids look like `DO-<number>`)
 - **Scope:** the one team holds every product and company issue.
+- **Flat issues:** issues have no parents, including follow-ups. Link related work as related instead.
 
 ## Issue statuses
 
