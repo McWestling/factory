@@ -1,6 +1,6 @@
 ---
 name: do-triage
-description: Work the issue tracker's Triage queue with the user. Survey related work, gather related captures into clusters, and route each cluster to a decline, a duplicate, an existing map, a ready implementation issue, or a new stub map for do-refine.
+description: Work the issue tracker's Triage queue with the user. Survey related work, gather related captures into clusters, and route each cluster to a decline, a duplicate, an existing map, a ready implementation issue, or a new stub map for do-refine. Each run also offers to clear parent links on open issues.
 disable-model-invocation: true
 ---
 
@@ -31,6 +31,8 @@ Read and write the tracker only through the access the tracker doc's **Tracker**
 **Scope.** If the user names a subset ("the Post-its from today"), list the other Triage items by name with a one-line gist each and ask which to include. Don't ask an abstract "whole queue or a subset?".
 
 **Loose muses.** A Backlog issue with no project and no triage comment skipped this process, bugs included. List them by name, warn the user, and ask which go back to Triage. Move only the ones picked, post the **Back to Triage** comment per **Comment shape** on each (reason: a loose muse found during triage review), and add them to the queue.
+
+**Parent links.** Issues are flat per **Team**, so sweep on every run, whatever the scope. `list_issues` has no has-parent filter: list the team's issues in each open status per **Issue statuses**, through every page, requesting the `id`, `title` and `parentId` fields, and keep the ones with a `parentId`. If any turn up, list them by name with their parents and ask whether to clear all of them, pick which, or leave them. Clear only the ones the user picks (`parentId: null`).
 
 ## 2. Survey
 
@@ -115,4 +117,5 @@ After the table, print **What you can do next**, grouped by action, with a name 
 - Never leave an accepted issue in Backlog without a project.
 - Never set priority beyond what **Priority** says, and never create labels.
 - Never delete issues; cancel them or mark them duplicates.
+- Never clear a parent link without the user's answer.
 - The user may be editing the tracker at the same time; re-read an issue before you change it if time has passed.
