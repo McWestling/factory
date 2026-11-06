@@ -39,7 +39,7 @@ _Avoid_: daemon, local client
 ## Verifier
 
 **Verifier**:
-Factory's capability for running the checks a repo declares. It is separate from Delegator. Formerly Verify.
+Factory's capability for running the checks a repo declares. It is separate from Delegator. Its canonical source is `packages/verifier`; the setup skill carries a generated delivery copy in `verifier/`. Formerly Verify.
 _Avoid_: Verify, Factory Verify, Delegator checks
 
 **Verifier contract**:

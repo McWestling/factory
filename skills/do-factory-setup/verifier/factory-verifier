@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""Select and run checks from .factory/verifier.toml. Requires Python 3.11+ and Git."""
+
+import sys
+
+if sys.version_info < (3, 11):
+    sys.exit(
+        "factory-verifier requires Python 3.11 or newer; "
+        "install or upgrade Python and put it on PATH."
+    )
+
+import argparse
+import json
+from pathlib import Path
+import re
+import subprocess
+import tomllib
+
+
+def read_checks(root):
+    path = Path(".factory/verifier.toml")
+    try:
+        data = tomllib.loads((root / path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
+        raise ValueError(f"{path}: {error}") from error
+
+    def invalid(message):
+        raise ValueError(f"{path}: {message}")
+
+    if type(data.get("version")) is not int or data["version"] != 1:
+        invalid("expected version = 1")
+    unknown = data.keys() - {"version", "checks"}
+    if unknown:
+        invalid(f"unknown keys: {', '.join(sorted(unknown))}")
+    tables = data.get("checks", {})
+    if not isinstance(tables, dict):
+        invalid("checks must be a table")
+    for name, fields in tables.items():
+        if not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name):
+            invalid(f"invalid check name: {name}")
+        if not isinstance(fields, dict):
+            invalid(f"checks.{name} must be a table")
+        unknown = fields.keys() - {"run", "paths"}
+        if unknown:
+            invalid(f"checks.{name}: unknown keys: {', '.join(sorted(unknown))}")
+        command = fields.get("run")
+        if not isinstance(command, str) or "\0" in command:
+            invalid(f"checks.{name}.run must be a string without NUL characters")
+        paths = fields.get("paths")
+        if (
+            not isinstance(paths, list) or not paths
+            or any(not isinstance(path, str) or not path or "\0" in path for path in paths)
+        ):
+            invalid(
+                f"checks.{name}.paths must be a non-empty array of "
+                "non-empty strings without NUL characters"
+            )
+    return tables
+
+
+def run_check(root, check):
+    status = subprocess.run(["sh", "-c", check["run"]], cwd=root).returncode
+    return status if status >= 0 else 128 - status
+
+
+def git_output(root, *args):
+    return subprocess.check_output(["git", *args], cwd=root, text=True).rstrip("\n")
+
+
+def plan_checks(root, checks, base, head):
+    for sha in (base, head):
+        git_output(root, "rev-parse", "--verify", f"{sha}^{{commit}}")
+    selected = []
+    for name, check in checks.items():
+        diff = subprocess.run(
+            ["git", "diff", "--quiet", "--no-ext-diff", "--no-textconv",
+             f"{base}...{head}", "--", *[f":(glob){path}" for path in check["paths"]]],
+            cwd=root,
+        )
+        if diff.returncode == 1:
+            selected.append(name)
+        elif diff.returncode != 0:
+            diff.check_returncode()
+    return {"base": base, "head": head, "checks": selected}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    plan = commands.add_parser("plan", help="list checks triggered by a code change")
+    plan.add_argument("--base", required=True, metavar="SHA")
+    plan.add_argument("--head", required=True, metavar="SHA")
+    run = commands.add_parser("run", help="run one check or every check")
+    target = run.add_mutually_exclusive_group(required=True)
+    target.add_argument("check", nargs="?")
+    target.add_argument("--all", action="store_true")
+    args = parser.parse_args()
+    root = Path(git_output(None, "rev-parse", "--show-toplevel"))
+    checks = read_checks(root)
+    if args.command == "run":
+        if args.all:
+            failed = False
+            for name, check in checks.items():
+                status = run_check(root, check)
+                failed |= status != 0
+                print(f"{'FAIL' if status else 'PASS'} {name}", flush=True)
+            return int(failed)
+        if args.check not in checks:
+            raise ValueError(f"unknown check: {args.check}")
+        return run_check(root, checks[args.check])
+    print(json.dumps(plan_checks(root, checks, args.base, args.head)))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except subprocess.CalledProcessError as error:
+        sys.exit(error.returncode)
+    except (OSError, ValueError) as error:
+        sys.exit(f"factory-verifier: {error}")
