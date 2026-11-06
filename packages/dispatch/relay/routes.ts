@@ -6,6 +6,17 @@ import type { AgentEvent, MachineQueue } from './queue.ts';
 
 const TIMESTAMP_WINDOW_MS = 60_000;
 
+/** Every relay route lives here, so a shared hostname can route `/dispatch/*` to this Worker. */
+export const BASE_PATH = '/dispatch';
+
+/** The request with the base path removed, or null if it's outside the base path. */
+export function underBasePath(request: Request): Request | null {
+  const url = new URL(request.url);
+  if (!url.pathname.startsWith(`${BASE_PATH}/`)) return null;
+  url.pathname = url.pathname.slice(BASE_PATH.length);
+  return new Request(url, request);
+}
+
 export type Machines = (machine: string) => Pick<MachineQueue, 'webhook' | 'claim' | 'finish'>;
 
 // Logs ids and outcomes only: never bodies, headers, tokens or state.

@@ -44,8 +44,11 @@ Run these commands from `packages/dispatch` after testing above.
    npx wrangler deploy
    ```
 
-   Save the HTTPS address printed by Wrangler. Below, `<relay-origin>` means
-   that address without a trailing slash. Until secrets are set, requests return 503.
+   Save the HTTPS address printed by Wrangler. Below, `<relay-origin>` means that
+   address followed by `/dispatch`, with no trailing slash. Every relay route lives
+   under `/dispatch`. To serve it from your own domain on Cloudflare, also pass
+   `--route '<hostname>/dispatch/*'`; the hostname needs a proxied DNS record. Until
+   secrets are set, requests return 503.
 
 2. **Create a Linear app for your computer.** Follow Linear's
    [agent setup guide](https://linear.app/developers/agents). Choose a stable machine

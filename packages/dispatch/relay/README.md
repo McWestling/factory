@@ -33,6 +33,9 @@ machine's Durable Object. Renaming a key selects a new, empty Durable Object, an
 the old installation stays in the old one, along with any jobs queued for it later.
 Treat a rename as adding a new machine and installing it again.
 
+Every route below lives under `/dispatch`, so a hostname can be shared with other
+Workers by routing `<hostname>/dispatch/*` here. Paths are shown without that prefix.
+
 - `GET /install/<machine>` redirects to Linear's authorize URL as the app, with
   `read,write,app:assignable`, S256 PKCE and a single-use state that expires in 10 minutes.
   Every install requires the admin secret as the HTTP Basic password. The PKCE

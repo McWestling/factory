@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { MachineAuth, type Config, type Storage } from './auth.ts';
 import { MachineQueue, MESSAGES, type Sql } from './queue.ts';
-import { handleDaemon, handleWebhook } from './routes.ts';
+import { handleDaemon, handleWebhook, underBasePath } from './routes.ts';
 
 const fixture = (name: string) =>
   JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), 'utf8')) as Record<string, any>;
@@ -492,4 +492,14 @@ test('a queued thought in flight at claim is not retried when it fails', async (
   assert.deepEqual(sent(posts), [['session-1', 'thought', MESSAGES.replies], ['session-1', 'response', MESSAGES.stopped]]);
   assert.deepEqual(rows().outbox, []);
   assert.equal(linear.attempts, 3);
+});
+
+test('only paths under the base path reach the relay, with the prefix removed', async () => {
+  const stripped = underBasePath(new Request('https://relay.example/dispatch/webhook?x=1', { method: 'POST', body: 'raw' }));
+  assert.equal(stripped?.url, 'https://relay.example/webhook?x=1');
+  assert.equal(stripped?.method, 'POST');
+  assert.equal(await stripped?.text(), 'raw');
+  for (const path of ['/webhook', '/dispatch', '/dispatchx/webhook', '/']) {
+    assert.equal(underBasePath(new Request(`https://relay.example${path}`)), null, path);
+  }
 });
