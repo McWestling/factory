@@ -1,6 +1,6 @@
 # Factory
 
-The toolkit: the workflow skills, contracts and configs that every factory repo shares, plus Delegator and Verify.
+The toolkit: the workflow skills, contracts and configs that every factory repo shares, plus Delegator and Verifier.
 
 ## Delegator
 
@@ -9,7 +9,7 @@ The identifier Cloud Inbox issues with each claim attempt; the Runner must send 
 _Avoid_: lease id, job id
 
 **Cloud Inbox**:
-Delegator's always-on hosted service, a Cloudflare Worker: it installs each machine's Linear app, alone holds Linear credentials, takes Linear's webhooks and queues jobs for each machine's Runner. Some deployed identifiers keep the old name; see its [technical reference](packages/delegator/cloud-inbox/README.md#legacy-operational-names).
+Delegator's always-on hosted service, a Cloudflare Worker: it installs each machine's Linear app, alone holds Linear credentials, takes Linear's webhooks and queues jobs for each machine's Runner.
 _Avoid_: relay, proxy, server
 
 **Delegator**:
@@ -36,14 +36,14 @@ _Avoid_: host
 The local process on a machine that claims jobs from Cloud Inbox through its restricted machine-facing API and launches them in Orca. It holds no Linear credentials. Planned, in `packages/delegator/runner/`.
 _Avoid_: daemon, local client
 
-## Verify
+## Verifier
 
-**Verify**:
-Factory's capability for running the checks a repo declares. It is separate from Delegator.
-_Avoid_: Delegator checks
+**Verifier**:
+Factory's capability for running the checks a repo declares. It is separate from Delegator. Formerly Verify.
+_Avoid_: Verify, Factory Verify, Delegator checks
 
-**Verify contract**:
-A repo's `.factory/verify.toml`: the one file that declares every check the repo runs.
+**Verifier contract**:
+A repo's `.factory/verifier.toml`: the one file that declares every check the repo runs.
 _Avoid_: verification policy, CI config
 
 **Check**:
@@ -56,12 +56,12 @@ _Avoid_: path filters, watch paths
 
 ## Setup
 
-**Dispatch block**:
-The fenced `dispatch` block in an implementation issue's **Next** section. It names the planned target, exact Preferred models name and human-readable reason; see [`docs/issue-format.md`](docs/issue-format.md).
+**Factory-run block**:
+The fenced `factory-run` block in an implementation issue's **Next** section. It names the planned target, exact Preferred models name and human-readable reason; see [`docs/issue-format.md`](docs/issue-format.md).
 
 **Machine check**:
 The check `do-factory-setup` runs first on the computer it's on: it stops if `gh` isn't signed in, and mentions a missing Orca when it finishes.
-_Avoid_: preflight, which is Factory Verify's term
+_Avoid_: preflight, which is Factory Verifier's term
 
 **Adding a repo block**:
 The first `toml` code block under an exact `## Adding a repo` heading on a service page linked from a workspace's Tool Stack document. It lists the commands and maintainer steps that set a repo up for that service; `do-factory-setup` runs it through `adopt.py`. Format: `skills/do-factory-setup/adding-a-repo.example.toml`.

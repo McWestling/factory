@@ -1,7 +1,6 @@
 # The Cloud Inbox Worker. Secrets (LINEAR_ORG_ID, ADMIN_SECRET, MACHINES) are set with
 # `wrangler secret put`; see .dev.vars.example for their shape. Nothing private here.
-# Legacy name, kept on purpose: it identifies the deployed Worker and its storage.
-name = "factory-dispatch-relay"
+name = "factory-cloud-inbox"
 main = "cloud-inbox/worker.ts"
 compatibility_date = "2026-11-01"
 

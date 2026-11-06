@@ -3,21 +3,21 @@ import { test } from 'node:test';
 import { parseIssue } from './parse-issue.ts';
 
 const repo = '`[repo=example/project]`';
-const block = '```dispatch\ntarget: Orca\nmodel: Example Model\nreason: focused work\n```';
+const block = '```factory-run\ntarget: Orca\nmodel: Example Model\nreason: focused work\n```';
 
-test('reads the model from the dispatch block', () => {
+test('reads the model from the factory-run block', () => {
   assert.deepEqual(parseIssue(`${block}\n${repo}`), {
     repo: 'example/project',
     model: 'Example Model',
   });
 });
 
-test('refuses a legacy line without a dispatch block', () => {
+test('refuses a legacy line without a factory-run block', () => {
   // Split the retired label so the contract's stale-format scan stays empty.
   const legacy = '**Suggested' + ' dispatch:** `Orca` · `Legacy Model` — focused work';
   assert.deepEqual(parseIssue(`${legacy}\n${repo}`), {
-    field: 'dispatch',
-    expected: 'a dispatch block with one nonempty model field',
+    field: 'factory-run',
+    expected: 'a factory-run block with one nonempty model field',
   });
 });
 
@@ -38,16 +38,17 @@ for (const tag of ['', '[repo=]', '[repo=example]', '[repo=example/project/extra
   });
 }
 
-for (const dispatch of ['',
-  '```dispatch\ntarget: Orca\n```',
-  '```dispatch\nmodel: \n```',
-  '```dispatch\nmodel: Example Model',
-  '```dispatch\nmodel: Example Model\nmodel: Other Model\n```',
-  '```dispatch\nmodel: Example Model\nnot a field\n```']) {
-  test(`refuses missing or malformed dispatch metadata: ${JSON.stringify(dispatch)}`, () => {
-    assert.deepEqual(parseIssue(`${dispatch}\n${repo}`), {
-      field: 'dispatch',
-      expected: 'a dispatch block with one nonempty model field',
+for (const fence of ['',
+  '```factory-run\ntarget: Orca\n```',
+  '```factory-run\nmodel: \n```',
+  '```factory-run\nmodel: Example Model',
+  '```factory-run\nmodel: Example Model\nmodel: Other Model\n```',
+  '```factory-run\nmodel: Example Model\nnot a field\n```',
+  '```dispatch\nmodel: Example Model\n```']) {
+  test(`refuses missing or malformed factory-run metadata: ${JSON.stringify(fence)}`, () => {
+    assert.deepEqual(parseIssue(`${fence}\n${repo}`), {
+      field: 'factory-run',
+      expected: 'a factory-run block with one nonempty model field',
     });
   });
 }
@@ -78,28 +79,28 @@ test('does not treat inherited object keys as configured models', () => {
   });
 });
 
-for (const dispatch of [
+for (const fence of [
   block.replace(/\n/g, '\r\n'),
-  '~~~dispatch\nmodel: Example Model\n~~~',
-  ' ````dispatch\nmodel: Example Model\n `````',
-  '```dispatch\nmodel: Example Model\n```',
+  '~~~factory-run\nmodel: Example Model\n~~~',
+  ' ````factory-run\nmodel: Example Model\n `````',
+  '```factory-run\nmodel: Example Model\n```',
 ]) {
-  test(`accepts a complete dispatch fence: ${JSON.stringify(dispatch)}`, () => {
-    assert.deepEqual(parseIssue(`${dispatch}\n${repo}`), {
+  test(`accepts a complete factory-run fence: ${JSON.stringify(fence)}`, () => {
+    assert.deepEqual(parseIssue(`${fence}\n${repo}`), {
       repo: 'example/project', model: 'Example Model',
     });
   });
 }
 
-test('refuses an invalid dispatch fence', () => {
-  assert.deepEqual(parseIssue(`\`\`\`dispatch invalid\nmodel: Example Model\n\`\`\`\n${repo}`), {
-    field: 'dispatch',
-    expected: 'a dispatch block with one nonempty model field',
+test('refuses an invalid factory-run fence', () => {
+  assert.deepEqual(parseIssue(`\`\`\`factory-run invalid\nmodel: Example Model\n\`\`\`\n${repo}`), {
+    field: 'factory-run',
+    expected: 'a factory-run block with one nonempty model field',
   });
 });
 
-test('accepts a dispatch fence with whitespace before its language', () => {
-  assert.deepEqual(parseIssue(`${block.replace('```dispatch', '``` \tdispatch')}\n${repo}`), {
+test('accepts a factory-run fence with whitespace before its language', () => {
+  assert.deepEqual(parseIssue(`${block.replace('```factory-run', '``` \tfactory-run')}\n${repo}`), {
     repo: 'example/project', model: 'Example Model',
   });
 });

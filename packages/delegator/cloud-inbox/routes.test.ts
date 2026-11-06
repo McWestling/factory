@@ -520,11 +520,11 @@ test('a queued thought in flight at claim is not retried when it fails', async (
 });
 
 test('only paths under the base path reach Cloud Inbox, with the prefix removed', async () => {
-  const stripped = underBasePath(new Request('https://cloud-inbox.example/dispatch/webhook?x=1', { method: 'POST', body: 'raw' }));
+  const stripped = underBasePath(new Request('https://cloud-inbox.example/delegator/webhook?x=1', { method: 'POST', body: 'raw' }));
   assert.equal(stripped?.url, 'https://cloud-inbox.example/webhook?x=1');
   assert.equal(stripped?.method, 'POST');
   assert.equal(await stripped?.text(), 'raw');
-  for (const path of ['/webhook', '/dispatch', '/dispatchx/webhook', '/']) {
+  for (const path of ['/webhook', '/delegator', '/delegatorx/webhook', '/']) {
     assert.equal(underBasePath(new Request(`https://cloud-inbox.example${path}`)), null, path);
   }
 });

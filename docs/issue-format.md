@@ -1,10 +1,10 @@
 # Issue format
 
-Factory Delegator reads the repo tag and dispatch instructions from an implementation issue's description. Every brief must use the dispatch block.
+Factory Delegator reads the repo tag and run instructions from an implementation issue's description. Every brief must use the factory-run block.
 
 ## Repo tag
 
-Every implementation issue must include a repo tag in its Agent brief, outside the dispatch block:
+Every implementation issue must include a repo tag in its Agent brief, outside the factory-run block:
 
 ```text
 [repo=owner/name]
@@ -12,11 +12,11 @@ Every implementation issue must include a repo tag in its Agent brief, outside t
 
 Linear may escape the brackets in its rendered description as `\[repo=owner/name\]`; that form means the same thing. The value must match `^[\w.-]+/[\w.-]+$` and name a repo on the machine's allowlist. Delegator reads this tag directly and does not fall back to Product → initiative routing. Keeping the tag outside the block also lets Cursor's Linear integration read it.
 
-## Dispatch block
+## Factory-run block
 
-Put one fenced `dispatch` block in the brief's **Next** section:
+Put one fenced `factory-run` block in the brief's **Next** section:
 
-```dispatch
+```factory-run
 target: Orca
 model: GPT-6 Luna
 reason: <one clause explaining why this model fits>
@@ -32,7 +32,7 @@ reason: <one clause explaining why this model fits>
 
 Each refusal names the field and what was expected:
 
-- `dispatch`: expected a parseable fenced `dispatch` block with one nonempty model field.
+- `factory-run`: expected a parseable fenced `factory-run` block with one nonempty model field.
 - `model`: expected a model name configured on this machine and listed under **Preferred models**.
 - `repo`: expected a `[repo=owner/name]` tag matching `^[\w.-]+/[\w.-]+$`.
 - `repo`: expected the tagged repo to appear on this machine's allowlist.

@@ -1,15 +1,15 @@
 export type DelegatorIssue = { repo: string; model: string };
-export type Refusal = { field: 'dispatch' | 'model' | 'repo'; expected: string };
+export type Refusal = { field: 'factory-run' | 'model' | 'repo'; expected: string };
 export type DelegatorConfig = {
   models: Readonly<Record<string, unknown>>;
   repos: readonly string[];
 };
 
 function readModel(description: string): string | undefined {
-  const opening = /^ {0,3}(`{3,}|~{3,})[ \t]*dispatch\b[^\n]*$/m.exec(description);
+  const opening = /^ {0,3}(`{3,}|~{3,})[ \t]*factory-run\b[^\n]*$/m.exec(description);
   if (opening) {
     const fence = opening[1];
-    if (opening[0].trim().slice(fence.length).trim() !== 'dispatch') return;
+    if (opening[0].trim().slice(fence.length).trim() !== 'factory-run') return;
     const rest = description.slice(opening.index + opening[0].length);
     const closing = new RegExp(`^ {0,3}${fence[0]}{${fence.length},}[ \\t]*$`, 'm').exec(rest);
     if (!closing) return;
@@ -26,8 +26,8 @@ export function parseIssue(description: string, config?: DelegatorConfig): Deleg
   const model = readModel(description.replace(/\r\n/g, '\n'));
   if (!model) {
     return {
-      field: 'dispatch',
-      expected: 'a dispatch block with one nonempty model field',
+      field: 'factory-run',
+      expected: 'a factory-run block with one nonempty model field',
     };
   }
   const tag = /\\\[repo=([^\]\r\n]*)\\\]|\[repo=([^\]\r\n]*)\]/.exec(description);

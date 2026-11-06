@@ -8,8 +8,8 @@ const TIMESTAMP_WINDOW_MS = 60_000;
 /** Far above any agent session event; anything larger is refused before it's parsed. */
 export const MAX_WEBHOOK_BYTES = 1024 * 1024;
 
-/** Every Cloud Inbox route lives here, so a shared hostname can route `/dispatch/*` to this Worker. A legacy prefix, kept on purpose: Linear apps are registered with these URLs. */
-export const BASE_PATH = '/dispatch';
+/** Every Cloud Inbox route lives here, so a shared hostname can route `/delegator/*` to this Worker. */
+export const BASE_PATH = '/delegator';
 
 /** The request with the base path removed, or null if it's outside the base path. */
 export function underBasePath(request: Request): Request | null {

@@ -48,12 +48,11 @@ Run these commands from `packages/delegator` after testing above.
    ```
 
    Save the HTTPS address printed by Wrangler. Below, `<cloud-inbox-origin>` means that
-   address followed by `/dispatch`, with no trailing slash. Every Cloud Inbox route lives
-   under `/dispatch`. To serve it from your own domain on Cloudflare, also pass
-   `--x-route-zones --route '<hostname>/dispatch/*' --zone <zone>`; the hostname needs
+   address followed by `/delegator`, with no trailing slash. Every Cloud Inbox route lives
+   under `/delegator`. To serve it from your own domain on Cloudflare, also pass
+   `--x-route-zones --route '<hostname>/delegator/*' --zone <zone>`; the hostname needs
    a proxied DNS record, and the Worker's `workers.dev` address turns off. Until secrets
-   are set, requests return 503. The Worker's name and this prefix keep their
-   [legacy names](cloud-inbox/README.md#legacy-operational-names).
+   are set, requests return 503.
 
 2. **Create a Linear app for your computer.** Follow Linear's
    [agent setup guide](https://linear.app/developers/agents). Choose a stable machine

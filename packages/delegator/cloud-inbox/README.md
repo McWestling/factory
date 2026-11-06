@@ -11,7 +11,7 @@ queue, not the job payload.
 
 `parse-issue.ts` exports `parseIssue(description, config?)`. It returns either
 `{repo, model}` or a refusal `{field, expected}`. Test for `field` to distinguish
-a refusal. It requires a fenced `dispatch` block with one nonempty model field;
+a refusal. It requires a fenced `factory-run` block with one nonempty model field;
 a missing or malformed block refuses dispatch. The repo comes
 from the required `[repo=owner/name]` tag, including Linear's escaped form.
 
@@ -36,8 +36,8 @@ machine's Durable Object. Renaming a key selects a new, empty Durable Object, an
 the old installation stays in the old one, along with any jobs queued for it later.
 Treat a rename as adding a new machine and installing it again.
 
-Every route below lives under `/dispatch`, so a hostname can be shared with other
-Workers by routing `<hostname>/dispatch/*` here. Paths are shown without that prefix.
+Every route below lives under `/delegator`, so a hostname can be shared with other
+Workers by routing `<hostname>/delegator/*` here. Paths are shown without that prefix.
 
 - `GET /install/<machine>` redirects to Linear's authorize URL as the app, with
   `read,write,app:assignable`, S256 PKCE and a single-use state that expires in 10 minutes.
@@ -118,20 +118,6 @@ installation's token. `cloud-inbox/auth.ts`, `cloud-inbox/queue.ts` and `cloud-i
 hold this logic so `node:test` can run it, with `node:sqlite` standing in for the
 Durable Object's SQL and synthetic webhook payloads in `cloud-inbox/fixtures/` (written from
 Linear's documented schema, not captured); check the Worker bundle with `npx wrangler deploy --dry-run`.
-
-### Legacy operational names
-
-These keep their old names on purpose. The rename changed none of them, and changing one
-is a migration, not a rename.
-
-- **Worker name `factory-dispatch-relay`:** the deployed Worker and the Durable Objects
-  stored under it. Deploying under a new name creates a separate Worker with empty storage.
-- **URL prefix `/dispatch`:** every Linear app is registered with its OAuth callback
-  and webhook URLs under this prefix, and custom-domain routes match it.
-- **Durable Object class `Machine`, binding `MACHINE`, migration `v1`, the SQL schema
-  and the secrets:** these address stored queues and installations, so they stay as deployed.
-- **The fenced `dispatch` block and the refusal field `dispatch`:** the issue format.
-  See the [issue-format contract](../../../docs/issue-format.md).
 
 ### Trust model
 
