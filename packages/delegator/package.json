@@ -1,5 +1,5 @@
 {
-  "name": "@factory/dispatch",
+  "name": "@factory/delegator",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -7,8 +7,8 @@
     "node": "^26.0.0"
   },
   "scripts": {
-    "test": "npm run typecheck && node --test *.test.ts relay/*.test.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p relay"
+    "test": "npm run typecheck && node --test *.test.ts cloud-inbox/*.test.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p cloud-inbox"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20261103.1",

@@ -12,7 +12,7 @@ The tool stack and its defaults live in Linear. [`docs/issue-tracker.md`](docs/i
 
 ## Scripts
 
-Write scripts in TypeScript by default, run directly with Node (no build step). Use Python 3 with only the standard library for tools that ship into repos regardless of their stack, like [Factory Verify](https://linear.app/mcwestling/project/factory-verify-00114d9892fe/overview), or when Python's standard library makes the script much simpler, like parsing TOML. Don't add Ruby, or shell scripts longer than a few lines.
+Write scripts in TypeScript by default, run directly with Node (no build step). Use Python 3 with only the standard library for tools that ship into repos regardless of their stack, like [Factory Verifier](https://linear.app/mcwestling/project/factory-verify-00114d9892fe/overview), or when Python's standard library makes the script much simpler, like parsing TOML. Don't add Ruby, or shell scripts longer than a few lines.
 
 ## Where things go
 
@@ -28,4 +28,4 @@ The repo is organised by kind of thing. Add a folder only when its first file la
 
 ## Open source
 
-This repo is built to be published. Never commit secrets, personal data, machine names, workspace ids or relay URLs. Use placeholders such as `ABC-123` for ticket ids, and commit `*.example` files instead of real config. The one exception is `docs/issue-tracker.md`: it is McWestling's real tracker config, committed so cloud agents can read it, and it holds nothing private.
+This repo is built to be published. Never commit secrets, personal data, machine names, workspace ids or Cloud Inbox URLs. Use placeholders such as `ABC-123` for ticket ids, and commit `*.example` files instead of real config. The one exception is `docs/issue-tracker.md`: it is McWestling's real tracker config, committed so cloud agents can read it, and it holds nothing private.

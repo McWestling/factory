@@ -2,7 +2,7 @@
 
 This is McWestling's config; to adopt, copy it and replace the values.
 
-**Setup version:** 2026-11-05
+**Setup version:** 2026-11-06
 
 The skills hold the procedure. This file holds only the values they look up, under the headings below. Keep the headings stable: skills cite them by name.
 
@@ -83,9 +83,9 @@ Each product has an initiative with the same name as its Product label. Its desc
 | `Orca`          | Dispatched from Orca, including Cursor Cloud agents it launches                  |
 | `Claude`        | Claude Code outside Orca                                                         |
 | `Codex`         | Codex outside Orca                                                               |
-| `Linear/Cursor` | Cursor Cloud, delegated from Linear. Legacy; retired when Factory Dispatch ships |
+| `Linear/Cursor` | Cursor Cloud, delegated from Linear. Legacy; retired when Factory Delegator ships |
 
-The label records where the work was dispatched from, not where the session runs or which model ran. Set it when work starts: a session with any `ORCA_*` environment variable set is `Orca`, and Orca sets the label itself on the Cursor Cloud agents it launches. The issue's dispatch block target is the plan; the label records what actually ran. The parser also reads the legacy Suggested dispatch line until open issues are converted; see [the issue-format contract](issue-format.md).
+The label records where the work was dispatched from, not where the session runs or which model ran. Set it when work starts: a session with any `ORCA_*` environment variable set is `Orca`, and Orca sets the label itself on the Cursor Cloud agents it launches. The issue's factory-run block target is the plan; the label records what actually ran. The parser also reads the legacy Suggested dispatch line until open issues are converted; see [the issue-format contract](issue-format.md).
 
 **Default target:** `Orca`, for every model below.
 

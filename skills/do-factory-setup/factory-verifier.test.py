@@ -1,4 +1,4 @@
-"""Run with: python3 skills/do-factory-setup/factory-verify.test.py"""
+"""Run with: python3 skills/do-factory-setup/factory-verifier.test.py"""
 
 import json
 import os
@@ -10,12 +10,12 @@ import textwrap
 import unittest
 
 
-SCRIPT = Path(__file__).resolve().with_name("factory-verify")
+SCRIPT = Path(__file__).resolve().with_name("factory-verifier")
 
 
-class FactoryVerifyTests(unittest.TestCase):
+class FactoryVerifierTests(unittest.TestCase):
     def setUp(self):
-        directory = tempfile.TemporaryDirectory(prefix="factory-verify-test-")
+        directory = tempfile.TemporaryDirectory(prefix="factory-verifier-test-")
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name) / "repo with spaces"
         self.root.mkdir()
@@ -29,7 +29,7 @@ class FactoryVerifyTests(unittest.TestCase):
             GIT_COMMITTER_EMAIL="test@example.invalid",
         )
         self.git("init", "-q")
-        self.contract = self.root / ".factory/verify.toml"
+        self.contract = self.root / ".factory/verifier.toml"
         self.contract.parent.mkdir()
         self.write_contract("version = 1\n")
         self.git("add", ".")
@@ -45,7 +45,7 @@ class FactoryVerifyTests(unittest.TestCase):
     def write_contract(self, text):
         self.contract.write_text(textwrap.dedent(text), encoding="utf-8")
 
-    def verify(self, *args, cwd=None):
+    def verifier(self, *args, cwd=None):
         return subprocess.run(
             [sys.executable, str(SCRIPT), *args],
             cwd=cwd or self.root, env=self.env, text=True, capture_output=True,
@@ -69,7 +69,7 @@ class FactoryVerifyTests(unittest.TestCase):
     def test_usage_errors_exit_2(self):
         for args in [(), ("unknown",), ("plan",), ("run",), ("run", "--all", "extra")]:
             with self.subTest(args=args):
-                result = self.verify(*args, cwd=self.root.parent)
+                result = self.verifier(*args, cwd=self.root.parent)
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn("usage:", result.stderr.lower())
 
@@ -82,7 +82,7 @@ class FactoryVerifyTests(unittest.TestCase):
         ''')
         nested = self.root / "apps/ios"
         nested.mkdir(parents=True)
-        result = self.verify("run", "tests", cwd=nested)
+        result = self.verifier("run", "tests", cwd=nested)
         self.assertEqual(result.returncode, 7, result.stderr)
         self.assertEqual(result.stdout, "framework-output")
 
@@ -96,7 +96,7 @@ class FactoryVerifyTests(unittest.TestCase):
             run = "printf 'last\\n'"
             paths = ["**"]
         ''')
-        result = self.verify("run", "--all")
+        result = self.verifier("run", "--all")
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertEqual(result.stdout, "first\nFAIL first\nlast\nPASS last\n")
 
@@ -116,7 +116,7 @@ class FactoryVerifyTests(unittest.TestCase):
         head = self.commit_change("packages/api-schema/schema.txt")
         nested = self.root / "apps/ios"
         nested.mkdir(parents=True)
-        result = self.verify("plan", "--base", self.base, "--head", head, cwd=nested)
+        result = self.verifier("plan", "--base", self.base, "--head", head, cwd=nested)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {
             "base": self.base, "head": head,
@@ -133,7 +133,7 @@ class FactoryVerifyTests(unittest.TestCase):
         head = self.commit_change("root.txt")
         for base, expected in [(self.base, ["everything"]), (head, [])]:
             with self.subTest(base=base):
-                result = self.verify("plan", "--base", base, "--head", head)
+                result = self.verifier("plan", "--base", base, "--head", head)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(json.loads(result.stdout)["checks"], expected)
 
@@ -149,15 +149,15 @@ class FactoryVerifyTests(unittest.TestCase):
         diverged = self.commit_change("apps/ios/base-only.txt")
         for base in (self.base, diverged):
             with self.subTest(base=base):
-                result = self.verify("plan", "--base", base, "--head", head)
+                result = self.verifier("plan", "--base", base, "--head", head)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(json.loads(result.stdout)["checks"], [])
 
     def test_zero_checks(self):
-        result = self.verify("run", "--all")
+        result = self.verifier("run", "--all")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
-        result = self.verify("plan", "--base", self.base, "--head", self.base)
+        result = self.verifier("plan", "--base", self.base, "--head", self.base)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["checks"], [])
 
@@ -167,7 +167,7 @@ class FactoryVerifyTests(unittest.TestCase):
             (("plan", "--base", "deadbeef", "--head", self.base), "revision"),
         ]:
             with self.subTest(args=args):
-                self.assert_fails_cleanly(self.verify(*args), message)
+                self.assert_fails_cleanly(self.verifier(*args), message)
 
     def test_invalid_contracts_fail_before_any_check_runs(self):
         valid = 'version = 1\n[checks.good]\nrun = "printf must-not-run"\npaths = ["**"]\n'
@@ -195,7 +195,7 @@ class FactoryVerifyTests(unittest.TestCase):
         for text, message in cases:
             with self.subTest(contract=text):
                 self.write_contract(text)
-                self.assert_fails_cleanly(self.verify("run", "--all"), ".factory/verify.toml", message)
+                self.assert_fails_cleanly(self.verifier("run", "--all"), ".factory/verifier.toml", message)
 
     def test_toml_syntax_errors_name_file_and_line(self):
         for text, location in [
@@ -205,7 +205,7 @@ class FactoryVerifyTests(unittest.TestCase):
         ]:
             with self.subTest(contract=text):
                 self.write_contract(text)
-                self.assert_fails_cleanly(self.verify("run", "--all"), ".factory/verify.toml", location)
+                self.assert_fails_cleanly(self.verifier("run", "--all"), ".factory/verifier.toml", location)
 
     def test_standard_toml_and_literal_path_arguments(self):
         self.write_contract(r"""
@@ -221,14 +221,14 @@ class FactoryVerifyTests(unittest.TestCase):
                 "odd dir/it's # $(touch injected) [x].txt",
             ]
         """)
-        result = self.verify("run", "ios-contract")
+        result = self.verifier("run", "ios-contract")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "it's # literal\nframework")
         base = self.base
         for path in ("apps/ios/file.txt", "odd dir/it's # $(touch injected) x.txt"):
             with self.subTest(path=path):
                 head = self.commit_change(path)
-                result = self.verify("plan", "--base", base, "--head", head)
+                result = self.verifier("plan", "--base", base, "--head", head)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(json.loads(result.stdout)["checks"], ["ios-contract"])
                 self.assertFalse((self.root / "injected").exists())
@@ -241,7 +241,7 @@ class FactoryVerifyTests(unittest.TestCase):
             run = 'kill -TERM $$'
             paths = ["**"]
         ''')
-        result = self.verify("run", "signal")
+        result = self.verifier("run", "signal")
         self.assertEqual(result.returncode, 143, result.stderr)
         self.write_contract('''\
             version = 1
@@ -249,15 +249,15 @@ class FactoryVerifyTests(unittest.TestCase):
             run = 'exit 0'
             paths = ["**"]
         ''')
-        result = self.verify("run", "--all")
+        result = self.verifier("run", "--all")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "PASS pass\n")
 
     def test_missing_file_and_invalid_encoding(self):
         self.contract.unlink()
-        self.assert_fails_cleanly(self.verify("run", "--all"), ".factory/verify.toml")
+        self.assert_fails_cleanly(self.verifier("run", "--all"), ".factory/verifier.toml")
         self.contract.write_bytes(b"version = 1\n# \xff")
-        self.assert_fails_cleanly(self.verify("run", "--all"), ".factory/verify.toml")
+        self.assert_fails_cleanly(self.verifier("run", "--all"), ".factory/verifier.toml")
 
 
 if __name__ == "__main__":

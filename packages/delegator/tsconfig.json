@@ -10,5 +10,5 @@
     "types": ["node"]
   },
   "include": ["**/*.ts"],
-  "exclude": ["node_modules", "relay/worker.ts"]
+  "exclude": ["node_modules", "cloud-inbox/worker.ts"]
 }

@@ -226,7 +226,7 @@ Slots are `{{…}}`. Fill them from Linear; everything else is copied exactly, i
   | `Orca`          | Dispatched from Orca, including Cursor Cloud agents it launches                  |
   | `Claude`        | Claude Code outside Orca                                                         |
   | `Codex`         | Codex outside Orca                                                               |
-  | `Linear/Cursor` | Cursor Cloud, delegated from Linear. Legacy; retired when Factory Dispatch ships |
+  | `Linear/Cursor` | Cursor Cloud, delegated from Linear. Legacy; retired when Factory Delegator ships |
 
 - `{{orca rule}}`: if there is an `Orca` label, ": a session with any `ORCA_*` environment variable set is `Orca`, and Orca sets the label itself on the Cursor Cloud agents it launches"; otherwise nothing.
 - `{{default target}}`: `Orca` if that label exists; otherwise the user's answer in step 3.
@@ -238,7 +238,7 @@ The model table and its Checked date are the factory's curated pick. Copy them a
 
 This is {{workspace}}'s config; to adopt, copy it and replace the values.
 
-**Setup version:** 2026-11-05
+**Setup version:** 2026-11-06
 
 The skills hold the procedure. This file holds only the values they look up, under the headings below. Keep the headings stable: skills cite them by name.
 
@@ -311,7 +311,7 @@ Each product has an initiative with the same name as its Product label. Its desc
 | --------------- | -------------------------------------------------------------------------------- |
 {{dispatch target rows}}
 
-The label records where the work was dispatched from, not where the session runs or which model ran. Set it when work starts{{orca rule}}. The issue's dispatch block target is the plan; the label records what actually ran.
+The label records where the work was dispatched from, not where the session runs or which model ran. Set it when work starts{{orca rule}}. The issue's factory-run block target is the plan; the label records what actually ran.
 
 **Default target:** `{{default target}}`, for every model below.
 
@@ -393,3 +393,15 @@ Apply each entry newer than the doc's version, in order. Compare with slots fill
 - **Old text:** _none_
 - **New text:** `- **Flat issues:** issues have no parents, including follow-ups. Link related work as related instead.`
 - **Why:** agents following other tools' wording created sub-issues, and the rule wasn't written where every repo's agents read it.
+
+### 2026-11-06
+
+- **Where:** `## Dispatch targets`, the `Linear/Cursor` row.
+- **Old text:** `Cursor Cloud, delegated from Linear. Legacy; retired when Factory Dispatch ships`
+- **New text:** `Cursor Cloud, delegated from Linear. Legacy; retired when Factory Delegator ships`
+- **Why:** Factory Dispatch was renamed Factory Delegator.
+
+- **Where:** `## Dispatch targets`, the paragraph under the table.
+- **Old text:** `The issue's dispatch block target is the plan`
+- **New text:** `The issue's factory-run block target is the plan`
+- **Why:** the fenced `dispatch` block was renamed `factory-run`.

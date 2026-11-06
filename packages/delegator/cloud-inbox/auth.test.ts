@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { isAdmin, MachineAuth, readConfig, type Storage } from './auth.ts';
 
 const ORG = 'org-example';
-const REDIRECT = 'https://relay.example/callback/example-machine';
+const REDIRECT = 'https://cloud-inbox.example/callback/example-machine';
 const client = { clientId: 'client-example', clientSecret: 'client-secret-example' };
 const secret = 'x'.repeat(32);
 
@@ -64,7 +64,7 @@ function setup(org = ORG) {
 
 const stateOf = (url: string) => new URL(url).searchParams.get('state')!;
 
-test('install redirects to Linear as the app with the relay scopes', async () => {
+test('install redirects to Linear as the app with the Cloud Inbox scopes', async () => {
   const { auth } = setup();
   const url = new URL((await auth.startInstall(REDIRECT, true))!);
   assert.equal(url.origin + url.pathname, 'https://linear.app/oauth/authorize');
@@ -161,12 +161,12 @@ test('getAccessToken fails before install', async () => {
 });
 
 test('isAdmin accepts only Basic auth with the admin secret', () => {
-  const basic = (v: string) => new Request('https://relay.example', { headers: { Authorization: `Basic ${btoa(v)}` } });
+  const basic = (v: string) => new Request('https://cloud-inbox.example', { headers: { Authorization: `Basic ${btoa(v)}` } });
   assert.equal(isAdmin(basic(`admin:${secret}`), secret), true);
   assert.equal(isAdmin(basic(`admin:${secret}x`), secret), false);
   assert.equal(isAdmin(basic('admin'), secret), false);
-  assert.equal(isAdmin(new Request('https://relay.example', { headers: { Authorization: 'Basic %%%' } }), secret), false);
-  assert.equal(isAdmin(new Request('https://relay.example'), secret), false);
+  assert.equal(isAdmin(new Request('https://cloud-inbox.example', { headers: { Authorization: 'Basic %%%' } }), secret), false);
+  assert.equal(isAdmin(new Request('https://cloud-inbox.example'), secret), false);
 });
 
 const machine = { clientId: 'c', clientSecret: 'cs', webhookSecret: 'w', bearerSecret: secret };
