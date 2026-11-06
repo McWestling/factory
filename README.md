@@ -42,6 +42,7 @@ People who plan their work in Linear and want coding agents to do more of the bu
 ├── docs/
 │   └── issue-tracker.md   # McWestling's tracker values; the worked example
 ├── packages/
+│   ├── verifier/         # Canonical check core, tests and skill bundle tooling
 │   └── delegator/
 │       ├── cloud-inbox/  # Application: runs on Cloudflare
 │       ├── wrangler.toml # Cloud Inbox deployment and storage configuration
@@ -111,6 +112,16 @@ Use one upstream installation form per agent. The CLI’s shared store can expos
 Setup also adds [dev ports](tools/orca/README.md) for repos with a dev server, fills missing README intro sections, and offers approved service commands from your Tool Stack’s Linear pages. To define those commands, start with the [Adding a repo example](skills/do-factory-setup/adding-a-repo.example.toml).
 
 For manual adoption, copy [McWestling’s tracker settings](docs/issue-tracker.md) and replace the values. See the [setup skill](skills/do-factory-setup/SKILL.md) for the full procedure.
+
+## Verifier development
+
+[Verifier source and tests](packages/verifier/README.md) live in `packages/verifier`.
+The setup skill carries a generated, self-contained delivery bundle; regenerate it
+with `node packages/verifier/bundle.ts` and verify with
+`node packages/verifier/bundle.ts --check`. Run core and isolated delivery tests
+with `python3 packages/verifier/factory-verifier.test.py` (Python 3.11+), and bundle
+tests with `node --test packages/verifier/bundle.test.ts`. Full setup installation
+and hosted workflows remain planned.
 
 ## Contributing
 

@@ -193,6 +193,24 @@ To open the PR:
 
 End with the PR link.
 
+## Verifier delivery assets
+
+The installed skill carries `verifier/factory-verifier`, a generated executable
+copy of Factory’s canonical `packages/verifier/factory-verifier`. When vendoring
+Verifier, copy from this installed skill directory to `scripts/factory-verifier`,
+preserving executable permissions and replacing differing copies; repeated copies
+leave identical content. The committed consuming-repo copy is the pin. Full
+Verifier installation, hooks and workflows are still planned; this section only
+identifies the available delivery asset.
+
+For Factory development, edit the canonical source and regenerate with
+`node packages/verifier/bundle.ts`; check with
+`node packages/verifier/bundle.ts --check`. Run the canonical core and isolated
+skill delivery tests with `python3 packages/verifier/factory-verifier.test.py`
+(Python 3.11+), and bundle tests with
+`node --test packages/verifier/bundle.test.ts`. Ship the generated copy with the
+skill; installed skills use their local bundle without sibling packages or downloads.
+
 ## Stale skills check
 
 This is per machine, so it isn't part of a setup run. To get warned about out-of-date factory skills, add a `SessionStart` command hook that runs `node ~/.agents/skills/do-factory-setup/check-skills.ts`.
