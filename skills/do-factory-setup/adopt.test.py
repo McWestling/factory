@@ -37,11 +37,18 @@ _, out = adopt("check", "")
 assert out.startswith("applies: yes\n"), out
 print("ok: applies and skip")
 
-_, out = adopt("check", 'done = "touch ran-before-approval"\n[[step]]\nname = "Add"\nrun = "echo hi"\n')
-assert out == "applies: yes\ndone-check: touch ran-before-approval\nrun: Add: echo hi\n", out
-assert not (repo / "ran-before-approval").exists(), "check must not run the done command"
-print("ok: check previews the done command without running it")
-
+_, out = adopt("check", 'done = "true"\n')
+assert out == "applies: yes\ndone-check: true\n", out
+_, out = adopt("check", 'done = "false"\n[[step]]\nname = "Add"\nrun = "echo hi"\n')
+assert out == "applies: yes\ndone-check: false\nrun: Add: echo hi\n", out
+block = 'done = "touch inspected"\n[[step]]\nname = "Add"\nrun = "touch ran"\n'
+code, out = adopt("check", block)
+assert code == 0 and out == "applies: yes\ndone-check: touch inspected\nrun: Add: touch ran\n", out
+assert not (repo / "inspected").exists(), "inspection must never execute the done command"
+assert not (repo / "ran").exists(), "inspection must never execute steps"
+code, out = adopt("run", block)
+assert code == 0 and out == "done: yes\n" and (repo / "inspected").exists(), out
+assert not (repo / "ran").exists(), "a successful done command should skip steps"
 code, out = adopt("run", 'done = "true"\n[[step]]\nname = "Add"\nrun = "touch ran"\n')
 assert code == 0 and out == "done: yes\n" and not (repo / "ran").exists(), out
 code, out = adopt("run", 'done = "touch done-ran; false"\n[[step]]\nname = "Add"\nrun = "touch ran"\n')

@@ -4,7 +4,7 @@
 const AUTHORIZE_URL = 'https://linear.app/oauth/authorize';
 const TOKEN_URL = 'https://api.linear.app/oauth/token';
 const GRAPHQL_URL = 'https://api.linear.app/graphql';
-const SCOPES = 'read,write,app:assignable';
+const SCOPES = ['read', 'write', 'app:assignable'];
 const STATE_TTL_MS = 10 * 60_000;
 const REFRESH_MARGIN_MS = 60 * 60_000;
 const MACHINE_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -41,18 +41,26 @@ export function readConfig(env: Record<string, unknown>): Config | string {
   }
   const entries = Object.entries(machines);
   if (!entries.length) return 'MACHINES is empty';
+  const bearerSecrets = new Set<unknown>();
+  const clientIds = new Set<unknown>();
   for (const [name, machine] of entries) {
     if (!MACHINE_NAME.test(name)) return `MACHINES has an invalid machine name`;
     const m = (machine ?? {}) as Record<string, unknown>;
     for (const key of ['clientId', 'clientSecret', 'webhookSecret', 'bearerSecret']) {
       if (typeof m[key] !== 'string' || !m[key]) return `MACHINES.${name}.${key} is missing`;
     }
+    if (bearerSecrets.has(m.bearerSecret)) return 'MACHINES has duplicate bearerSecret values';
+    if (clientIds.has(m.clientId)) return 'MACHINES has duplicate clientId values';
+    bearerSecrets.add(m.bearerSecret);
+    clientIds.add(m.clientId);
     if ((m.bearerSecret as string).length < MIN_SECRET_LENGTH) {
       return `MACHINES.${name}.bearerSecret must be at least ${MIN_SECRET_LENGTH} characters`;
     }
   }
   return { orgId, adminSecret, machines: machines as Record<string, MachineConfig> };
 }
+
+export const hex = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 
 /** Compares in time that depends only on the lengths, which aren't secret. */
 export function timingSafeEqual(a: string, b: string): boolean {
@@ -92,12 +100,22 @@ export type Storage = {
   delete(key: string): Promise<boolean>;
 };
 
-type PendingState = { value: string; expiresAt: number; reinstall: boolean };
-// orgId and clientId bind the token to the config that installed it.
+type PendingState = { value: string; verifier: string; expiresAt: number; reinstall: boolean };
+// orgId and clientId bind the token to the config that installed it. appName is the
+// app's name in Linear; installs from before it was stored lack it.
 type StoredToken = {
-  accessToken: string; refreshToken: string; expiresAt: number; appUserId: string; orgId: string; clientId: string;
+  accessToken: string; refreshToken: string; expiresAt: number; appUserId: string; appName?: string;
+  orgId: string; clientId: string; scopes: string[];
 };
-type Grant = { access_token: string; refresh_token: string; expires_in: number };
+type AppUser = { appUserId: string; appName?: string };
+type Grant = { access_token: string; refresh_token: string; expires_in: number; scopes: string[] };
+
+function relayScopes(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length === SCOPES.length && SCOPES.every((scope) => value.includes(scope));
+}
+
+const base64url = (bytes: Uint8Array) =>
+  btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 
 export type InstallResult =
   | { ok: true; appUserId: string }
@@ -116,7 +134,8 @@ export class MachineAuth {
     storage: Storage,
     client: Pick<MachineConfig, 'clientId' | 'clientSecret'>,
     orgId: string,
-    fetchFn: typeof fetch = (input, init) => fetch(input, init),
+    // Bounded, so a slow Linear can't hold a refresh, and the deliveries behind it, open.
+    fetchFn: typeof fetch = (input, init) => fetch(input, { signal: AbortSignal.timeout(10_000), ...init }),
     now: () => number = Date.now,
   ) {
     this.#storage = storage;
@@ -128,20 +147,24 @@ export class MachineAuth {
 
   /**
    * Returns Linear's authorize URL with a fresh single-use state, replacing any
-   * pending one. Returns undefined when a token exists and `admin` is false.
+   * pending one. Only an authenticated administrator may begin an install.
    */
   async startInstall(redirectUri: string, admin: boolean): Promise<string | undefined> {
-    if (!admin && (await this.#storage.get('token'))) return undefined;
-    const value = Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) =>
-      b.toString(16).padStart(2, '0')).join('');
-    const pending: PendingState = { value, expiresAt: this.#now() + STATE_TTL_MS, reinstall: admin };
+    if (!admin) return undefined;
+    const reinstall = Boolean(await this.#storage.get('token'));
+    const value = hex(crypto.getRandomValues(new Uint8Array(32)));
+    const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
+    const challenge = base64url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
+    const pending: PendingState = { value, verifier, expiresAt: this.#now() + STATE_TTL_MS, reinstall };
     await this.#storage.put('oauthState', pending);
     const url = new URL(AUTHORIZE_URL);
     url.search = new URLSearchParams({
       client_id: this.#client.clientId,
       redirect_uri: redirectUri,
       response_type: 'code',
-      scope: SCOPES,
+      scope: SCOPES.join(','),
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
       state: value,
       actor: 'app',
     }).toString();
@@ -153,11 +176,11 @@ export class MachineAuth {
     const pending = await this.#storage.get<PendingState>('oauthState');
     if (!pending || !timingSafeEqual(state, pending.value)) return { ok: false, reason: 'state' };
     await this.#storage.delete('oauthState');
-    if (pending.expiresAt <= this.#now()) return { ok: false, reason: 'state' };
+    if (!pending.verifier || pending.expiresAt <= this.#now()) return { ok: false, reason: 'state' };
     const before = await this.#storage.get<StoredToken>('token');
     if (!pending.reinstall && before) return { ok: false, reason: 'reinstall' };
 
-    const grant = await this.#grant({ grant_type: 'authorization_code', code, redirect_uri: redirectUri });
+    const grant = await this.#grant({ grant_type: 'authorization_code', code, redirect_uri: redirectUri, code_verifier: pending.verifier });
     if (!grant) return { ok: false, reason: 'exchange' };
     const viewer = await this.#viewer(grant.access_token);
     if (!viewer) return { ok: false, reason: 'exchange' };
@@ -170,8 +193,14 @@ export class MachineAuth {
     if (current?.refreshToken !== before?.refreshToken) {
       return { ok: false, reason: pending.reinstall ? 'superseded' : 'reinstall' };
     }
-    await this.#storage.put('token', this.#toStored(grant, viewer.id));
+    await this.#storage.put('token', this.#toStored(grant, { appUserId: viewer.id, appName: viewer.name }));
     return { ok: true, appUserId: viewer.id };
+  }
+
+  /** The app user this machine was installed as, or undefined before the install. */
+  async installation(): Promise<AppUser | undefined> {
+    const token = await this.#storage.get<StoredToken>('token');
+    return token && { appUserId: token.appUserId, appName: token.appName };
   }
 
   /** Returns the cached access token, refreshing it when under an hour remains. */
@@ -179,8 +208,8 @@ export class MachineAuth {
     const token = await this.#storage.get<StoredToken>('token');
     if (!token) throw new Error('Machine is not installed');
     // Also catches records from before the identity was stored.
-    if (token.orgId !== this.#orgId || token.clientId !== this.#client.clientId) {
-      throw new Error('Machine must be reinstalled: its token is for another org or client');
+    if (!relayScopes(token.scopes) || token.orgId !== this.#orgId || token.clientId !== this.#client.clientId) {
+      throw new Error('Machine must be reinstalled: its token has other or unverified permissions or belongs to another org or client');
     }
     if (token.expiresAt - this.#now() > REFRESH_MARGIN_MS) return token.accessToken;
     // One refresh at a time: Linear rotates the refresh token.
@@ -197,18 +226,20 @@ export class MachineAuth {
     // it. Same atomic read-then-put as completeInstall.
     const current = await this.#storage.get<StoredToken>('token');
     if (current?.refreshToken !== token.refreshToken) throw new Error('Token was replaced during refresh');
-    await this.#storage.put('token', this.#toStored(grant, token.appUserId));
+    await this.#storage.put('token', this.#toStored(grant, token));
     return grant.access_token;
   }
 
-  #toStored(grant: Grant, appUserId: string): StoredToken {
+  #toStored(grant: Grant, { appUserId, appName }: AppUser): StoredToken {
     return {
       accessToken: grant.access_token,
       refreshToken: grant.refresh_token,
       expiresAt: this.#now() + grant.expires_in * 1000,
       appUserId,
+      appName,
       orgId: this.#orgId,
       clientId: this.#client.clientId,
+      scopes: grant.scopes,
     };
   }
 
@@ -222,22 +253,26 @@ export class MachineAuth {
         client_secret: this.#client.clientSecret,
       }),
     });
-    const body = (await json(res)) as Partial<Grant> | undefined;
+    const body = (await json(res)) as (Partial<Grant> & { scope?: unknown }) | undefined;
     if (!body) return undefined;
-    if (typeof body.access_token !== 'string' || typeof body.refresh_token !== 'string' ||
-      typeof body.expires_in !== 'number') return undefined;
-    return body as Grant;
+    const scopes = typeof body.scope === 'string' ? body.scope.trim().split(/\s+/) : body.scope;
+    if (!relayScopes(scopes) || typeof body.access_token !== 'string' || !body.access_token ||
+      typeof body.refresh_token !== 'string' || !body.refresh_token ||
+      typeof body.expires_in !== 'number' || !Number.isFinite(body.expires_in) || body.expires_in <= 0) return undefined;
+    return { access_token: body.access_token, refresh_token: body.refresh_token, expires_in: body.expires_in, scopes };
   }
 
-  async #viewer(accessToken: string): Promise<{ id: string; orgId: string } | undefined> {
+  async #viewer(accessToken: string): Promise<{ id: string; name?: string; orgId: string } | undefined> {
     const res = await this.#fetch(GRAPHQL_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ query: '{ viewer { id organization { id } } }' }),
+      body: JSON.stringify({ query: '{ viewer { id name organization { id } } }' }),
     });
-    const body = (await json(res)) as { data?: { viewer?: { id?: unknown; organization?: { id?: unknown } } } } | undefined;
-    const id = body?.data?.viewer?.id;
-    const orgId = body?.data?.viewer?.organization?.id;
-    return typeof id === 'string' && typeof orgId === 'string' ? { id, orgId } : undefined;
+    type Viewer = { id?: unknown; name?: unknown; organization?: { id?: unknown } };
+    const viewer = ((await json(res)) as { data?: { viewer?: Viewer } } | undefined)?.data?.viewer;
+    const { id, name } = viewer ?? {};
+    const orgId = viewer?.organization?.id;
+    if (typeof id !== 'string' || typeof orgId !== 'string') return undefined;
+    return { id, name: typeof name === 'string' ? name : undefined, orgId };
   }
 }

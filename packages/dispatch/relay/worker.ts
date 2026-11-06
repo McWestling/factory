@@ -1,8 +1,11 @@
 // The relay Worker: routes /install/<machine> and /callback/<machine> to that
-// machine's Durable Object, which holds its Linear install and token.
+// machine's Durable Object, which holds its Linear install, token and job queue.
+// /webhook and the daemon API are handled in routes.ts.
 
 import { DurableObject } from 'cloudflare:workers';
 import { isAdmin, MachineAuth, readConfig, type InstallResult } from './auth.ts';
+import { MachineQueue, type AgentEvent, type Outcome } from './queue.ts';
+import { BASE_PATH, handleDaemon, handleWebhook, log, text, underBasePath, type Machines } from './routes.ts';
 
 interface Env {
   MACHINE: DurableObjectNamespace<Machine>;
@@ -19,13 +22,10 @@ const FAILURES: Record<Extract<InstallResult, { ok: false }>['reason'], string> 
   org: 'Install failed: the app was installed in the wrong workspace.',
 };
 
-// Logs ids and outcomes only: never bodies, headers, tokens or state.
-const log = (fields: Record<string, string>) => console.log(JSON.stringify(fields));
-const text = (status: number, body: string, headers?: HeadersInit) =>
-  new Response(body, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8', ...headers } });
-
 export default {
-  async fetch(request, env): Promise<Response> {
+  async fetch(incoming, env): Promise<Response> {
+    const request = underBasePath(incoming);
+    if (!request) return text(404, 'Not found');
     const config = readConfig({ ...env });
     if (typeof config === 'string') {
       log({ event: 'config', outcome: config });
@@ -34,17 +34,28 @@ export default {
 
     const url = new URL(request.url);
     const [, route, machine, ...rest] = url.pathname.split('/');
+    const machines: Machines = (name) => {
+      const stub = env.MACHINE.get(env.MACHINE.idFromName(name));
+      return {
+        webhook: (event) => stub.webhook(name, event),
+        claim: () => stub.claim(name),
+        finish: (id, claimId, outcome) => stub.finish(name, id, claimId, outcome),
+      };
+    };
+    if (url.pathname === '/webhook' && request.method === 'POST') return handleWebhook(request, config, machines);
+    if (route === 'jobs') return handleDaemon(request, config, machines);
+
     if (request.method !== 'GET' || rest.length || (route !== 'install' && route !== 'callback') ||
       !machine || !Object.hasOwn(config.machines, machine)) return text(404, 'Not found');
 
     const stub = env.MACHINE.get(env.MACHINE.idFromName(machine));
-    const redirectUri = `${url.origin}/callback/${machine}`;
+    const redirectUri = `${url.origin}${BASE_PATH}/callback/${machine}`;
 
     if (route === 'install') {
       const location = await stub.startInstall(machine, redirectUri, isAdmin(request, config.adminSecret));
       if (!location) {
-        log({ event: 'install', machine, outcome: 'reinstall' });
-        return text(401, FAILURES.reinstall, { 'WWW-Authenticate': 'Basic realm="relay"' });
+        log({ event: 'install', machine, outcome: 'unauthorized' });
+        return text(401, 'Installation requires the admin secret.', { 'WWW-Authenticate': 'Basic realm="relay"' });
       }
       return Response.redirect(location, 302);
     }
@@ -64,6 +75,7 @@ export default {
 /** One per machine, addressed by the machine name. The only place its token is refreshed. */
 export class Machine extends DurableObject<Env> {
   #auth?: MachineAuth;
+  #queue?: MachineQueue;
 
   #for(machine: string): MachineAuth {
     const config = readConfig({ ...this.env });
@@ -81,8 +93,29 @@ export class Machine extends DurableObject<Env> {
     return this.#for(machine).completeInstall(state, code, redirectUri);
   }
 
-  /** Internal: for the token endpoint the daemon borrows from. */
-  getAccessToken(machine: string) {
-    return this.#for(machine).getAccessToken();
+  #queueFor(machine: string): MachineQueue {
+    // Remembered so the alarm, which gets no arguments, can rebuild the queue.
+    if (!this.#queue) this.ctx.storage.kv.put('machine', machine);
+    return (this.#queue ??= new MachineQueue(this.ctx.storage.sql, this.#for(machine), machine,
+      (at) => void this.ctx.storage.setAlarm(at)));
   }
+
+  /** Delivers the outbox. Fires right after a queue change and again for each retry. */
+  async alarm() {
+    const machine = this.ctx.storage.kv.get<string>('machine');
+    if (machine) await this.#queueFor(machine).deliver();
+  }
+
+  webhook(machine: string, event: AgentEvent) {
+    return this.#queueFor(machine).webhook(event);
+  }
+
+  claim(machine: string) {
+    return this.#queueFor(machine).claim();
+  }
+
+  finish(machine: string, id: string, claimId: string, outcome: Outcome) {
+    return this.#queueFor(machine).finish(id, claimId, outcome);
+  }
+
 }

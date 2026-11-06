@@ -104,7 +104,7 @@ Collect everything below that applies, and ask it all in one AskUserQuestion rou
   exit 1'
   ```
 
-  Use the printed path as `<python>` for every `adopt.py` call in this setup run. If it prints nothing, skip the blocks and name their pages in [Finish](#8-finish). Otherwise pipe each block to `<python> adopt.py check` (the `adopt.py` beside this file), from the repo root. The check only reads: it runs none of the block's commands, so it can't tell whether a service is already set up, and you must not run them yourself to find out. For each page whose check prints `applies: yes`, ask: **Run** (recommended) or **Skip for now**, naming the page, with the check's `done-check:`, `run:` and `maintainer:` lines verbatim in the option's preview. Say that **Run** does the done check first and skips the service if it's already set up. Ask nothing for a page that doesn't apply.
+  Use the printed path as `<python>` for every `adopt.py` call in this setup run. If it prints nothing, skip the blocks and name their pages in [Finish](#8-finish). Otherwise pipe each block to `<python> adopt.py check` (the `adopt.py` beside this file), from the repo root. The check only reads: it runs none of the block's commands, so it can't tell whether a service is already set up, and you must not run them yourself to find out. For each page whose check prints `applies: yes`, ask: **Run** (recommended) or **Skip for now**, naming the page, with the check's `done-check:`, `run:` and `maintainer:` lines verbatim in the option's preview. Explain that **Run** approves the `done` command first and the steps only if it does not exit 0. Ask nothing for a page that doesn't apply.
 - **Template change:** a newer [changelog](#changelog) entry whose line differs in the doc. Ask: "Factory now recommends <new text> because <why>. Switch, or keep yours?", with **Switch** first.
 - **Drift:** on a re-run, a value in the doc that Linear contradicts (a renamed status, a deleted view). Offer to update the doc line or keep it.
 
@@ -128,7 +128,7 @@ Don't commit yet; [Finish](#8-finish) offers that.
 
 ## 5. Adding a repo
 
-Skip this step if no page has a block or the user picked Run for none. Otherwise, for each page they picked, in Tool Stack order, pipe its block to `<python> adopt.py run` from the repo root, using the interpreter selected in [the interview](#3-ask-once). It does the done check first: if the service is already set up, it prints `done: yes` and runs nothing else. Otherwise it runs the steps in order, stops at the first failure, and prints only `ok:` and `failed:` lines (never the commands' output) and the `maintainer:` steps it didn't run. Keep those lines for [Finish](#8-finish).
+Skip this step if no page has a block or the user picked Run for none. Otherwise, for each page they picked, in Tool Stack order, pipe its block to `<python> adopt.py run` from the repo root, using the interpreter selected in [the interview](#3-ask-once). It first runs the approved `done` command, if present; exit 0 prints `done: yes` and skips the steps. Otherwise it runs the approved steps in order, stops at the first failure, and prints only `ok:` and `failed:` lines (never the commands' output) and the `maintainer:` steps it didn't run. Keep those lines for [Finish](#8-finish).
 
 A failed page doesn't stop setup: carry on with the next page and the steps below. Never retry, fix or work around a failed step, install a tool a step needs, or fetch a credential for it; the maintainer does that.
 

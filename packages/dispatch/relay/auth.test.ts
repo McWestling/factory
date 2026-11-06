@@ -44,10 +44,10 @@ function fakeLinear(org = ORG) {
         held.reached();
         await held.released;
       }
-      return Response.json({ access_token: `access-${n}`, refresh_token: `refresh-${n}`, expires_in: 86400 });
+      return Response.json({ access_token: `access-${n}`, refresh_token: `refresh-${n}`, expires_in: 86400, scope: 'read write app:assignable' });
     }
     if (url === 'https://api.linear.app/graphql') {
-      return Response.json({ data: { viewer: { id: 'app-user-example', organization: { id: org } } } });
+      return Response.json({ data: { viewer: { id: 'app-user-example', name: 'Example Machine', organization: { id: org } } } });
     }
     return new Response(null, { status: 404 });
   };
@@ -64,9 +64,9 @@ function setup(org = ORG) {
 
 const stateOf = (url: string) => new URL(url).searchParams.get('state')!;
 
-test('install redirects to Linear as the app with the narrow scopes', async () => {
+test('install redirects to Linear as the app with the relay scopes', async () => {
   const { auth } = setup();
-  const url = new URL((await auth.startInstall(REDIRECT, false))!);
+  const url = new URL((await auth.startInstall(REDIRECT, true))!);
   assert.equal(url.origin + url.pathname, 'https://linear.app/oauth/authorize');
   assert.equal(url.searchParams.get('actor'), 'app');
   assert.equal(url.searchParams.get('scope'), 'read,write,app:assignable');
@@ -77,31 +77,31 @@ test('install redirects to Linear as the app with the narrow scopes', async () =
 
 test('a valid callback stores the tokens and the app user id', async () => {
   const { auth, storage } = setup();
-  const state = stateOf((await auth.startInstall(REDIRECT, false))!);
+  const state = stateOf((await auth.startInstall(REDIRECT, true))!);
   assert.deepEqual(await auth.completeInstall(state, 'code', REDIRECT), { ok: true, appUserId: 'app-user-example' });
   assert.deepEqual(storage.data.get('token'), {
     accessToken: 'access-1', refreshToken: 'refresh-1', expiresAt: 1_000_000 + 86_400_000, appUserId: 'app-user-example',
-    orgId: ORG, clientId: client.clientId,
+    appName: 'Example Machine', orgId: ORG, clientId: client.clientId, scopes: ['read', 'write', 'app:assignable'],
   });
 });
 
 test('a wrong state is rejected before any call to Linear', async () => {
   const { auth, linear } = setup();
-  await auth.startInstall(REDIRECT, false);
+  await auth.startInstall(REDIRECT, true);
   assert.deepEqual(await auth.completeInstall('0'.repeat(64), 'code', REDIRECT), { ok: false, reason: 'state' });
   assert.equal(linear.calls.length, 0);
 });
 
 test('a reused state is rejected', async () => {
   const { auth } = setup();
-  const state = stateOf((await auth.startInstall(REDIRECT, false))!);
+  const state = stateOf((await auth.startInstall(REDIRECT, true))!);
   assert.equal((await auth.completeInstall(state, 'code', REDIRECT)).ok, true);
   assert.deepEqual(await auth.completeInstall(state, 'code', REDIRECT), { ok: false, reason: 'state' });
 });
 
 test('an expired state is rejected and consumed', async () => {
   const { auth, clock, linear, storage } = setup();
-  const state = stateOf((await auth.startInstall(REDIRECT, false))!);
+  const state = stateOf((await auth.startInstall(REDIRECT, true))!);
   clock.now += 10 * 60_000;
   assert.deepEqual(await auth.completeInstall(state, 'code', REDIRECT), { ok: false, reason: 'state' });
   assert.equal(storage.data.has('oauthState'), false);
@@ -110,27 +110,27 @@ test('an expired state is rejected and consumed', async () => {
 
 test('a newer install replaces the pending state', async () => {
   const { auth } = setup();
-  const first = stateOf((await auth.startInstall(REDIRECT, false))!);
-  await auth.startInstall(REDIRECT, false);
+  const first = stateOf((await auth.startInstall(REDIRECT, true))!);
+  await auth.startInstall(REDIRECT, true);
   assert.deepEqual(await auth.completeInstall(first, 'code', REDIRECT), { ok: false, reason: 'state' });
 });
 
 test('a token from another workspace is rejected and not stored', async () => {
   const { auth, storage } = setup('org-other');
-  const state = stateOf((await auth.startInstall(REDIRECT, false))!);
+  const state = stateOf((await auth.startInstall(REDIRECT, true))!);
   assert.deepEqual(await auth.completeInstall(state, 'code', REDIRECT), { ok: false, reason: 'org' });
   assert.equal(storage.data.has('token'), false);
 });
 
 test('a reinstall without the admin secret is rejected', async () => {
   const { auth } = setup();
-  await auth.completeInstall(stateOf((await auth.startInstall(REDIRECT, false))!), 'code', REDIRECT);
+  await auth.completeInstall(stateOf((await auth.startInstall(REDIRECT, true))!), 'code', REDIRECT);
   assert.equal(await auth.startInstall(REDIRECT, false), undefined);
 });
 
-test('a state started without admin cannot replace an existing token', async () => {
+test('a first-install state cannot replace an existing token', async () => {
   const { auth, storage } = setup();
-  const before = stateOf((await auth.startInstall(REDIRECT, false))!);
+  const before = stateOf((await auth.startInstall(REDIRECT, true))!);
   // Simulate a token landing after this state was issued.
   await storage.put('token', { accessToken: 'a', refreshToken: 'r', expiresAt: 0, appUserId: 'u' });
   assert.deepEqual(await auth.completeInstall(before, 'code', REDIRECT), { ok: false, reason: 'reinstall' });
@@ -138,7 +138,7 @@ test('a state started without admin cannot replace an existing token', async () 
 
 test('a reinstall with the admin secret replaces the token', async () => {
   const { auth, storage } = setup();
-  await auth.completeInstall(stateOf((await auth.startInstall(REDIRECT, false))!), 'code', REDIRECT);
+  await auth.completeInstall(stateOf((await auth.startInstall(REDIRECT, true))!), 'code', REDIRECT);
   const state = stateOf((await auth.startInstall(REDIRECT, true))!);
   assert.equal((await auth.completeInstall(state, 'code', REDIRECT)).ok, true);
   assert.equal((storage.data.get('token') as { accessToken: string }).accessToken, 'access-2');
@@ -146,7 +146,7 @@ test('a reinstall with the admin secret replaces the token', async () => {
 
 test('getAccessToken returns the cached token and refreshes once near expiry', async () => {
   const { auth, clock, linear } = setup();
-  await auth.completeInstall(stateOf((await auth.startInstall(REDIRECT, false))!), 'code', REDIRECT);
+  await auth.completeInstall(stateOf((await auth.startInstall(REDIRECT, true))!), 'code', REDIRECT);
   assert.equal(await auth.getAccessToken(), 'access-1');
   clock.now += 23 * 60 * 60_000 + 1;
   assert.deepEqual(await Promise.all([auth.getAccessToken(), auth.getAccessToken()]), ['access-2', 'access-2']);
@@ -169,12 +169,33 @@ test('isAdmin accepts only Basic auth with the admin secret', () => {
   assert.equal(isAdmin(new Request('https://relay.example'), secret), false);
 });
 
-const machine = { clientId: 'c', clientSecret: 's', webhookSecret: 'w', bearerSecret: secret };
+const machine = { clientId: 'c', clientSecret: 'cs', webhookSecret: 'w', bearerSecret: secret };
 const env = { LINEAR_ORG_ID: ORG, ADMIN_SECRET: secret, MACHINES: JSON.stringify({ 'example-machine': machine }) };
 
 test('readConfig accepts a complete config', () => {
   assert.deepEqual(readConfig(env), { orgId: ORG, adminSecret: secret, machines: { 'example-machine': machine } });
 });
+
+const otherMachine = { ...machine, clientId: 'other-client', bearerSecret: 'z'.repeat(32) };
+
+test('readConfig accepts machines with distinct routing credentials', () => {
+  const machines = { first: machine, second: otherMachine };
+  assert.deepEqual(readConfig({ ...env, MACHINES: JSON.stringify(machines) }), {
+    orgId: ORG, adminSecret: secret, machines,
+  });
+});
+
+for (const key of ['bearerSecret', 'clientId'] as const) {
+  test(`readConfig rejects duplicate ${key} without exposing credentials`, () => {
+    const machines = { first: machine, second: { ...otherMachine, [key]: machine[key] } };
+    const problem = readConfig({ ...env, MACHINES: JSON.stringify(machines) });
+    assert.equal(problem, `MACHINES has duplicate ${key} values`);
+    for (const entry of Object.values(machines)) {
+      assert.equal((problem as string).includes(entry.bearerSecret), false);
+      assert.equal((problem as string).includes(entry.clientSecret), false);
+    }
+  });
+}
 
 for (const [label, bad] of Object.entries({
   'no org id': { ...env, LINEAR_ORG_ID: '' },
@@ -183,6 +204,7 @@ for (const [label, bad] of Object.entries({
   'empty machines': { ...env, MACHINES: '{}' },
   'a bad machine name': { ...env, MACHINES: JSON.stringify({ 'Bad/Name': machine }) },
   'a missing machine secret': { ...env, MACHINES: JSON.stringify({ m: { ...machine, webhookSecret: '' } }) },
+  'a missing client secret': { ...env, MACHINES: JSON.stringify({ m: { ...machine, clientSecret: '' } }) },
   'a short bearer secret': { ...env, MACHINES: JSON.stringify({ m: { ...machine, bearerSecret: 'short' } }) },
 })) {
   test(`readConfig fails closed on ${label}, without echoing values`, () => {
@@ -196,20 +218,20 @@ test('a failed or unparseable token exchange stores nothing', async () => {
   for (const response of [new Response('denied', { status: 400 }), new Response('<html>', { status: 200 })]) {
     const storage = memoryStorage();
     const auth = new MachineAuth(storage, client, ORG, async () => response.clone());
-    const state = stateOf((await auth.startInstall(REDIRECT, false))!);
+    const state = stateOf((await auth.startInstall(REDIRECT, true))!);
     assert.deepEqual(await auth.completeInstall(state, 'code', REDIRECT), { ok: false, reason: 'exchange' });
     assert.equal(storage.data.has('token'), false);
   }
 });
 
-const install = async (auth: MachineAuth, admin = false) =>
+const install = async (auth: MachineAuth, admin = true) =>
   auth.completeInstall(stateOf((await auth.startInstall(REDIRECT, admin))!), 'code', REDIRECT);
 const storedAccess = (storage: { data: Map<string, unknown> }) =>
   (storage.data.get('token') as { accessToken: string }).accessToken;
 
 test('an initial callback that finishes late cannot replace one that finished first', async () => {
   const { auth, linear, storage } = setup();
-  const stateA = stateOf((await auth.startInstall(REDIRECT, false))!);
+  const stateA = stateOf((await auth.startInstall(REDIRECT, true))!);
   const paused = linear.pause();
   const a = auth.completeInstall(stateA, 'code-a', REDIRECT);
   await paused.waiting;
@@ -251,7 +273,7 @@ for (const [label, orgId, clientId, legacy] of [
   ['the client id changes', ORG, 'client-new', false],
   ['the record has no identity', ORG, client.clientId, true],
 ] as const) {
-  test(`when ${label}, the token is neither lent nor refreshed until an admin reinstall`, async () => {
+  test(`when ${label}, the token is neither used nor refreshed until an admin reinstall`, async () => {
     const { auth, clock, linear, storage } = setup();
     await install(auth);
     if (legacy) {
@@ -272,10 +294,90 @@ for (const [label, orgId, clientId, legacy] of [
   });
 }
 
-test('rotating only the client secret keeps the install', async () => {
-  const { auth, clock, storage, linear } = setup();
+test('an unauthenticated first install cannot create or replace pending state', async () => {
+  const { auth, storage, linear } = setup();
+  assert.equal(await auth.startInstall(REDIRECT, false), undefined);
+  assert.equal(storage.data.size, 0);
+  await auth.startInstall(REDIRECT, true);
+  const pending = structuredClone(storage.data.get('oauthState'));
+  assert.equal(await auth.startInstall(REDIRECT, false), undefined);
+  assert.deepEqual(storage.data.get('oauthState'), pending);
+  assert.equal(linear.calls.length, 0);
+});
+
+test('the exchange is bound to its PKCE challenge, and exchange and refresh send the client secret', async () => {
+  const { auth, linear, clock } = setup();
+  const url = new URL((await auth.startInstall(REDIRECT, true))!);
+  await auth.completeInstall(stateOf(url.toString()), 'code', REDIRECT);
+  const exchange = new URLSearchParams(linear.calls[0]!.body);
+  const verifier = exchange.get('code_verifier')!;
+  assert.match(verifier, /^[A-Za-z0-9_-]{43}$/);
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  assert.equal(url.searchParams.get('code_challenge'), Buffer.from(digest).toString('base64url'));
+  assert.equal(url.searchParams.get('code_challenge_method'), 'S256');
+  assert.equal(exchange.get('client_secret'), client.clientSecret);
+  clock.now += 24 * 60 * 60_000;
+  await auth.getAccessToken();
+  const refresh = new URLSearchParams(linear.calls.at(-1)!.body);
+  assert.equal(refresh.get('grant_type'), 'refresh_token');
+  assert.equal(refresh.get('client_secret'), client.clientSecret);
+});
+
+for (const scope of [undefined, 'read write admin app:assignable', 'read app:assignable', 'read issues:create app:assignable', 'read', ['read', 1]]) {
+  test(`a grant with unapproved permissions is rejected: ${JSON.stringify(scope)}`, async () => {
+    const storage = memoryStorage();
+    const auth = new MachineAuth(storage, client, ORG, async () => Response.json({
+      access_token: 'access', refresh_token: 'refresh', expires_in: 86400, scope,
+    }));
+    assert.deepEqual(await install(auth), { ok: false, reason: 'exchange' });
+    assert.equal(storage.data.has('token'), false);
+  });
+}
+
+for (const scopes of [undefined, ['read', 'app:assignable'], ['read', 'write', 'admin', 'app:assignable']]) {
+  test(`other or unverified stored permissions require reinstall: ${JSON.stringify(scopes)}`, async () => {
+    const { auth, storage, linear, clock } = setup();
+    await install(auth);
+    const token = storage.data.get('token') as Record<string, unknown>;
+    storage.data.set('token', { ...token, scopes });
+    await assert.rejects(auth.getAccessToken(), /reinstalled/);
+    clock.now += 24 * 60 * 60_000;
+    await assert.rejects(auth.getAccessToken(), /reinstalled/);
+    assert.equal(linear.calls.length, 2);
+  });
+}
+
+test('a legacy pending install without PKCE is rejected before exchange', async () => {
+  const { auth, storage, linear } = setup();
+  storage.data.set('oauthState', { value: 'old-state', expiresAt: Infinity, reinstall: true });
+  assert.deepEqual(await auth.completeInstall('old-state', 'code', REDIRECT), { ok: false, reason: 'state' });
+  assert.equal(linear.calls.length, 0);
+});
+
+test('a refresh cannot widen the stored permissions', async () => {
+  const { auth, storage, linear, clock } = setup();
   await install(auth);
-  const rotated = new MachineAuth(storage, { ...client, clientSecret: 'client-secret-new' }, ORG, linear.fetchFn,
-    () => clock.now);
-  assert.equal(await rotated.getAccessToken(), 'access-1');
+  const before = structuredClone(storage.data.get('token'));
+  clock.now += 24 * 60 * 60_000;
+  const changed = new MachineAuth(storage, client, ORG, async () => Response.json({
+    access_token: 'broad-access', refresh_token: 'broad-refresh', expires_in: 86400,
+    scope: 'read write admin app:assignable',
+  }), () => clock.now);
+  await assert.rejects(changed.getAccessToken(), /refresh failed/);
+  assert.deepEqual(storage.data.get('token'), before);
+  assert.equal(linear.calls.length, 2);
+});
+
+test('legacy array-form scope responses are accepted with the same allowlist', async () => {
+  const storage = memoryStorage();
+  const linear = fakeLinear();
+  const auth = new MachineAuth(storage, client, ORG, async (input, init) => {
+    if (String(input) === 'https://api.linear.app/oauth/token') {
+      return Response.json({ access_token: 'access', refresh_token: 'refresh', expires_in: 86400,
+        scope: ['app:assignable', 'write', 'read'] });
+    }
+    return linear.fetchFn(input, init);
+  });
+  assert.equal((await install(auth)).ok, true);
+  assert.equal(await auth.getAccessToken(), 'access');
 });

@@ -4,6 +4,10 @@ The workflow skills, contracts and configs that every factory repo shares.
 
 ## Dispatch
 
+**Claim id**:
+The identifier the relay issues with each claim attempt; the daemon must send it to record that attempt's outcome, so an expired or superseded claim can't change the job.
+_Avoid_: lease id, job id
+
 **Job**:
 The `{issueId, sessionId}` payload the relay queues for a machine's daemon; the daemon reads the issue from Linear at pickup.
 _Avoid_: task, dispatch payload
@@ -12,12 +16,16 @@ _Avoid_: task, dispatch payload
 One of `queued`, `claimed`, `launched`, or `failed`, tracked by the queue separately from the job payload.
 _Avoid_: job status
 
+**Lease**:
+The 10 minutes a claimed job stays with the daemon that claimed it; when it expires, the job goes back on the queue.
+_Avoid_: lock, timeout
+
 **Machine**:
 A computer that runs jobs, with its own Linear app and its own Durable Object in the relay, named by its key in the relay's `MACHINES` secret.
 _Avoid_: host, runner
 
 **Relay**:
-The always-on Cloudflare Worker that installs each machine's Linear app and holds its token.
+The always-on Cloudflare Worker that installs each machine's Linear app, holds its token, takes Linear's webhooks and queues jobs for each machine's daemon.
 _Avoid_: proxy, server
 
 ## Verify
