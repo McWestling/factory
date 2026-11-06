@@ -10,8 +10,8 @@ Dispatch connects tasks in Linear to coding agents running in Orca on your compu
 - **Local client (daemon):** a background application on your computer that will
   pick up tasks from the relay and start them in Orca. It is not implemented yet.
 
-The relay is available for controlled testing; it has been proven live on a local
-runtime, not yet on Cloudflare. It cannot launch Orca by itself.
+The relay is available for controlled testing, and has answered a real delegation
+and stop on Cloudflare. It cannot launch Orca by itself.
 One deployment supports one Linear workspace and several computers, each with its
 own Linear app. Installing Factory's skills does not deploy Dispatch.
 
@@ -47,8 +47,9 @@ Run these commands from `packages/dispatch` after testing above.
    Save the HTTPS address printed by Wrangler. Below, `<relay-origin>` means that
    address followed by `/dispatch`, with no trailing slash. Every relay route lives
    under `/dispatch`. To serve it from your own domain on Cloudflare, also pass
-   `--route '<hostname>/dispatch/*'`; the hostname needs a proxied DNS record. Until
-   secrets are set, requests return 503.
+   `--x-route-zones --route '<hostname>/dispatch/*' --zone <zone>`; the hostname needs
+   a proxied DNS record, and the Worker's `workers.dev` address turns off. Until secrets
+   are set, requests return 503.
 
 2. **Create a Linear app for your computer.** Follow Linear's
    [agent setup guide](https://linear.app/developers/agents). Choose a stable machine
@@ -102,8 +103,8 @@ Run these commands from `packages/dispatch` after testing above.
    expect a "Queued on ..." reply. Stop the session; expect the stopped reply.
    Stopping in Linear does not stop an agent already running in Orca.
 
-   **Not yet proven on Cloudflare.** A real delegation and stop got their replies
-   with the relay running locally behind a tunnel; a deployed relay hasn't been tested.
+   A real delegation and stop got these replies from a deployed relay. The daemon API's
+   full claim flow has only run on the local runtime, as the daemon doesn't exist yet.
 
 ## Operate it
 
