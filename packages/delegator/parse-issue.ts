@@ -1,6 +1,6 @@
-export type DelegateIssue = { repo: string; model: string };
+export type DelegatorIssue = { repo: string; model: string };
 export type Refusal = { field: 'dispatch' | 'model' | 'repo'; expected: string };
-export type DelegateConfig = {
+export type DelegatorConfig = {
   models: Readonly<Record<string, unknown>>;
   repos: readonly string[];
 };
@@ -22,7 +22,7 @@ function readModel(description: string): string | undefined {
   }
 }
 
-export function parseIssue(description: string, config?: DelegateConfig): DelegateIssue | Refusal {
+export function parseIssue(description: string, config?: DelegatorConfig): DelegatorIssue | Refusal {
   const model = readModel(description.replace(/\r\n/g, '\n'));
   if (!model) {
     return {

@@ -1,4 +1,4 @@
-# Delegate
+# Delegator
 
 Delegate an issue from Linear. Factory Cloud Inbox holds it until the Factory Runner
 on your machine picks it up and starts a coding agent in Orca. Each machine has its
@@ -11,16 +11,16 @@ own Linear agent integration, so the agent you delegate to decides the machine.
   Cloudflare also runs its storage and message retries; no database server to manage.
 - **Runner:** a background process on your machine that will pick up tasks from
   Cloud Inbox and start them in Orca. It is not implemented yet; its code will live
-  in `packages/delegate/runner/`.
+  in `packages/delegator/runner/`.
 
 Cloud Inbox is available for controlled testing, and has answered a real delegation
 and stop on Cloudflare. It cannot launch Orca by itself.
 One deployment supports one Linear workspace and several computers, each with its
-own Linear app. Installing Factory's skills does not deploy Delegate.
+own Linear app. Installing Factory's skills does not deploy Delegator.
 
 ## Test locally
 
-Use Node.js 26. From `packages/delegate`:
+Use Node.js 26. From `packages/delegator`:
 
 ```sh
 npm ci --ignore-scripts
@@ -38,7 +38,7 @@ production; Linear cannot deliver webhooks to localhost.
 
 You need a Cloudflare account with Workers and SQLite-backed Durable Objects,
 and a Linear workspace admin who can create and install OAuth apps.
-Run these commands from `packages/delegate` after testing above.
+Run these commands from `packages/delegator` after testing above.
 
 1. **Deploy to Cloudflare:**
 
@@ -67,7 +67,7 @@ Run these commands from `packages/delegate` after testing above.
      delegations get no reply)
 
    Keep the app private to your workspace and enable only the authorization-code
-   grant. Save its client ID, client secret and webhook signing secret. Delegate
+   grant. Save its client ID, client secret and webhook signing secret. Delegator
    doesn't need a personal API key.
 
    Linear supports [prefilled app creation](https://linear.app/developers/oauth-app-manifests)

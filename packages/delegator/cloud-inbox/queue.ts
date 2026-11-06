@@ -17,7 +17,7 @@ export const MESSAGES = {
     `Queued on ${machine}. It starts when ${machine} picks it up, which can take a while if the machine is busy or asleep.`,
   replaced: 'Replaced by a newer delegation.',
   stopped: 'Stopped watching. The agent in Orca keeps running; stop it there if needed.',
-  replies: "Delegate doesn't read replies; steer the agent in Orca.",
+  replies: "Delegator doesn't read replies; steer the agent in Orca.",
 };
 
 const ACTIVITY = 'mutation ($input: AgentActivityCreateInput!) { agentActivityCreate(input: $input) { success } }';

@@ -226,7 +226,7 @@ Slots are `{{…}}`. Fill them from Linear; everything else is copied exactly, i
   | `Orca`          | Dispatched from Orca, including Cursor Cloud agents it launches                  |
   | `Claude`        | Claude Code outside Orca                                                         |
   | `Codex`         | Codex outside Orca                                                               |
-  | `Linear/Cursor` | Cursor Cloud, delegated from Linear. Legacy; retired when Factory Delegate ships |
+  | `Linear/Cursor` | Cursor Cloud, delegated from Linear. Legacy; retired when Factory Delegator ships |
 
 - `{{orca rule}}`: if there is an `Orca` label, ": a session with any `ORCA_*` environment variable set is `Orca`, and Orca sets the label itself on the Cursor Cloud agents it launches"; otherwise nothing.
 - `{{default target}}`: `Orca` if that label exists; otherwise the user's answer in step 3.
@@ -398,5 +398,5 @@ Apply each entry newer than the doc's version, in order. Compare with slots fill
 
 - **Where:** `## Dispatch targets`, the `Linear/Cursor` row.
 - **Old text:** `Cursor Cloud, delegated from Linear. Legacy; retired when Factory Dispatch ships`
-- **New text:** `Cursor Cloud, delegated from Linear. Legacy; retired when Factory Delegate ships`
-- **Why:** Factory Dispatch was renamed Factory Delegate.
+- **New text:** `Cursor Cloud, delegated from Linear. Legacy; retired when Factory Delegator ships`
+- **Why:** Factory Dispatch was renamed Factory Delegator.

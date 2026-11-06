@@ -1,18 +1,18 @@
 # Factory
 
-The toolkit: the workflow skills, contracts and configs that every factory repo shares, plus Delegate and Verify.
+The toolkit: the workflow skills, contracts and configs that every factory repo shares, plus Delegator and Verify.
 
-## Delegate
+## Delegator
 
 **Claim id**:
 The identifier Cloud Inbox issues with each claim attempt; the Runner must send it to record that attempt's outcome, so an expired or superseded claim can't change the job.
 _Avoid_: lease id, job id
 
 **Cloud Inbox**:
-Delegate's always-on hosted service, a Cloudflare Worker: it installs each machine's Linear app, alone holds Linear credentials, takes Linear's webhooks and queues jobs for each machine's Runner. Some deployed identifiers keep the old name; see its [technical reference](packages/delegate/cloud-inbox/README.md#legacy-operational-names).
+Delegator's always-on hosted service, a Cloudflare Worker: it installs each machine's Linear app, alone holds Linear credentials, takes Linear's webhooks and queues jobs for each machine's Runner. Some deployed identifiers keep the old name; see its [technical reference](packages/delegator/cloud-inbox/README.md#legacy-operational-names).
 _Avoid_: relay, proxy, server
 
-**Delegate**:
+**Delegator**:
 The system that starts work on a machine from a Linear delegation: Cloud Inbox, the Runner, and the code they share. Formerly Dispatch. The generic verb "dispatch" and the Dispatch target labels are separate and keep their names.
 _Avoid_: Dispatch, Factory Dispatch
 
@@ -33,14 +33,14 @@ The computer that runs jobs, with its own Linear app and its own Durable Object 
 _Avoid_: host
 
 **Runner**:
-The local process on a machine that claims jobs from Cloud Inbox through its restricted machine-facing API and launches them in Orca. It holds no Linear credentials. Planned, in `packages/delegate/runner/`.
+The local process on a machine that claims jobs from Cloud Inbox through its restricted machine-facing API and launches them in Orca. It holds no Linear credentials. Planned, in `packages/delegator/runner/`.
 _Avoid_: daemon, local client
 
 ## Verify
 
 **Verify**:
-Factory's capability for running the checks a repo declares. It is separate from Delegate.
-_Avoid_: Delegate checks
+Factory's capability for running the checks a repo declares. It is separate from Delegator.
+_Avoid_: Delegator checks
 
 **Verify contract**:
 A repo's `.factory/verify.toml`: the one file that declares every check the repo runs.

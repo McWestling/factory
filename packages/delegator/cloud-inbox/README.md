@@ -1,7 +1,7 @@
-# Delegate technical reference
+# Delegator technical reference
 
-For architecture and setup, see the [Delegate README](../README.md).
-Paths below are relative to `packages/delegate`.
+For architecture and setup, see the [Delegator README](../README.md).
+Paths below are relative to `packages/delegator`.
 
 ## Shared types and issue parser
 

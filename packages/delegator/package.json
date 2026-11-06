@@ -1,5 +1,5 @@
 {
-  "name": "@factory/delegate",
+  "name": "@factory/delegator",
   "version": "0.0.0",
   "private": true,
   "type": "module",

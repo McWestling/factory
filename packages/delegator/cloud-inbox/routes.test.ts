@@ -216,7 +216,7 @@ test('any other prompt gets the replies thought and leaves the queue alone', asy
   assert.equal((await deliver(fixture('prompted'))).status, 200);
   assert.deepEqual(posts.at(-1), {
     auth: 'Bearer access-example', sessionId: 'session-1', type: 'thought',
-    body: "Delegate doesn't read replies; steer the agent in Orca.",
+    body: "Delegator doesn't read replies; steer the agent in Orca.",
   });
   assert.equal(rows().jobs.length, 1);
 });
