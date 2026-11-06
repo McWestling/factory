@@ -2,7 +2,7 @@
 // that machine's Durable Object. Runs under Node for tests, so SQL goes through `Sql`,
 // which both Cloudflare's SqlStorage and a node:sqlite adapter satisfy.
 
-import type { Job } from '../job.ts';
+import type { Claim } from '../job.ts';
 import type { MachineAuth } from './auth.ts';
 import { log } from './routes.ts';
 
@@ -32,6 +32,8 @@ export type AgentEvent = {
   appUserId: string;
   sessionId: string;
   issueId?: string;
+  /** Linear's stable id for a prompt. The route requires it unless `stop` is set. */
+  activityId?: string;
   stop: boolean;
 };
 
@@ -53,6 +55,10 @@ const HEAD = 'NOT EXISTS (SELECT 1 FROM outbox p WHERE p.session_id = o.session_
  * A stopped or replaced session is recorded in `ended`, so a late `created` or reply
  * can't queue it again or post after its final response. Claiming a job cancels its
  * queued thought: once the daemon owns the session, that thought is obsolete.
+ *
+ * Each claim gets a fresh id, and only that claim, while its lease lasts, can record the
+ * job's outcome. A row claimed before ids existed has none, so it can't be finished: its
+ * lease runs out and the job goes back on the queue.
  */
 export class MachineQueue {
   #sql: Sql;
@@ -79,7 +85,12 @@ export class MachineQueue {
     this.#schedule = schedule;
     sql.exec(`CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, issue_id TEXT NOT NULL,
       state TEXT NOT NULL, lease_until INTEGER, updated_at INTEGER NOT NULL)`);
+    // Added after the first deployments, so existing tables need it too.
+    if (!sql.exec('PRAGMA table_info(jobs)').toArray().some((column) => column.name === 'claim_id')) {
+      sql.exec('ALTER TABLE jobs ADD COLUMN claim_id TEXT');
+    }
     sql.exec('CREATE TABLE IF NOT EXISTS seen (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
+    sql.exec('CREATE TABLE IF NOT EXISTS seen_activities (id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     sql.exec('CREATE TABLE IF NOT EXISTS ended (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     // `queued` marks the queued thought, which a claim cancels.
     sql.exec(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL,
@@ -96,13 +107,17 @@ export class MachineQueue {
     const ended = this.#sql.exec('SELECT 1 FROM ended WHERE session_id = ?', event.sessionId).toArray().length > 0;
 
     if (event.action === 'prompted') {
+      // Its final response is already written, so a repeated stop adds nothing.
+      if (ended) return 'ended';
       if (event.stop) {
         // A stopped session that hasn't been picked up yet shouldn't start later.
         this.#sql.exec("DELETE FROM jobs WHERE id = ? AND state = 'queued'", event.sessionId);
         this.#end(event.sessionId, MESSAGES.stopped, now);
-      } else if (ended) {
-        return 'ended';
       } else {
+        const fresh = this.#sql.exec(
+          'INSERT INTO seen_activities (id, at) VALUES (?, ?) ON CONFLICT DO NOTHING RETURNING id',
+          event.activityId!, now).toArray();
+        if (!fresh.length) return 'duplicate';
         this.#enqueue(event.sessionId, 'thought', MESSAGES.replies, now);
       }
       this.#wake();
@@ -124,25 +139,28 @@ export class MachineQueue {
   }
 
   /** Claims the oldest waiting job with a fresh lease, or returns undefined. */
-  async claim(): Promise<Job | undefined> {
+  async claim(): Promise<Claim | undefined> {
     const now = this.#now();
     if (this.#settle(now)) this.#wake();
+    const claimId = crypto.randomUUID();
     const [row] = this.#sql.exec(
-      `UPDATE jobs SET state = 'claimed', lease_until = ?, updated_at = ?
+      `UPDATE jobs SET state = 'claimed', lease_until = ?, updated_at = ?, claim_id = ?
        WHERE id = (SELECT id FROM jobs WHERE state = 'queued' ORDER BY rowid LIMIT 1) RETURNING id, issue_id`,
-      now + LEASE_MS, now).toArray();
+      now + LEASE_MS, now, claimId).toArray();
     if (!row) return undefined;
     // The daemon owns the session now, so its queued thought is obsolete. One already in
     // flight is never retried: a failure updates a row that is gone.
     this.#sql.exec('DELETE FROM outbox WHERE session_id = ? AND queued = 1', String(row.id));
-    return { issueId: String(row.issue_id), sessionId: String(row.id) };
+    return { issueId: String(row.issue_id), sessionId: String(row.id), claimId };
   }
 
-  /** Records a claimed job's outcome. False if the job isn't claimed. */
-  async finish(id: string, outcome: Outcome): Promise<boolean> {
+  /** Records a claim's outcome. False unless it's the job's current claim and its lease hasn't expired. */
+  async finish(id: string, claimId: string, outcome: Outcome): Promise<boolean> {
+    const now = this.#now();
     return this.#sql.exec(
-      "UPDATE jobs SET state = ?, lease_until = NULL, updated_at = ? WHERE id = ? AND state = 'claimed' RETURNING id",
-      outcome, this.#now(), id).toArray().length > 0;
+      `UPDATE jobs SET state = ?, lease_until = NULL, updated_at = ?
+       WHERE id = ? AND state = 'claimed' AND claim_id = ? AND lease_until > ? RETURNING id`,
+      outcome, now, id, claimId, now).toArray().length > 0;
   }
 
   /**
@@ -155,6 +173,7 @@ export class MachineQueue {
 
   async #drain(): Promise<void> {
     await null; // Lets deliver() store this drain before an empty outbox clears it.
+    this.#expire(this.#now());
     for (;;) {
       const [row] = this.#sql.exec(
         `SELECT id, session_id, type, body, attempts FROM outbox o WHERE next_at <= ? AND ${HEAD} ORDER BY id LIMIT 1`,
@@ -198,22 +217,28 @@ export class MachineQueue {
     this.#enqueue(sessionId, 'response', body, now);
   }
 
-  /**
-   * Drops expired history, puts expired leases back on the queue, and keeps only the
-   * newest waiting job per issue, ending each replaced session. True if it replaced any.
-   */
-  #settle(now: number): boolean {
-    this.#sql.exec("DELETE FROM jobs WHERE state IN ('launched', 'failed') AND updated_at <= ?", now - HISTORY_MS);
-    this.#sql.exec('DELETE FROM seen WHERE at <= ?', now - HISTORY_MS);
-    this.#sql.exec('DELETE FROM ended WHERE at <= ?', now - HISTORY_MS);
-    // A stopped session whose lease expired isn't requeued.
+  /** Drops expired history, including activities Linear has refused for the whole window. */
+  #expire(now: number) {
+    // Remove stopped claims before pruning the markers that prevent requeueing.
     this.#sql.exec(`DELETE FROM jobs WHERE state = 'claimed' AND lease_until <= ?
       AND id IN (SELECT session_id FROM ended)`, now);
+    this.#sql.exec("DELETE FROM jobs WHERE state IN ('launched', 'failed') AND updated_at <= ?", now - HISTORY_MS);
+    this.#sql.exec('DELETE FROM seen WHERE at <= ?', now - HISTORY_MS);
+    this.#sql.exec('DELETE FROM seen_activities WHERE at <= ?', now - HISTORY_MS);
+    this.#sql.exec('DELETE FROM ended WHERE at <= ?', now - HISTORY_MS);
     // ponytail: an activity Linear keeps refusing is dropped after the history window.
     for (const { session_id, type } of this.#sql.exec(
       'DELETE FROM outbox WHERE created_at <= ? RETURNING session_id, type', now - HISTORY_MS).toArray()) {
       log({ event: 'activity', machine: this.#machine, session: String(session_id), type: String(type), outcome: 'expired' });
     }
+  }
+
+  /**
+   * Drops expired history, puts expired leases back on the queue, and keeps only the
+   * newest waiting job per issue, ending each replaced session. True if it replaced any.
+   */
+  #settle(now: number): boolean {
+    this.#expire(now);
     const waiting = this.#sql.exec(
       "SELECT id, issue_id FROM jobs WHERE state = 'queued' OR (state = 'claimed' AND lease_until <= ?) ORDER BY rowid DESC",
       now).toArray();

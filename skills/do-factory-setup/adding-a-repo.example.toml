@@ -13,7 +13,8 @@
 # machine must already have both.
 
 # Optional. A command that exits 0 when the repo is already set up; setup
-# then skips the block. Setup runs it before asking, so it must only read.
+# then skips the steps. Inspection only previews it; Run approves this command
+# and the steps below before any of them execute.
 # Keep it above [applies]: TOML puts any key below a table header inside it.
 done = 'example-vault project show "$REPO_PREFIX"'
 

@@ -109,10 +109,15 @@ Run these commands from `packages/dispatch` after testing above.
 ## Operate it
 
 - **Update:** test, dry-run, then `npx wrangler deploy`. Stored jobs and tokens
-  persist; future storage changes need to account for existing installations.
+  persist. Clients must send the `claimId` returned by a claim when reporting its
+  outcome. Claims made before this field was added cannot report an outcome;
+  they become available again after their existing ten-minute lease expires.
+  See the [API reference](relay/README.md) for request formats and migration behavior.
 - **Add a computer:** repeat app registration, add its entry to the complete
   `MACHINES` JSON, upload that secret, then visit its install URL. Preserve existing
   entries and keys: renaming a key selects new, empty storage.
+  Each machine needs its own client ID and bearer secret. Duplicates make the
+  relay return 503 until corrected, without deleting stored jobs or tokens.
 - **Reinstall:** revisit the install URL; use `ADMIN_SECRET` as the HTTP Basic
   password when prompted (username is ignored).
 - **Local client:** installation instructions will be added with its implementation.

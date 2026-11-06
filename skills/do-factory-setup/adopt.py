@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run one Tool Stack page's "Adding a repo" block in the current repo.
 
-  python3 adopt.py check < block.toml   # does it apply, is it done, what would run
-  python3 adopt.py run   < block.toml   # run its steps, stop at the first failure
+  python3 adopt.py check < block.toml   # inspect applicability and preview commands without running them
+  python3 adopt.py run   < block.toml   # check done, then run steps, stopping at the first failure
 
 The block format is in adding-a-repo.example.toml. Commands run through the
 shell from the repo root, with REPO (owner/name) and REPO_PREFIX (the name,
@@ -62,20 +62,20 @@ def main():
         if "name" not in s or ("run" in s) == ("maintainer" in s):
             sys.exit(f"each [[step]] needs a name and exactly one of run or maintainer: {s}")
     os.chdir(git("rev-parse", "--show-toplevel"))
-    env = repo_env()
 
     if not applies(block):
         print("applies: no")
         return
-    done = "done" in block and sh(block["done"], env) == 0
     if sys.argv[1] == "check":
         print("applies: yes")
-        print(f"done: {'yes' if done else 'no'}")
-        if not done:
-            for s in steps:
-                print(f"run: {s['name']}: {s['run']}" if "run" in s
-                      else f"maintainer: {s['name']}: {s['maintainer']}")
+        if "done" in block:
+            print(f"done: {block['done']}")
+        for s in steps:
+            print(f"run: {s['name']}: {s['run']}" if "run" in s
+                  else f"maintainer: {s['name']}: {s['maintainer']}")
         return
+    env = repo_env()
+    done = "done" in block and sh(block["done"], env) == 0
     if done:
         print("done: yes")
         return

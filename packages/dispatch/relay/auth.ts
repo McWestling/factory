@@ -41,12 +41,18 @@ export function readConfig(env: Record<string, unknown>): Config | string {
   }
   const entries = Object.entries(machines);
   if (!entries.length) return 'MACHINES is empty';
+  const bearerSecrets = new Set<unknown>();
+  const clientIds = new Set<unknown>();
   for (const [name, machine] of entries) {
     if (!MACHINE_NAME.test(name)) return `MACHINES has an invalid machine name`;
     const m = (machine ?? {}) as Record<string, unknown>;
     for (const key of ['clientId', 'clientSecret', 'webhookSecret', 'bearerSecret']) {
       if (typeof m[key] !== 'string' || !m[key]) return `MACHINES.${name}.${key} is missing`;
     }
+    if (bearerSecrets.has(m.bearerSecret)) return 'MACHINES has duplicate bearerSecret values';
+    if (clientIds.has(m.clientId)) return 'MACHINES has duplicate clientId values';
+    bearerSecrets.add(m.bearerSecret);
+    clientIds.add(m.clientId);
     if ((m.bearerSecret as string).length < MIN_SECRET_LENGTH) {
       return `MACHINES.${name}.bearerSecret must be at least ${MIN_SECRET_LENGTH} characters`;
     }

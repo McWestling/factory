@@ -39,7 +39,7 @@ export default {
       return {
         webhook: (event) => stub.webhook(name, event),
         claim: () => stub.claim(name),
-        finish: (id, outcome) => stub.finish(name, id, outcome),
+        finish: (id, claimId, outcome) => stub.finish(name, id, claimId, outcome),
       };
     };
     if (url.pathname === '/webhook' && request.method === 'POST') return handleWebhook(request, config, machines);
@@ -114,8 +114,8 @@ export class Machine extends DurableObject<Env> {
     return this.#queueFor(machine).claim();
   }
 
-  finish(machine: string, id: string, outcome: Outcome) {
-    return this.#queueFor(machine).finish(id, outcome);
+  finish(machine: string, id: string, claimId: string, outcome: Outcome) {
+    return this.#queueFor(machine).finish(id, claimId, outcome);
   }
 
 }

@@ -4,6 +4,10 @@ The workflow skills, contracts and configs that every factory repo shares.
 
 ## Dispatch
 
+**Claim id**:
+The identifier the relay issues with each claim attempt; the daemon must send it to record that attempt's outcome, so an expired or superseded claim can't change the job.
+_Avoid_: lease id, job id
+
 **Job**:
 The `{issueId, sessionId}` payload the relay queues for a machine's daemon; the daemon reads the issue from Linear at pickup.
 _Avoid_: task, dispatch payload

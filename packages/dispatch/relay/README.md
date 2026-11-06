@@ -5,8 +5,9 @@ Paths below are relative to `packages/dispatch`.
 
 ## Shared types and issue parser
 
-`job.ts` exports `Job` (`issueId`, `sessionId`) and `JobState` (`queued`, `claimed`,
-`launched`, `failed`). Queue metadata belongs to the queue, not the job payload.
+`job.ts` exports `Job` (`issueId`, `sessionId`), `Claim` (a `Job` plus `claimId`) and
+`JobState` (`queued`, `claimed`, `launched`, `failed`). Queue metadata belongs to the
+queue, not the job payload.
 
 `parse-issue.ts` exports `parseIssue(description, config?)`. It returns either
 `{repo, model}` or a refusal `{field, expected}`. Test for `field` to distinguish
@@ -27,6 +28,9 @@ It refuses every request until three secrets are set (`.dev.vars.example` shows
 their shape): `LINEAR_ORG_ID`, `ADMIN_SECRET`, and `MACHINES`, a JSON object of
 machine name to its Linear client id, client secret, webhook signing secret and
 bearer secret. Adding a machine means updating `MACHINES`.
+Each machine must have a distinct client id and bearer secret. Duplicate values
+make the relay return 503 until the configuration is corrected; stored jobs and
+installations are preserved.
 
 A `MACHINES` key is a stable storage identifier, not a display name: it selects the
 machine's Durable Object. Renaming a key selects a new, empty Durable Object, and
@@ -49,17 +53,24 @@ Workers by routing `<hostname>/dispatch/*` here. Paths are shown without that pr
 
 Point each machine's Linear app webhook (Agent session events, delivery enabled) at
 `POST /webhook`.
-`relay/routes.ts` handles it before the machine's queue sees anything: it finds the
-machine by `oauthClientId`, verifies `Linear-Signature` over the raw body, and requires
+`relay/routes.ts` handles it before the machine's queue sees anything: it answers 401
+to a missing or malformed `Linear-Signature` without reading the body, answers 413 once
+the body passes 1 MiB, counting as it reads whether or not `Content-Length` is sent,
+then finds the machine by `oauthClientId`, verifies `Linear-Signature` over the raw
+body, and requires
 `webhookTimestamp` within 60 s and `organizationId` equal to `LINEAR_ORG_ID`. The queue
 then requires `appUserId` to match the install. A `created` event queues the job,
 deduped on the session id, and posts the queued `thought`; a newer delegation of the
 same issue replaces its waiting job and posts "Replaced by a newer dispatch." on the
 old session. A `prompted` stop signal posts the stopped `response` and drops a job not
-yet claimed; any other prompt gets a `thought` saying replies aren't read. A stopped
+yet claimed; any other prompt gets a `thought` saying replies aren't read, once per
+`agentActivity.id` (kept 30 days), so a redelivered prompt is ignored and a new prompt
+in the same session gets its own thought. A prompt without that id gets 400. A stopped
 or replaced session is remembered as ended for 30 days: a late `created` doesn't queue
-it again, a reply gets no thought, and a claimed job of a stopped session isn't
-requeued when its lease expires. The relay's code posts activities only and changes
+it again, a reply gets no thought, a repeated stop gets no second final response, and
+a claimed job of a stopped session isn't requeued when its lease expires. Expired
+stopped claims are removed before their ended markers, including after more than
+30 days offline. The relay's code posts activities only and changes
 no issue fields, though its grant would allow it. The thought names the app as Linear
 shows it, stored at install; installs from before that use the `MACHINES` key.
 
@@ -68,8 +79,9 @@ together in the machine's outbox, without waiting on Linear. The Durable Object'
 alarm then posts them, one request at a time with a 10 s timeout on each Linear call
 (token refresh included). A failed post, or a failed token refresh, stays in the outbox
 and is retried with backoff from 10 s up to an hour, surviving restarts; only a success
-removes it, and an activity still failing after 30 days is dropped and logged. Each
-session's activities go out in the order they were written. Ending a session (replaced
+removes it, and the alarm drops and logs an activity still failing after 30 days,
+even with no claims or new webhooks. Each session's activities go out in the order
+they were written. Ending a session (replaced
 or stopped) cancels its thoughts not yet posted, so a final response is never followed
 by a queued thought. Claiming a job hands the session to the daemon and cancels its
 queued thought, even mid-retry or mid-refresh, so it never lands after the job has
@@ -80,11 +92,19 @@ thought already sent when the claim lands may still appear.
 The daemon API authenticates with `Authorization: Bearer <bearerSecret>`, and the
 machine comes only from the secret that matched. A job's id is its session id.
 
-- `POST /jobs/claim` returns the oldest waiting job as `{issueId, sessionId}` (204 when
-  none) and leases it for 10 minutes. An expired lease goes back on the queue, unless
-  a newer job for the same issue is waiting, which replaces it.
-- `POST /jobs/<id>/launched` and `POST /jobs/<id>/failed` record a claimed job's
-  outcome: 204, or 409 if it isn't claimed.
+- `POST /jobs/claim` returns the oldest waiting job as `{issueId, sessionId, claimId}`
+  (204 when none) and leases it for 10 minutes. `claimId` is new for every claim attempt.
+  An expired lease goes back on the queue, unless a newer job for the same issue is
+  waiting, which replaces it.
+- `POST /jobs/<id>/launched?claimId=<claimId>` and
+  `POST /jobs/<id>/failed?claimId=<claimId>` record that claim's outcome: 204, 400 if
+  `claimId` is missing, or 409 unless it's the job's current claim with an unexpired
+  lease. So a daemon whose lease expired can't change the outcome of a later claim, and
+  must report before its lease ends. A second report of the same claim also gets 409.
+- A job claimed before `claimId` existed has no id, so it can't report an outcome: its
+  report gets 400 or 409. It keeps its stored lease, then goes back on the queue like
+  any expired lease, and its next claim gets an id. The column is added on the first
+  request after deploying; queued jobs are untouched.
 - There is no token-sharing endpoint; `GET /token` returns 404.
 
 Launched and failed jobs, the dedupe records and the ended sessions are kept 30 days. `relay/queue.ts`

@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { MachineAuth, type Config, type Storage } from './auth.ts';
 import { MachineQueue, MESSAGES, type Sql } from './queue.ts';
-import { handleDaemon, handleWebhook, underBasePath } from './routes.ts';
+import { handleDaemon, handleWebhook, MAX_WEBHOOK_BYTES, underBasePath } from './routes.ts';
 
 const fixture = (name: string) =>
   JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), 'utf8')) as Record<string, any>;
@@ -24,8 +24,9 @@ const config: Config = {
 const LEASE_MS = 10 * 60_000;
 
 /** A machine installed as `app-user-example`, with node:sqlite standing in for the Durable Object's SQL. */
-function setup() {
+function setup(prepare?: (db: DatabaseSync, now: number) => void) {
   const db = new DatabaseSync(':memory:');
+  prepare?.(db, 1_800_000_000_000);
   // Runs eagerly, like Cloudflare's exec().
   const sql: Sql = {
     exec(query, ...bindings) {
@@ -127,14 +128,23 @@ function setup() {
   const daemon = (method: string, path: string, bearer = BEARER) =>
     handleDaemon(new Request(`https://relay.example${path}`, { method, headers: { Authorization: `Bearer ${bearer}` } }),
       config, () => queue);
-  const claim = async () => {
+  /** Claims a job, returning everything the daemon receives. */
+  const claimed = async () => {
     const res = await daemon('POST', '/jobs/claim');
     await flush();
-    return res.status === 204 ? undefined : await res.json();
+    return res.status === 204 ? undefined : await res.json() as { issueId: string; sessionId: string; claimId: string };
   };
+  /** Claims a job, returning just its payload. */
+  const claim = async () => {
+    const { claimId: _, ...job } = await claimed() ?? {};
+    return 'sessionId' in job ? job : undefined;
+  };
+  /** Reports the outcome of a claim. */
+  const report = (sessionId: string, outcome: string, claimId: string | undefined) =>
+    daemon('POST', `/jobs/${sessionId}/${outcome}?claimId=${claimId}`);
   return {
     clock, posts, linear, alarms, rows, send, deliver, flush, rebuild, created, createdPayload, stoppedPayload,
-    daemon, claim, data,
+    daemon, claim, claimed, report, data, machines: () => queue,
   };
 }
 
@@ -231,14 +241,15 @@ test('claim hands out the oldest job once, then nothing', async () => {
 });
 
 test('an expired lease goes back on the queue', async () => {
-  const { clock, created, claim, daemon } = setup();
+  const { clock, created, claim, claimed, report } = setup();
   await created('session-1');
   await claim();
   clock.now += LEASE_MS - 1;
   assert.equal(await claim(), undefined);
   clock.now += 1;
-  assert.deepEqual(await claim(), { issueId: 'issue-1', sessionId: 'session-1' });
-  assert.equal((await daemon('POST', '/jobs/session-1/launched')).status, 204);
+  const again = await claimed();
+  assert.equal(again?.sessionId, 'session-1');
+  assert.equal((await report('session-1', 'launched', again?.claimId)).status, 204);
 });
 
 test('an expired lease is replaced by a newer dispatch of its issue', async () => {
@@ -255,23 +266,23 @@ test('an expired lease is replaced by a newer dispatch of its issue', async () =
 });
 
 test('launched and failed record the outcome of a claimed job only', async () => {
-  const { created, claim, daemon, rows } = setup();
+  const { created, claimed, report, rows } = setup();
   await created('session-1', 'issue-1');
   await created('session-2', 'issue-2');
-  assert.equal((await daemon('POST', '/jobs/session-1/launched')).status, 409);
-  await claim();
-  await claim();
-  assert.equal((await daemon('POST', '/jobs/session-1/launched')).status, 204);
-  assert.equal((await daemon('POST', '/jobs/session-2/failed')).status, 204);
-  assert.equal((await daemon('POST', '/jobs/session-1/failed')).status, 409);
+  assert.equal((await report('session-1', 'launched', 'unclaimed')).status, 409);
+  const first = await claimed();
+  const second = await claimed();
+  assert.notEqual(first?.claimId, second?.claimId);
+  assert.equal((await report('session-1', 'launched', first?.claimId)).status, 204);
+  assert.equal((await report('session-2', 'failed', second?.claimId)).status, 204);
+  assert.equal((await report('session-1', 'failed', first?.claimId)).status, 409);
   assert.deepEqual(rows().jobs.map((j) => j.state), ['launched', 'failed']);
 });
 
 test('history and dedupe records are kept for 30 days', async () => {
-  const { clock, created, claim, daemon, rows } = setup();
+  const { clock, created, claim, claimed, report, rows } = setup();
   await created('session-1');
-  await claim();
-  await daemon('POST', '/jobs/session-1/launched');
+  await report('session-1', 'launched', (await claimed())?.claimId);
   clock.now += 30 * 86_400_000 - 1;
   await claim();
   assert.equal(rows().jobs.length, 1);
@@ -427,15 +438,29 @@ test('a reply arriving after its session was replaced gets no thought', async ()
 });
 
 test('a session stopped after its claim is not requeued when the lease expires', async () => {
-  const { clock, created, deliver, claim, daemon, rows } = setup();
+  const { clock, created, deliver, claim, claimed, report, rows } = setup();
   await created('session-1');
-  await claim();
+  const first = await claimed();
   await deliver(fixture('stopped'));
   clock.now += LEASE_MS;
   assert.equal(await claim(), undefined);
   assert.deepEqual(rows().jobs, []);
-  assert.equal((await daemon('POST', '/jobs/session-1/launched')).status, 409);
+  assert.equal((await report('session-1', 'launched', first?.claimId)).status, 409);
 });
+
+for (const alarmFirst of [false, true]) {
+  test(`a stopped claim stays stopped after 31 days offline (alarm first: ${alarmFirst})`, async () => {
+    const { clock, created, deliver, claim, rows, flush } = setup();
+    await created('session-1');
+    assert.deepEqual(await claim(), { issueId: 'issue-1', sessionId: 'session-1' });
+    await deliver(fixture('stopped'));
+    clock.now += 31 * 86_400_000;
+    if (alarmFirst) await flush();
+    assert.equal(await claim(), undefined);
+    assert.deepEqual(rows().jobs, []);
+    assert.deepEqual(rows().ended, []);
+  });
+}
 
 test('the ended marker expires with the rest of the history', async () => {
   const { clock, deliver, claim, rows } = setup();
@@ -446,12 +471,12 @@ test('the ended marker expires with the rest of the history', async () => {
 });
 
 test('a failed queued thought is not retried once the daemon claims and fails the job', async () => {
-  const { created, claim, daemon, flush, linear, posts, rows, clock } = setup();
+  const { created, claimed, report, flush, linear, posts, rows, clock } = setup();
   linear.failNext = 1;
   await created('session-1');
-  await claim();
+  const first = await claimed();
   posts.push({ auth: 'daemon', sessionId: 'session-1', type: 'error', body: 'Launch failed.' });
-  assert.equal((await daemon('POST', '/jobs/session-1/failed')).status, 204);
+  assert.equal((await report('session-1', 'failed', first?.claimId)).status, 204);
   clock.now += 10_000;
   await flush();
   assert.deepEqual(sent(posts), [['session-1', 'error', 'Launch failed.']]);
@@ -502,4 +527,208 @@ test('only paths under the base path reach the relay, with the prefix removed', 
   for (const path of ['/webhook', '/dispatch', '/dispatchx/webhook', '/']) {
     assert.equal(underBasePath(new Request(`https://relay.example${path}`)), null, path);
   }
+});
+
+const webhookRequest = (body: BodyInit | null, headers: Record<string, string> = {}) =>
+  new Request('https://relay.example/webhook', { method: 'POST', body, headers, duplex: 'half' } as RequestInit);
+const refuseQueue = () => { throw new Error('the queue must not see this request'); };
+
+for (const [label, headers] of [
+  ['no signature', {}],
+  ['a signature that is too short', { 'Linear-Signature': 'a'.repeat(63) }],
+  ['a signature that is too long', { 'Linear-Signature': 'a'.repeat(65) }],
+  ['a signature that is not hex', { 'Linear-Signature': 'g'.repeat(64) }],
+] as [string, Record<string, string>][]) {
+  test(`a webhook with ${label} is refused without reading its body`, async () => {
+    const request = webhookRequest('{}', headers);
+    assert.equal((await handleWebhook(request, config, refuseQueue)).status, 401);
+    assert.equal(request.bodyUsed, false);
+  });
+}
+
+const WELL_FORMED = { 'Linear-Signature': '0'.repeat(64) };
+
+test('a webhook declaring too large a body is refused without reading it', async () => {
+  const request = webhookRequest('{}', { ...WELL_FORMED, 'Content-Length': String(MAX_WEBHOOK_BYTES + 1) });
+  assert.equal((await handleWebhook(request, config, refuseQueue)).status, 413);
+  assert.equal(request.bodyUsed, false);
+});
+
+for (const [label, headers] of [
+  ['no Content-Length', WELL_FORMED],
+  ['a false Content-Length', { ...WELL_FORMED, 'Content-Length': '2' }],
+] as [string, Record<string, string>][]) {
+  test(`an endless webhook body with ${label} is cut off at the limit`, async () => {
+    const chunk = new Uint8Array(64 * 1024);
+    let pulled = 0;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) { pulled += chunk.length; controller.enqueue(chunk); },
+      cancel() { cancelled = true; },
+    }, { highWaterMark: 0 });
+    assert.equal((await handleWebhook(webhookRequest(body, headers), config, refuseQueue)).status, 413);
+    assert.equal(cancelled, true);
+    assert.ok(pulled <= MAX_WEBHOOK_BYTES + chunk.length, `read ${pulled} bytes`);
+  });
+}
+
+test('a chunked webhook is accepted at exactly the limit and refused one byte over', async () => {
+  const { clock, createdPayload, machines, rows } = setup();
+  const json = JSON.stringify({ ...createdPayload('session-1'), webhookTimestamp: clock.now });
+  const sendSized = (size: number) => {
+    const bytes = new TextEncoder().encode(json.padEnd(size));
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes.slice(0, 1000));
+        controller.enqueue(bytes.slice(1000));
+        controller.close();
+      },
+    });
+    return handleWebhook(webhookRequest(body, { 'Linear-Signature': signed(json.padEnd(size)) }), config, machines, clock.now);
+  };
+  assert.equal((await sendSized(MAX_WEBHOOK_BYTES + 1)).status, 413);
+  assert.deepEqual(rows().jobs, []);
+  assert.equal((await sendSized(MAX_WEBHOOK_BYTES)).status, 200);
+  assert.equal(rows().jobs.length, 1);
+});
+
+test('a webhook with a well-formed signature and an empty body is a bad request', async () => {
+  assert.equal((await handleWebhook(webhookRequest(null, WELL_FORMED), config, refuseQueue)).status, 400);
+});
+
+test('an expired claim cannot change the outcome of the claim that replaced it', async () => {
+  const { clock, created, claimed, report, rows } = setup();
+  await created('session-1');
+  const a = await claimed();
+  clock.now += LEASE_MS;
+  const b = await claimed();
+  assert.equal(b?.sessionId, 'session-1');
+  assert.notEqual(a?.claimId, b?.claimId);
+  assert.equal((await report('session-1', 'launched', a?.claimId)).status, 409);
+  assert.equal(rows().jobs[0]!.state, 'claimed');
+  assert.equal((await report('session-1', 'failed', b?.claimId)).status, 204);
+  assert.equal((await report('session-1', 'launched', a?.claimId)).status, 409);
+  assert.equal(rows().jobs[0]!.state, 'failed');
+});
+
+test('a claim past its lease is refused even before anyone reclaims the job', async () => {
+  const { clock, created, claimed, report, rows } = setup();
+  await created('session-1');
+  const a = await claimed();
+  clock.now += LEASE_MS;
+  assert.equal((await report('session-1', 'launched', a?.claimId)).status, 409);
+  assert.equal(rows().jobs[0]!.state, 'claimed');
+  assert.equal((await claimed())?.sessionId, 'session-1');
+});
+
+test('an outcome without a claim id is a bad request', async () => {
+  const { created, claim, daemon, rows } = setup();
+  await created('session-1');
+  await claim();
+  assert.equal((await daemon('POST', '/jobs/session-1/launched')).status, 400);
+  assert.equal((await daemon('POST', '/jobs/session-1/failed?claimId=')).status, 400);
+  assert.equal(rows().jobs[0]!.state, 'claimed');
+});
+
+test('an existing installation keeps its jobs, and a pre-change claim expires into a fresh one', async () => {
+  const { clock, claimed, daemon, report, rebuild, rows } = setup((db, now) => {
+    db.exec(`CREATE TABLE jobs (id TEXT PRIMARY KEY, issue_id TEXT NOT NULL,
+      state TEXT NOT NULL, lease_until INTEGER, updated_at INTEGER NOT NULL)`);
+    db.prepare("INSERT INTO jobs VALUES ('old-claim', 'issue-1', 'claimed', ?, ?)").run(now + LEASE_MS, now);
+    db.prepare("INSERT INTO jobs VALUES ('old-queued', 'issue-2', 'queued', NULL, ?)").run(now);
+  });
+  rebuild(); // The column is added only once.
+  // The old daemon has no id to send, and no guess matches the empty column.
+  assert.equal((await daemon('POST', '/jobs/old-claim/launched')).status, 400);
+  assert.equal((await report('old-claim', 'launched', 'guess')).status, 409);
+  const queued = await claimed();
+  assert.equal(queued?.sessionId, 'old-queued');
+  assert.equal((await report('old-queued', 'launched', queued?.claimId)).status, 204);
+  assert.equal(await claimed(), undefined);
+  clock.now += LEASE_MS;
+  const reclaimed = await claimed();
+  assert.equal(reclaimed?.sessionId, 'old-claim');
+  assert.equal((await report('old-claim', 'failed', reclaimed?.claimId)).status, 204);
+  assert.deepEqual(rows().jobs.map((j) => j.state), ['failed', 'launched']);
+});
+
+const prompt = (activityId: string | undefined, sessionId = 'session-1') => {
+  const payload = fixture('prompted');
+  payload.agentSession.id = sessionId;
+  payload.agentActivity.id = activityId;
+  return payload;
+};
+
+test('a redelivered prompt gets one thought; a distinct prompt in the session gets its own', async () => {
+  const { send, deliver, flush, posts, rows } = setup();
+  // The first copy is still pending when its redelivery lands.
+  assert.equal((await send(prompt('activity-a'))).status, 200);
+  assert.equal((await send(prompt('activity-a'))).status, 200);
+  await flush();
+  // And once it's delivered.
+  assert.equal((await deliver(prompt('activity-a'))).status, 200);
+  assert.equal((await deliver(prompt('activity-b'))).status, 200);
+  assert.deepEqual(sent(posts), [['session-1', 'thought', MESSAGES.replies], ['session-1', 'thought', MESSAGES.replies]]);
+  assert.deepEqual(rows().outbox, []);
+});
+
+test('a prompt without an activity id is a bad request', async () => {
+  const { deliver, posts, rows } = setup();
+  assert.equal((await deliver(prompt(undefined))).status, 400);
+  assert.equal(posts.length, 0);
+  assert.deepEqual(rows().outbox, []);
+});
+
+test('prompt dedupe records expire with the rest of the history', async () => {
+  const { clock, deliver, flush, posts } = setup();
+  await deliver(prompt('activity-a'));
+  clock.now += 30 * 86_400_000;
+  await flush();
+  await deliver(prompt('activity-a'));
+  assert.equal(posts.length, 2);
+});
+
+test('a duplicate stop writes no second final response', async () => {
+  const { deliver, send, flush, stoppedPayload, posts, rows } = setup();
+  // The first response is still pending when its redelivery lands.
+  await send(stoppedPayload('session-1'));
+  assert.equal((await send(stoppedPayload('session-1'))).status, 200);
+  await flush();
+  // And once it's delivered, including a second stop with its own activity id.
+  assert.equal((await deliver(stoppedPayload('session-1'))).status, 200);
+  const another = stoppedPayload('session-1');
+  another.agentActivity.id = 'activity-other';
+  assert.equal((await deliver(another)).status, 200);
+  assert.deepEqual(sent(posts), [['session-1', 'response', MESSAGES.stopped]]);
+  assert.deepEqual(rows().outbox, []);
+});
+
+test('a stop without an activity id still stops the session, once', async () => {
+  const { created, deliver, stoppedPayload, posts, rows } = setup();
+  await created('session-1');
+  const stop = stoppedPayload('session-1');
+  delete stop.agentActivity.id;
+  assert.equal((await deliver(stop)).status, 200);
+  assert.equal((await deliver(stop)).status, 200);
+  assert.deepEqual(sent(posts), [['session-1', 'thought', QUEUED], ['session-1', 'response', MESSAGES.stopped]]);
+  assert.deepEqual(rows().jobs, []);
+});
+
+test('the alarm alone expires an activity failing for 30 days, logs it, and frees what waited on it', async (t) => {
+  const { created, send, flush, linear, posts, rows, clock } = setup();
+  linear.failNext = 1;
+  await created('session-1');
+  assert.equal(linear.attempts, 1);
+  // Written later, so still inside the window: it goes out once the head expires.
+  clock.now += 24 * 3_600_000;
+  await send(prompt('activity-a'));
+  clock.now += 30 * 86_400_000 - 24 * 3_600_000;
+  const logged = t.mock.method(console, 'log', () => {});
+  await flush();
+  const lines = logged.mock.calls.map((call) => JSON.parse(String(call.arguments[0])));
+  assert.deepEqual(lines, [{ event: 'activity', machine: 'example-machine', session: 'session-1', type: 'thought', outcome: 'expired' }]);
+  assert.deepEqual(sent(posts), [['session-1', 'thought', MESSAGES.replies]]);
+  assert.equal(linear.attempts, 2);
+  assert.deepEqual(rows().outbox, []);
+  assert.deepEqual(rows().jobs, [{ id: 'session-1', issue_id: 'issue-1', state: 'queued' }]);
 });

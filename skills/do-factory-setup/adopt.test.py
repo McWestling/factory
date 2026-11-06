@@ -37,9 +37,17 @@ assert out.startswith("applies: yes\n"), out
 print("ok: applies and skip")
 
 _, out = adopt("check", 'done = "true"\n')
-assert out == "applies: yes\ndone: yes\n", out
+assert out == "applies: yes\ndone: true\n", out
 _, out = adopt("check", 'done = "false"\n[[step]]\nname = "Add"\nrun = "echo hi"\n')
-assert out == "applies: yes\ndone: no\nrun: Add: echo hi\n", out
+assert out == "applies: yes\ndone: false\nrun: Add: echo hi\n", out
+block = 'done = "touch inspected"\n[[step]]\nname = "Add"\nrun = "touch ran"\n'
+code, out = adopt("check", block)
+assert code == 0 and out == "applies: yes\ndone: touch inspected\nrun: Add: touch ran\n", out
+assert not (repo / "inspected").exists(), "inspection must never execute the done command"
+assert not (repo / "ran").exists(), "inspection must never execute steps"
+code, out = adopt("run", block)
+assert code == 0 and out == "done: yes\n" and (repo / "inspected").exists(), out
+assert not (repo / "ran").exists(), "a successful done command should skip steps"
 code, out = adopt("run", 'done = "true"\n[[step]]\nname = "Add"\nrun = "touch ran"\n')
 assert code == 0 and out == "done: yes\n" and not (repo / "ran").exists(), out
 print("ok: done and not done")
@@ -90,7 +98,9 @@ def adopt_example(mode):
 
 
 _, out = adopt_example("check")
-assert out == "applies: yes\ndone: yes\n", out
+assert out == ('applies: yes\ndone: example-vault project show "$REPO_PREFIX"\n'
+               'run: Register the repo: example-vault project create "$REPO_PREFIX" --repo "$REPO"\n'
+               "maintainer: Create the CI token: Create an Example Vault token for the project and store it as the repo's EXAMPLE_VAULT_TOKEN CI secret\n"), out
 code, out = adopt_example("run")
 assert code == 0 and out == "done: yes\n", out
 assert not (repo / "registered").exists(), "a done example should skip registration"

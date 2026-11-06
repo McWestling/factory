@@ -176,6 +176,27 @@ test('readConfig accepts a complete config', () => {
   assert.deepEqual(readConfig(env), { orgId: ORG, adminSecret: secret, machines: { 'example-machine': machine } });
 });
 
+const otherMachine = { ...machine, clientId: 'other-client', bearerSecret: 'z'.repeat(32) };
+
+test('readConfig accepts machines with distinct routing credentials', () => {
+  const machines = { first: machine, second: otherMachine };
+  assert.deepEqual(readConfig({ ...env, MACHINES: JSON.stringify(machines) }), {
+    orgId: ORG, adminSecret: secret, machines,
+  });
+});
+
+for (const key of ['bearerSecret', 'clientId'] as const) {
+  test(`readConfig rejects duplicate ${key} without exposing credentials`, () => {
+    const machines = { first: machine, second: { ...otherMachine, [key]: machine[key] } };
+    const problem = readConfig({ ...env, MACHINES: JSON.stringify(machines) });
+    assert.equal(problem, `MACHINES has duplicate ${key} values`);
+    for (const entry of Object.values(machines)) {
+      assert.equal((problem as string).includes(entry.bearerSecret), false);
+      assert.equal((problem as string).includes(entry.clientSecret), false);
+    }
+  });
+}
+
 for (const [label, bad] of Object.entries({
   'no org id': { ...env, LINEAR_ORG_ID: '' },
   'a short admin secret': { ...env, ADMIN_SECRET: 'short' },
