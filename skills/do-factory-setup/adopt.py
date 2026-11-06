@@ -69,7 +69,7 @@ def main():
     if sys.argv[1] == "check":
         print("applies: yes")
         if "done" in block:
-            print(f"done: {block['done']}")
+            print(f"done-check: {block['done']}")
         for s in steps:
             print(f"run: {s['name']}: {s['run']}" if "run" in s
                   else f"maintainer: {s['name']}: {s['maintainer']}")

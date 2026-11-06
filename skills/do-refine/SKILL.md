@@ -10,6 +10,10 @@ Some goals are too big, and too foggy, for one agent session: you can name where
 
 Every map points at a **destination**: a feature to ship, a decision to lock in, a migration to finish. Naming it comes first, because it decides what is in scope. Maps fit any kind of work, not only code.
 
+## Supporting skills
+
+For upstream skill names below (`grilling`, `domain-modeling`, `research`, `prototype`), use the advertised `mattpocock-skills:<name>` when available, otherwise the advertised bare `<name>` from the skills CLI. Invoke through the agent's skill mechanism (the Skill tool where available, otherwise read the advertised SKILL.md). Pass the resolved name and this rule to research subagents. If neither form is available, stop and ask the user to run `do-factory-setup`; do not substitute upstream `wayfinder` for this workflow.
+
 ## Rules for every session
 
 - **Plan only.** A session settles decisions and writes implementation issues; it never builds the deliverable. When you feel the urge to start building, that is the cue to slice. A map's **Notes** may override this for its own effort. The one exception: when the user asks for it, a resolve session may make a small non-code artifact the decision itself names (a doc, a tracker setting) and link it from the ticket. Code, or anything bigger, is still an implementation issue.
