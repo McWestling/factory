@@ -6,7 +6,7 @@ import type { AgentEvent, MachineQueue } from './queue.ts';
 
 const TIMESTAMP_WINDOW_MS = 60_000;
 
-export type Machines = (machine: string) => Pick<MachineQueue, 'webhook' | 'claim' | 'finish' | 'lendToken'>;
+export type Machines = (machine: string) => Pick<MachineQueue, 'webhook' | 'claim' | 'finish'>;
 
 // Logs ids and outcomes only: never bodies, headers, tokens or state.
 export const log = (fields: Record<string, string>) => console.log(JSON.stringify(fields));
@@ -78,7 +78,7 @@ export async function handleWebhook(request: Request, config: Config, machines: 
 }
 
 /**
- * `POST /jobs/claim`, `POST /jobs/<id>/launched|failed` and `GET /token`. The machine
+ * `POST /jobs/claim`, `POST /jobs/<id>/launched|failed`. The machine
  * comes only from the bearer secret that matched, never from the request.
  */
 export async function handleDaemon(request: Request, config: Config, machines: Machines) {
@@ -98,14 +98,6 @@ export async function handleDaemon(request: Request, config: Config, machines: M
   const [, route, id, outcome, ...rest] = new URL(request.url).pathname.split('/');
   const method = request.method;
 
-  if (method === 'GET' && route === 'token' && id === undefined) {
-    const lent = await queue.lendToken();
-    log({ event: 'token', machine, outcome: lent.ok ? 'lent' : lent.retryAfter ? 'rate-limited' : 'unavailable' });
-    if (lent.ok) return Response.json({ accessToken: lent.accessToken }, { headers: { 'Cache-Control': 'no-store' } });
-    return lent.retryAfter
-      ? text(429, 'Too many requests', { 'Retry-After': String(lent.retryAfter) })
-      : text(503, 'Token unavailable');
-  }
   if (method === 'POST' && route === 'jobs' && id === 'claim' && outcome === undefined) {
     const job = await queue.claim();
     log({ event: 'claim', machine, outcome: job ? 'claimed' : 'empty', ...(job && { session: job.sessionId }) });

@@ -9,9 +9,6 @@ import { log } from './routes.ts';
 const GRAPHQL_URL = 'https://api.linear.app/graphql';
 const LEASE_MS = 10 * 60_000;
 const HISTORY_MS = 30 * 24 * 60 * 60_000;
-// ponytail: one lend per 10 s, held in memory. Eviction resets it, but eviction only
-// happens when the machine's Durable Object is idle, so it can't be used to hammer.
-const LEND_INTERVAL_MS = 10_000;
 const POST_TIMEOUT_MS = 10_000;
 const RETRY_MAX_MS = 60 * 60_000;
 
@@ -40,7 +37,6 @@ export type AgentEvent = {
 
 export type WebhookResult = 'queued' | 'duplicate' | 'answered' | 'ended' | 'no-issue' | 'app-user';
 export type Outcome = 'launched' | 'failed';
-export type LendResult = { ok: true; accessToken: string } | { ok: false; retryAfter?: number };
 type ActivityType = 'thought' | 'response';
 
 // An outbox row is the head of its session when no earlier row for that session is
@@ -65,7 +61,6 @@ export class MachineQueue {
   #fetch: typeof fetch;
   #now: () => number;
   #schedule: (at: number) => void;
-  #lentAt = -Infinity;
   #draining?: Promise<void>;
 
   constructor(
@@ -148,17 +143,6 @@ export class MachineQueue {
     return this.#sql.exec(
       "UPDATE jobs SET state = ?, lease_until = NULL, updated_at = ? WHERE id = ? AND state = 'claimed' RETURNING id",
       outcome, this.#now(), id).toArray().length > 0;
-  }
-
-  async lendToken(): Promise<LendResult> {
-    const wait = this.#lentAt + LEND_INTERVAL_MS - this.#now();
-    if (wait > 0) return { ok: false, retryAfter: Math.ceil(wait / 1000) };
-    this.#lentAt = this.#now();
-    try {
-      return { ok: true, accessToken: await this.#auth.getAccessToken() };
-    } catch {
-      return { ok: false };
-    }
   }
 
   /**

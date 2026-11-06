@@ -17,8 +17,8 @@ const config: Config = {
   orgId: ORG,
   adminSecret: 'a'.repeat(32),
   machines: {
-    'example-machine': { clientId: 'client-example', clientSecret: 's', webhookSecret: WEBHOOK_SECRET, bearerSecret: BEARER },
-    'other-machine': { clientId: 'client-other', clientSecret: 's', webhookSecret: 'other', bearerSecret: 'o'.repeat(32) },
+    'example-machine': { clientId: 'client-example', clientSecret: 'client-secret-example', webhookSecret: WEBHOOK_SECRET, bearerSecret: BEARER },
+    'other-machine': { clientId: 'client-other', clientSecret: 'client-secret-other', webhookSecret: 'other', bearerSecret: 'o'.repeat(32) },
   },
 };
 const LEASE_MS = 10 * 60_000;
@@ -42,7 +42,7 @@ function setup() {
   const clock = { now: 1_800_000_000_000 };
   data.set('token', {
     accessToken: 'access-example', refreshToken: 'refresh-example', expiresAt: clock.now + 365 * 86_400_000,
-    appUserId: 'app-user-example', appName: 'Example Machine', orgId: ORG, clientId: 'client-example',
+    appUserId: 'app-user-example', appName: 'Example Machine', orgId: ORG, clientId: 'client-example', scopes: ['read', 'write', 'app:assignable'],
   });
   // Fakes Linear. `posts` records each activity Linear accepted, in order. `failNext`
   // fails that many activity requests; `refreshFails` fails token refreshes; `hold()`
@@ -67,7 +67,7 @@ function setup() {
     }
     if (String(input) === 'https://api.linear.app/oauth/token') {
       if (linear.refreshFails) return new Response(null, { status: 500 });
-      return Response.json({ access_token: 'access-refreshed', refresh_token: 'refresh-2', expires_in: 86400 });
+      return Response.json({ access_token: 'access-refreshed', refresh_token: 'refresh-2', expires_in: 86400, scope: 'read write app:assignable' });
     }
     assert.equal(String(input), 'https://api.linear.app/graphql');
     linear.attempts++;
@@ -214,7 +214,7 @@ test('any other prompt gets the replies thought and leaves the queue alone', asy
 test('the daemon API rejects a wrong or missing bearer secret with 401', async () => {
   const { daemon, created, rows } = setup();
   await created('session-1');
-  for (const [method, path] of [['POST', '/jobs/claim'], ['POST', '/jobs/session-1/launched'], ['GET', '/token']]) {
+  for (const [method, path] of [['POST', '/jobs/claim'], ['POST', '/jobs/session-1/launched']]) {
     assert.equal((await daemon(method!, path!, 'x'.repeat(32))).status, 401);
     assert.equal((await daemon(method!, path!, '')).status, 401);
   }
@@ -280,17 +280,11 @@ test('history and dedupe records are kept for 30 days', async () => {
   assert.deepEqual(rows(), { jobs: [], seen: [], outbox: [], ended: [] });
 });
 
-test('the token endpoint lends the cached token, rate-limited per machine', async () => {
-  const { clock, daemon } = setup();
+test('even an authenticated machine cannot retrieve a Linear token', async () => {
+  const { daemon } = setup();
   const res = await daemon('GET', '/token');
-  assert.equal(res.status, 200);
-  assert.equal(res.headers.get('Cache-Control'), 'no-store');
-  assert.deepEqual(await res.json(), { accessToken: 'access-example' });
-  const limited = await daemon('GET', '/token');
-  assert.equal(limited.status, 429);
-  assert.equal(limited.headers.get('Retry-After'), '10');
-  clock.now += 10_000;
-  assert.equal((await daemon('GET', '/token')).status, 200);
+  assert.equal(res.status, 404);
+  assert.doesNotMatch(await res.text(), /access-example|refresh-example/);
 });
 
 test('unknown daemon routes are 404 once authenticated', async () => {

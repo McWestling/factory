@@ -38,11 +38,10 @@ export default {
         webhook: (event) => stub.webhook(name, event),
         claim: () => stub.claim(name),
         finish: (id, outcome) => stub.finish(name, id, outcome),
-        lendToken: () => stub.lendToken(name),
       };
     };
     if (url.pathname === '/webhook' && request.method === 'POST') return handleWebhook(request, config, machines);
-    if (route === 'jobs' || route === 'token') return handleDaemon(request, config, machines);
+    if (route === 'jobs') return handleDaemon(request, config, machines);
 
     if (request.method !== 'GET' || rest.length || (route !== 'install' && route !== 'callback') ||
       !machine || !Object.hasOwn(config.machines, machine)) return text(404, 'Not found');
@@ -53,8 +52,8 @@ export default {
     if (route === 'install') {
       const location = await stub.startInstall(machine, redirectUri, isAdmin(request, config.adminSecret));
       if (!location) {
-        log({ event: 'install', machine, outcome: 'reinstall' });
-        return text(401, FAILURES.reinstall, { 'WWW-Authenticate': 'Basic realm="relay"' });
+        log({ event: 'install', machine, outcome: 'unauthorized' });
+        return text(401, 'Installation requires the admin secret.', { 'WWW-Authenticate': 'Basic realm="relay"' });
       }
       return Response.redirect(location, 302);
     }
@@ -117,8 +116,4 @@ export class Machine extends DurableObject<Env> {
     return this.#queueFor(machine).finish(id, outcome);
   }
 
-  /** The token endpoint the daemon borrows from. */
-  lendToken(machine: string) {
-    return this.#queueFor(machine).lendToken();
-  }
 }
