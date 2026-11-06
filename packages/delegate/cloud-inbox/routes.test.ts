@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { MachineAuth, type Config, type Storage } from './auth.ts';
 import { MachineQueue, MESSAGES, type Sql } from './queue.ts';
-import { handleDaemon, handleWebhook, MAX_WEBHOOK_BYTES, underBasePath } from './routes.ts';
+import { handleRunner, handleWebhook, MAX_WEBHOOK_BYTES, underBasePath } from './routes.ts';
 
 const fixture = (name: string) =>
   JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), 'utf8')) as Record<string, any>;
@@ -102,7 +102,7 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void) {
   const send = (payload: Record<string, any>, sign: (body: string) => string = signed) => {
     // Fixtures carry webhookTimestamp 0, meaning "now".
     const body = JSON.stringify({ ...payload, webhookTimestamp: payload.webhookTimestamp || clock.now });
-    const request = new Request('https://relay.example/webhook', {
+    const request = new Request('https://cloud-inbox.example/webhook', {
       method: 'POST', body, headers: { 'Linear-Signature': sign(body) },
     });
     return handleWebhook(request, config, () => queue, clock.now);
@@ -125,12 +125,12 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void) {
     return payload;
   };
   const created = (sessionId: string, issueId = 'issue-1') => deliver(createdPayload(sessionId, issueId));
-  const daemon = (method: string, path: string, bearer = BEARER) =>
-    handleDaemon(new Request(`https://relay.example${path}`, { method, headers: { Authorization: `Bearer ${bearer}` } }),
+  const runner = (method: string, path: string, bearer = BEARER) =>
+    handleRunner(new Request(`https://cloud-inbox.example${path}`, { method, headers: { Authorization: `Bearer ${bearer}` } }),
       config, () => queue);
-  /** Claims a job, returning everything the daemon receives. */
+  /** Claims a job, returning everything the runner receives. */
   const claimed = async () => {
-    const res = await daemon('POST', '/jobs/claim');
+    const res = await runner('POST', '/jobs/claim');
     await flush();
     return res.status === 204 ? undefined : await res.json() as { issueId: string; sessionId: string; claimId: string };
   };
@@ -141,10 +141,10 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void) {
   };
   /** Reports the outcome of a claim. */
   const report = (sessionId: string, outcome: string, claimId: string | undefined) =>
-    daemon('POST', `/jobs/${sessionId}/${outcome}?claimId=${claimId}`);
+    runner('POST', `/jobs/${sessionId}/${outcome}?claimId=${claimId}`);
   return {
     clock, posts, linear, alarms, rows, send, deliver, flush, rebuild, created, createdPayload, stoppedPayload,
-    daemon, claim, claimed, report, data, machines: () => queue,
+    runner, claim, claimed, report, data, machines: () => queue,
   };
 }
 
@@ -195,7 +195,7 @@ test('a second delegation of the same issue replaces the queued job', async () =
   await created('session-3', 'issue-2');
   assert.deepEqual(rows().jobs.map((j) => j.id), ['session-2', 'session-3']);
   assert.deepEqual(posts.slice(1, 3).map(({ sessionId, type, body }) => ({ sessionId, type, body })), [
-    { sessionId: 'session-1', type: 'response', body: 'Replaced by a newer dispatch.' },
+    { sessionId: 'session-1', type: 'response', body: 'Replaced by a newer delegation.' },
     { sessionId: 'session-2', type: 'thought', body: MESSAGES.queued('Example Machine') },
   ]);
   assert.deepEqual(await claim(), { issueId: 'issue-1', sessionId: 'session-2' });
@@ -216,17 +216,17 @@ test('any other prompt gets the replies thought and leaves the queue alone', asy
   assert.equal((await deliver(fixture('prompted'))).status, 200);
   assert.deepEqual(posts.at(-1), {
     auth: 'Bearer access-example', sessionId: 'session-1', type: 'thought',
-    body: "Dispatch doesn't read replies; steer the agent in Orca.",
+    body: "Delegate doesn't read replies; steer the agent in Orca.",
   });
   assert.equal(rows().jobs.length, 1);
 });
 
-test('the daemon API rejects a wrong or missing bearer secret with 401', async () => {
-  const { daemon, created, rows } = setup();
+test('the runner API rejects a wrong or missing bearer secret with 401', async () => {
+  const { runner, created, rows } = setup();
   await created('session-1');
   for (const [method, path] of [['POST', '/jobs/claim'], ['POST', '/jobs/session-1/launched']]) {
-    assert.equal((await daemon(method!, path!, 'x'.repeat(32))).status, 401);
-    assert.equal((await daemon(method!, path!, '')).status, 401);
+    assert.equal((await runner(method!, path!, 'x'.repeat(32))).status, 401);
+    assert.equal((await runner(method!, path!, '')).status, 401);
   }
   assert.equal(rows().jobs[0]!.state, 'queued');
 });
@@ -252,7 +252,7 @@ test('an expired lease goes back on the queue', async () => {
   assert.equal((await report('session-1', 'launched', again?.claimId)).status, 204);
 });
 
-test('an expired lease is replaced by a newer dispatch of its issue', async () => {
+test('an expired lease is replaced by a newer delegation of its issue', async () => {
   const { clock, created, claim, posts } = setup();
   await created('session-1');
   await claim();
@@ -260,7 +260,7 @@ test('an expired lease is replaced by a newer dispatch of its issue', async () =
   clock.now += LEASE_MS;
   assert.deepEqual(await claim(), { issueId: 'issue-1', sessionId: 'session-2' });
   assert.deepEqual(posts.at(-1), {
-    auth: 'Bearer access-example', sessionId: 'session-1', type: 'response', body: 'Replaced by a newer dispatch.',
+    auth: 'Bearer access-example', sessionId: 'session-1', type: 'response', body: 'Replaced by a newer delegation.',
   });
   assert.equal(await claim(), undefined);
 });
@@ -292,16 +292,16 @@ test('history and dedupe records are kept for 30 days', async () => {
 });
 
 test('even an authenticated machine cannot retrieve a Linear token', async () => {
-  const { daemon } = setup();
-  const res = await daemon('GET', '/token');
+  const { runner } = setup();
+  const res = await runner('GET', '/token');
   assert.equal(res.status, 404);
   assert.doesNotMatch(await res.text(), /access-example|refresh-example/);
 });
 
-test('unknown daemon routes are 404 once authenticated', async () => {
-  const { daemon } = setup();
-  assert.equal((await daemon('GET', '/jobs/claim')).status, 404);
-  assert.equal((await daemon('POST', '/jobs/session-1/other')).status, 404);
+test('unknown runner routes are 404 once authenticated', async () => {
+  const { runner } = setup();
+  assert.equal((await runner('GET', '/jobs/claim')).status, 404);
+  assert.equal((await runner('POST', '/jobs/session-1/other')).status, 404);
 });
 
 const QUEUED = MESSAGES.queued('Example Machine');
@@ -470,12 +470,12 @@ test('the ended marker expires with the rest of the history', async () => {
   assert.deepEqual(rows().ended, []);
 });
 
-test('a failed queued thought is not retried once the daemon claims and fails the job', async () => {
+test('a failed queued thought is not retried once the runner claims and fails the job', async () => {
   const { created, claimed, report, flush, linear, posts, rows, clock } = setup();
   linear.failNext = 1;
   await created('session-1');
   const first = await claimed();
-  posts.push({ auth: 'daemon', sessionId: 'session-1', type: 'error', body: 'Launch failed.' });
+  posts.push({ auth: 'runner', sessionId: 'session-1', type: 'error', body: 'Launch failed.' });
   assert.equal((await report('session-1', 'failed', first?.claimId)).status, 204);
   clock.now += 10_000;
   await flush();
@@ -485,13 +485,13 @@ test('a failed queued thought is not retried once the daemon claims and fails th
 });
 
 test('a claim during the token refresh cancels the queued thought before it is sent', async () => {
-  const { send, daemon, flush, linear, posts, rows, clock, data, createdPayload } = setup();
+  const { send, runner, flush, linear, posts, rows, clock, data, createdPayload } = setup();
   (data.get('token') as { expiresAt: number }).expiresAt = clock.now + 1000;
   await send(createdPayload('session-1'));
   const { waiting, release } = linear.hold();
   const delivering = flush();
   await waiting; // Linear holds the token refresh.
-  assert.equal((await daemon('POST', '/jobs/claim')).status, 200);
+  assert.equal((await runner('POST', '/jobs/claim')).status, 200);
   release();
   await delivering;
   assert.equal(linear.attempts, 0);
@@ -500,14 +500,14 @@ test('a claim during the token refresh cancels the queued thought before it is s
 });
 
 test('a queued thought in flight at claim is not retried when it fails', async () => {
-  const { created, send, deliver, daemon, flush, linear, posts, rows, clock, createdPayload } = setup();
+  const { created, send, deliver, runner, flush, linear, posts, rows, clock, createdPayload } = setup();
   await send(createdPayload('session-1'));
   await send(fixture('prompted'));
   const { waiting, release } = linear.hold();
   linear.failNext = 1;
   const delivering = flush();
   await waiting; // Linear holds the queued thought.
-  assert.equal((await daemon('POST', '/jobs/claim')).status, 200);
+  assert.equal((await runner('POST', '/jobs/claim')).status, 200);
   release();
   await delivering;
   clock.now += 10_000;
@@ -519,18 +519,18 @@ test('a queued thought in flight at claim is not retried when it fails', async (
   assert.equal(linear.attempts, 3);
 });
 
-test('only paths under the base path reach the relay, with the prefix removed', async () => {
-  const stripped = underBasePath(new Request('https://relay.example/dispatch/webhook?x=1', { method: 'POST', body: 'raw' }));
-  assert.equal(stripped?.url, 'https://relay.example/webhook?x=1');
+test('only paths under the base path reach Cloud Inbox, with the prefix removed', async () => {
+  const stripped = underBasePath(new Request('https://cloud-inbox.example/dispatch/webhook?x=1', { method: 'POST', body: 'raw' }));
+  assert.equal(stripped?.url, 'https://cloud-inbox.example/webhook?x=1');
   assert.equal(stripped?.method, 'POST');
   assert.equal(await stripped?.text(), 'raw');
   for (const path of ['/webhook', '/dispatch', '/dispatchx/webhook', '/']) {
-    assert.equal(underBasePath(new Request(`https://relay.example${path}`)), null, path);
+    assert.equal(underBasePath(new Request(`https://cloud-inbox.example${path}`)), null, path);
   }
 });
 
 const webhookRequest = (body: BodyInit | null, headers: Record<string, string> = {}) =>
-  new Request('https://relay.example/webhook', { method: 'POST', body, headers, duplex: 'half' } as RequestInit);
+  new Request('https://cloud-inbox.example/webhook', { method: 'POST', body, headers, duplex: 'half' } as RequestInit);
 const refuseQueue = () => { throw new Error('the queue must not see this request'); };
 
 for (const [label, headers] of [
@@ -622,24 +622,24 @@ test('a claim past its lease is refused even before anyone reclaims the job', as
 });
 
 test('an outcome without a claim id is a bad request', async () => {
-  const { created, claim, daemon, rows } = setup();
+  const { created, claim, runner, rows } = setup();
   await created('session-1');
   await claim();
-  assert.equal((await daemon('POST', '/jobs/session-1/launched')).status, 400);
-  assert.equal((await daemon('POST', '/jobs/session-1/failed?claimId=')).status, 400);
+  assert.equal((await runner('POST', '/jobs/session-1/launched')).status, 400);
+  assert.equal((await runner('POST', '/jobs/session-1/failed?claimId=')).status, 400);
   assert.equal(rows().jobs[0]!.state, 'claimed');
 });
 
 test('an existing installation keeps its jobs, and a pre-change claim expires into a fresh one', async () => {
-  const { clock, claimed, daemon, report, rebuild, rows } = setup((db, now) => {
+  const { clock, claimed, runner, report, rebuild, rows } = setup((db, now) => {
     db.exec(`CREATE TABLE jobs (id TEXT PRIMARY KEY, issue_id TEXT NOT NULL,
       state TEXT NOT NULL, lease_until INTEGER, updated_at INTEGER NOT NULL)`);
     db.prepare("INSERT INTO jobs VALUES ('old-claim', 'issue-1', 'claimed', ?, ?)").run(now + LEASE_MS, now);
     db.prepare("INSERT INTO jobs VALUES ('old-queued', 'issue-2', 'queued', NULL, ?)").run(now);
   });
   rebuild(); // The column is added only once.
-  // The old daemon has no id to send, and no guess matches the empty column.
-  assert.equal((await daemon('POST', '/jobs/old-claim/launched')).status, 400);
+  // The old runner has no id to send, and no guess matches the empty column.
+  assert.equal((await runner('POST', '/jobs/old-claim/launched')).status, 400);
   assert.equal((await report('old-claim', 'launched', 'guess')).status, 409);
   const queued = await claimed();
   assert.equal(queued?.sessionId, 'old-queued');

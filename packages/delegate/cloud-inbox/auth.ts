@@ -1,4 +1,4 @@
-// Relay config and the per-machine Linear OAuth install. Runs in the Worker and
+// Cloud Inbox config and the per-machine Linear OAuth install. Runs in the Worker and
 // under Node for tests, so it uses only fetch and WebCrypto.
 
 const AUTHORIZE_URL = 'https://linear.app/oauth/authorize';
@@ -23,7 +23,7 @@ export type Config = {
   machines: Record<string, MachineConfig>;
 };
 
-/** Reads the relay's secrets. Returns a problem naming the bad key, never its value. */
+/** Reads Cloud Inbox's secrets. Returns a problem naming the bad key, never its value. */
 export function readConfig(env: Record<string, unknown>): Config | string {
   const { LINEAR_ORG_ID: orgId, ADMIN_SECRET: adminSecret, MACHINES: raw } = env;
   if (typeof orgId !== 'string' || !orgId) return 'LINEAR_ORG_ID is missing';
@@ -110,7 +110,7 @@ type StoredToken = {
 type AppUser = { appUserId: string; appName?: string };
 type Grant = { access_token: string; refresh_token: string; expires_in: number; scopes: string[] };
 
-function relayScopes(value: unknown): value is string[] {
+function cloudInboxScopes(value: unknown): value is string[] {
   return Array.isArray(value) && value.length === SCOPES.length && SCOPES.every((scope) => value.includes(scope));
 }
 
@@ -208,7 +208,7 @@ export class MachineAuth {
     const token = await this.#storage.get<StoredToken>('token');
     if (!token) throw new Error('Machine is not installed');
     // Also catches records from before the identity was stored.
-    if (!relayScopes(token.scopes) || token.orgId !== this.#orgId || token.clientId !== this.#client.clientId) {
+    if (!cloudInboxScopes(token.scopes) || token.orgId !== this.#orgId || token.clientId !== this.#client.clientId) {
       throw new Error('Machine must be reinstalled: its token has other or unverified permissions or belongs to another org or client');
     }
     if (token.expiresAt - this.#now() > REFRESH_MARGIN_MS) return token.accessToken;
@@ -256,7 +256,7 @@ export class MachineAuth {
     const body = (await json(res)) as (Partial<Grant> & { scope?: unknown }) | undefined;
     if (!body) return undefined;
     const scopes = typeof body.scope === 'string' ? body.scope.trim().split(/\s+/) : body.scope;
-    if (!relayScopes(scopes) || typeof body.access_token !== 'string' || !body.access_token ||
+    if (!cloudInboxScopes(scopes) || typeof body.access_token !== 'string' || !body.access_token ||
       typeof body.refresh_token !== 'string' || !body.refresh_token ||
       typeof body.expires_in !== 'number' || !Number.isFinite(body.expires_in) || body.expires_in <= 0) return undefined;
     return { access_token: body.access_token, refresh_token: body.refresh_token, expires_in: body.expires_in, scopes };

@@ -7,9 +7,9 @@ Factory is the thing that makes our things.  It turns ideas into finished softw
 Factory has two parts:
 
 - **Skills:** written instructions you give a coding agent. They tell it how to turn your notes into tasks, plan a change, and build it for you to review.
-- **[Dispatch](packages/dispatch/README.md):** software for starting work in Orca on your computer from a task in Linear.
+- **[Delegate](packages/delegate/README.md):** software for starting work in Orca on your computer from a task in Linear.
 
-You can use the skills without Dispatch. They help with four steps:
+You can use the skills without Delegate. They help with four steps:
 
 - **Capture:** turn photos of handwritten sticky notes, or dictated thoughts, into triage tickets in Linear.
 - **Triage:** review new tickets in triage with you, the human, and route each one: build it, plan it further, or drop it.
@@ -28,7 +28,7 @@ People who plan their work in Linear and want coding agents to do more of the bu
 
 - [Install the skills](#install-the-skills)
 - [Adopt Factory in your own project](#adopting)
-- [Dispatch architecture and relay setup](packages/dispatch/README.md#where-it-runs)
+- [Delegate architecture and Cloud Inbox setup](packages/delegate/README.md#where-it-runs)
 - [McWestling's settings file, a worked example](docs/issue-tracker.md)
 - [License](LICENSE)
 
@@ -42,9 +42,9 @@ People who plan their work in Linear and want coding agents to do more of the bu
 ├── docs/
 │   └── issue-tracker.md   # McWestling's tracker values; the worked example
 ├── packages/
-│   └── dispatch/
-│       ├── relay/        # Application: runs on Cloudflare
-│       ├── wrangler.toml # Relay deployment and storage configuration
+│   └── delegate/
+│       ├── cloud-inbox/  # Application: runs on Cloudflare
+│       ├── wrangler.toml # Cloud Inbox deployment and storage configuration
 │       └── *.ts          # Shared job types, issue parser and tests
 ├── skills/
 │   └── <name>/            # One folder per skill: SKILL.md, agents/openai.yaml
@@ -53,21 +53,22 @@ People who plan their work in Linear and want coding agents to do more of the bu
 ```
 
 Folders describe what the code belongs to; they do not all represent applications.
-`skills/` holds agent instructions, `packages/` currently holds both the Dispatch
+`skills/` holds agent instructions, `packages/` currently holds both the Delegate
 application and shared code, `tools/` holds tool configuration, and `docs/` holds
-contracts. There is no local daemon folder or install command yet.
+contracts. The Runner's code will live in `packages/delegate/runner/`; it has no folder or
+install command yet.
 
 ## Software and where it runs
 
 | Component | Runtime | Status and setup |
 | --- | --- | --- |
-| Dispatch relay | Your Cloudflare account: Worker plus per-machine Durable Object storage and alarms | Implemented. [Deploy and configure it](packages/dispatch/README.md#set-up-your-hosted-relay). |
-| Dispatch daemon | Your computer, alongside Orca | Planned. Will pick up relay jobs and launch Orca; not yet installable. |
-| Shared Dispatch code | Imported by the components that use it | Job types and issue parser in `packages/dispatch/`; no separate process or deployment. |
+| Cloud Inbox | Your Cloudflare account: Worker plus per-machine Durable Object storage and alarms | Implemented. [Deploy and configure it](packages/delegate/README.md#set-up-your-cloud-inbox). |
+| Runner | Your machine, alongside Orca | Planned. Will pick up Cloud Inbox jobs and launch Orca; not yet installable. |
+| Shared Delegate code | Imported by the components that use it | Job types and issue parser in `packages/delegate/`; no separate process or deployment. |
 
-Linear sends delegations to the cloud relay. The local daemon will claim them
-over HTTPS and launch Orca on your computer. The relay can queue work while that
-computer sleeps. See the [Dispatch runtime and setup guide](packages/dispatch/README.md#where-it-runs)
+Linear sends delegations to Cloud Inbox. The Runner will claim them over HTTPS and
+launch Orca on your machine. Cloud Inbox can queue work while that machine sleeps.
+See the [Delegate runtime and setup guide](packages/delegate/README.md#where-it-runs)
 for credentials, testing, deployment and day-to-day operation.
 
 ## Skills
@@ -90,10 +91,10 @@ Run this in your terminal and select your agents when prompted. Install all the 
 
 You need Git, Node.js 22.20+ with npm, the [GitHub CLI](https://cli.github.com), and [Linear’s MCP server](https://linear.app/docs/mcp) connected to your agent. Run `gh auth login` to sign in to GitHub. Python 3.11+ enables service setup; a POSIX shell and `nc` enable dev ports. [Orca](https://onorca.dev/download) is recommended for parallel agent workspaces.
 
-Linear-to-Orca dispatch is a separate, optional service. It requires deploying the
-relay to your own Cloudflare account; installing the skills does not deploy it.
-The relay is implemented, but the local daemon that picks up jobs and launches Orca
-is not yet included. See [where Dispatch runs and how to set up the relay](packages/dispatch/README.md#where-it-runs).
+Delegate is a separate, optional service. It requires deploying Cloud Inbox to your
+own Cloudflare account; installing the skills does not deploy it. Cloud Inbox is
+implemented, but the Runner that picks up jobs and launches Orca is not yet included.
+See [where Delegate runs and how to set up Cloud Inbox](packages/delegate/README.md#where-it-runs).
 
 ## Adopting
 

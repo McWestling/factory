@@ -1,4 +1,4 @@
-// One machine's job queue and the outbox of agent activities the relay posts, kept in
+// One machine's job queue and the outbox of agent activities Cloud Inbox posts, kept in
 // that machine's Durable Object. Runs under Node for tests, so SQL goes through `Sql`,
 // which both Cloudflare's SqlStorage and a node:sqlite adapter satisfy.
 
@@ -15,9 +15,9 @@ const RETRY_MAX_MS = 60 * 60_000;
 export const MESSAGES = {
   queued: (machine: string) =>
     `Queued on ${machine}. It starts when ${machine} picks it up, which can take a while if the machine is busy or asleep.`,
-  replaced: 'Replaced by a newer dispatch.',
+  replaced: 'Replaced by a newer delegation.',
   stopped: 'Stopped watching. The agent in Orca keeps running; stop it there if needed.',
-  replies: "Dispatch doesn't read replies; steer the agent in Orca.",
+  replies: "Delegate doesn't read replies; steer the agent in Orca.",
 };
 
 const ACTIVITY = 'mutation ($input: AgentActivityCreateInput!) { agentActivityCreate(input: $input) { success } }';
@@ -54,7 +54,7 @@ const HEAD = 'NOT EXISTS (SELECT 1 FROM outbox p WHERE p.session_id = o.session_
  *
  * A stopped or replaced session is recorded in `ended`, so a late `created` or reply
  * can't queue it again or post after its final response. Claiming a job cancels its
- * queued thought: once the daemon owns the session, that thought is obsolete.
+ * queued thought: once the Runner owns the session, that thought is obsolete.
  *
  * Each claim gets a fresh id, and only that claim, while its lease lasts, can record the
  * job's outcome. A row claimed before ids existed has none, so it can't be finished: its
@@ -148,7 +148,7 @@ export class MachineQueue {
        WHERE id = (SELECT id FROM jobs WHERE state = 'queued' ORDER BY rowid LIMIT 1) RETURNING id, issue_id`,
       now + LEASE_MS, now, claimId).toArray();
     if (!row) return undefined;
-    // The daemon owns the session now, so its queued thought is obsolete. One already in
+    // The Runner owns the session now, so its queued thought is obsolete. One already in
     // flight is never retried: a failure updates a row that is gone.
     this.#sql.exec('DELETE FROM outbox WHERE session_id = ? AND queued = 1', String(row.id));
     return { issueId: String(row.issue_id), sessionId: String(row.id), claimId };

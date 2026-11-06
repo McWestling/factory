@@ -1,7 +1,7 @@
-# Dispatch technical reference
+# Delegate technical reference
 
-For architecture and setup, see the [Dispatch README](../README.md).
-Paths below are relative to `packages/dispatch`.
+For architecture and setup, see the [Delegate README](../README.md).
+Paths below are relative to `packages/delegate`.
 
 ## Shared types and issue parser
 
@@ -15,20 +15,20 @@ a refusal. It requires a fenced `dispatch` block with one nonempty model field;
 a missing or malformed block refuses dispatch. The repo comes
 from the required `[repo=owner/name]` tag, including Linear's escaped form.
 
-Without config, the parser checks syntax only. The daemon must pass its config
+Without config, the parser checks syntax only. The Runner must pass its config
 to enforce the exact model name in `models` (a name-to-settings map) and repo
 membership in `repos` (an allowlist). `target` and `reason` do not affect dispatch.
 
-## Relay
+## Cloud Inbox
 
-`relay/worker.ts` is the Cloudflare Worker, configured in `wrangler.toml`. It holds
+`cloud-inbox/worker.ts` is the Cloudflare Worker, configured in `wrangler.toml`. It holds
 one SQLite-backed Durable Object per machine, addressed only by the machine's name.
 It refuses every request until three secrets are set (`.dev.vars.example` shows
 their shape): `LINEAR_ORG_ID`, `ADMIN_SECRET`, and `MACHINES`, a JSON object of
 machine name to its Linear client id, client secret, webhook signing secret and
 bearer secret. Adding a machine means updating `MACHINES`.
 Each machine must have a distinct client id and bearer secret. Duplicate values
-make the relay return 503 until the configuration is corrected; stored jobs and
+make Cloud Inbox return 503 until the configuration is corrected; stored jobs and
 installations are preserved.
 
 A `MACHINES` key is a stable storage identifier, not a display name: it selects the
@@ -52,7 +52,7 @@ Workers by routing `<hostname>/dispatch/*` here. Paths are shown without that pr
 
 Point each machine's Linear app webhook (Agent session events, delivery enabled) at
 `POST /webhook`.
-`relay/routes.ts` handles it before the machine's queue sees anything: it answers 401
+`cloud-inbox/routes.ts` handles it before the machine's queue sees anything: it answers 401
 to a missing or malformed `Linear-Signature` without reading the body, answers 413 once
 the body passes 1 MiB, counting as it reads whether or not `Content-Length` is sent,
 then finds the machine by `oauthClientId`, verifies `Linear-Signature` over the raw
@@ -60,7 +60,7 @@ body, and requires
 `webhookTimestamp` within 60 s and `organizationId` equal to `LINEAR_ORG_ID`. The queue
 then requires `appUserId` to match the install. A `created` event queues the job,
 deduped on the session id, and posts the queued `thought`; a newer delegation of the
-same issue replaces its waiting job and posts "Replaced by a newer dispatch." on the
+same issue replaces its waiting job and posts "Replaced by a newer delegation." on the
 old session. A `prompted` stop signal posts the stopped `response` and drops a job not
 yet claimed; any other prompt gets a `thought` saying replies aren't read, once per
 `agentActivity.id` (kept 30 days), so a redelivered prompt is ignored and a new prompt
@@ -69,7 +69,7 @@ or replaced session is remembered as ended for 30 days: a late `created` doesn't
 it again, a reply gets no thought, a repeated stop gets no second final response, and
 a claimed job of a stopped session isn't requeued when its lease expires. Expired
 stopped claims are removed before their ended markers, including after more than
-30 days offline. The relay's code posts activities only and changes
+30 days offline. Cloud Inbox's code posts activities only and changes
 no issue fields, though its grant would allow it. The thought names the app as Linear
 shows it, stored at install; installs from before that use the `MACHINES` key.
 
@@ -82,13 +82,13 @@ removes it, and the alarm drops and logs an activity still failing after 30 days
 even with no claims or new webhooks. Each session's activities go out in the order
 they were written. Ending a session (replaced
 or stopped) cancels its thoughts not yet posted, so a final response is never followed
-by a queued thought. Claiming a job hands the session to the daemon and cancels its
+by a queued thought. Claiming a job hands the session to the Runner and cancels its
 queued thought, even mid-retry or mid-refresh, so it never lands after the job has
 started; replies and final responses still go out. Delivery is at least once:
 a post that Linear applies but whose answer is lost is sent again, and a queued
 thought already sent when the claim lands may still appear.
 
-The daemon API authenticates with `Authorization: Bearer <bearerSecret>`, and the
+The Runner API authenticates with `Authorization: Bearer <bearerSecret>`, and the
 machine comes only from the secret that matched. A job's id is its session id.
 
 - `POST /jobs/claim` returns the oldest waiting job as `{issueId, sessionId, claimId}`
@@ -98,7 +98,7 @@ machine comes only from the secret that matched. A job's id is its session id.
 - `POST /jobs/<id>/launched?claimId=<claimId>` and
   `POST /jobs/<id>/failed?claimId=<claimId>` record that claim's outcome: 204, 400 if
   `claimId` is missing, or 409 unless it's the job's current claim with an unexpired
-  lease. So a daemon whose lease expired can't change the outcome of a later claim, and
+  lease. So a Runner whose lease expired can't change the outcome of a later claim, and
   must report before its lease ends. A second report of the same claim also gets 409.
 - A job claimed before `claimId` existed has no id, so it can't report an outcome: its
   report gets 400 or 409. It keeps its stored lease, then goes back on the queue like
@@ -106,34 +106,48 @@ machine comes only from the secret that matched. A job's id is its session id.
   request after deploying; queued jobs are untouched.
 - There is no token-sharing endpoint; `GET /token` returns 404.
 
-Launched and failed jobs, the dedupe records and the ended sessions are kept 30 days. `relay/queue.ts`
+Launched and failed jobs, the dedupe records and the ended sessions are kept 30 days. `cloud-inbox/queue.ts`
 holds the queue and outbox, on the Durable Object's SQLite storage.
 
-`MachineAuth.getAccessToken()`, used only by the relay's own posts, returns the cached access token and
+`MachineAuth.getAccessToken()`, used only by Cloud Inbox's own posts, returns the cached access token and
 is the only place it is refreshed. It refuses a token whose stored org id or client id
-differs from the current config, or whose scopes are unverified or not exactly the
-relay's, until an admin reinstall. Refresh grants must also contain exactly
+differs from the current config, or whose scopes are unverified or not exactly
+Cloud Inbox's, until an admin reinstall. Refresh grants must also contain exactly
 `read,write,app:assignable`. A refresh that finishes after a reinstall is discarded and fails, so it never returns the old
-installation's token. `relay/auth.ts`, `relay/queue.ts` and `relay/routes.ts`
+installation's token. `cloud-inbox/auth.ts`, `cloud-inbox/queue.ts` and `cloud-inbox/routes.ts`
 hold this logic so `node:test` can run it, with `node:sqlite` standing in for the
-Durable Object's SQL and synthetic webhook payloads in `relay/fixtures/` (written from
+Durable Object's SQL and synthetic webhook payloads in `cloud-inbox/fixtures/` (written from
 Linear's documented schema, not captured); check the Worker bundle with `npx wrangler deploy --dry-run`.
+
+### Legacy operational names
+
+These keep their old names on purpose. The rename changed none of them, and changing one
+is a migration, not a rename.
+
+- **Worker name `factory-dispatch-relay`:** the deployed Worker and the Durable Objects
+  stored under it. Deploying under a new name creates a separate Worker with empty storage.
+- **URL prefix `/dispatch`:** every Linear app is registered with its OAuth callback
+  and webhook URLs under this prefix, and custom-domain routes match it.
+- **Durable Object class `Machine`, binding `MACHINE`, migration `v1`, the SQL schema
+  and the secrets:** these address stored queues and installations, so they stay as deployed.
+- **The fenced `dispatch` block and the refusal field `dispatch`:** the issue format.
+  See the [issue-format contract](../../../docs/issue-format.md).
 
 ### Trust model
 
-The relay is the middleman between Linear and the machines. It alone holds Linear
+Cloud Inbox is the middleman between Linear and the machines. It alone holds Linear
 credentials: its `read,write,app:assignable` grant and the app's client secret.
-Machines hold only a bearer secret, and there is no daemon API or Durable Object method
+Machines hold only a bearer secret, and there is no Runner API or Durable Object method
 for lending a token. It rejects any other grant at installation and refresh, and refuses
 stored tokens with other or missing scopes.
 
 A live check showed Linear refuses both agent activities and issue edits without
-`write`, so no narrower grant can acknowledge a task. The boundary is the relay's code,
-not Linear's permissions: a compromised relay can edit issues in the workspace.
+`write`, so no narrower grant can acknowledge a task. The boundary is Cloud Inbox's code,
+not Linear's permissions: a compromised Cloud Inbox can edit issues in the workspace.
 
-The relay API for machine status updates and task content isn't built yet. Machines
-must treat relay messages and job ids as untrusted, not task instructions.
-Per-machine Durable Objects isolate storage, not trust: a compromised Worker can reach all relay credentials, read and edit accessible workspace data and tamper
+Cloud Inbox API for machine status updates and task content isn't built yet. Machines
+must treat Cloud Inbox messages and job ids as untrusted, not task instructions.
+Per-machine Durable Objects isolate storage, not trust: a compromised Worker can reach all Cloud Inbox credentials, read and edit accessible workspace data and tamper
 with jobs.
 
 Installations made with a different grant are refused until an admin reinstalls them.

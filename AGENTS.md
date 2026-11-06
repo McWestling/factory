@@ -28,4 +28,4 @@ The repo is organised by kind of thing. Add a folder only when its first file la
 
 ## Open source
 
-This repo is built to be published. Never commit secrets, personal data, machine names, workspace ids or relay URLs. Use placeholders such as `ABC-123` for ticket ids, and commit `*.example` files instead of real config. The one exception is `docs/issue-tracker.md`: it is McWestling's real tracker config, committed so cloud agents can read it, and it holds nothing private.
+This repo is built to be published. Never commit secrets, personal data, machine names, workspace ids or Cloud Inbox URLs. Use placeholders such as `ABC-123` for ticket ids, and commit `*.example` files instead of real config. The one exception is `docs/issue-tracker.md`: it is McWestling's real tracker config, committed so cloud agents can read it, and it holds nothing private.

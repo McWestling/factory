@@ -1,4 +1,4 @@
-// The relay's webhook route and daemon API. The Worker hands each request here with
+// Cloud Inbox's webhook route and Runner API. The Worker hands each request here with
 // a way to reach a machine's queue, so `node:test` can drive the whole route.
 
 import { hex, timingSafeEqual, type Config } from './auth.ts';
@@ -8,7 +8,7 @@ const TIMESTAMP_WINDOW_MS = 60_000;
 /** Far above any agent session event; anything larger is refused before it's parsed. */
 export const MAX_WEBHOOK_BYTES = 1024 * 1024;
 
-/** Every relay route lives here, so a shared hostname can route `/dispatch/*` to this Worker. */
+/** Every Cloud Inbox route lives here, so a shared hostname can route `/dispatch/*` to this Worker. A legacy prefix, kept on purpose: Linear apps are registered with these URLs. */
 export const BASE_PATH = '/dispatch';
 
 /** The request with the base path removed, or null if it's outside the base path. */
@@ -119,7 +119,7 @@ export async function handleWebhook(request: Request, config: Config, machines: 
  * `POST /jobs/claim`, `POST /jobs/<id>/launched|failed?claimId=<claimId>`. The machine
  * comes only from the bearer secret that matched, never from the request.
  */
-export async function handleDaemon(request: Request, config: Config, machines: Machines) {
+export async function handleRunner(request: Request, config: Config, machines: Machines) {
   const header = request.headers.get('Authorization') ?? '';
   const secret = header.startsWith('Bearer ') ? header.slice(7) : '';
   let machine: string | undefined;
@@ -128,7 +128,7 @@ export async function handleDaemon(request: Request, config: Config, machines: M
     if (timingSafeEqual(secret, m.bearerSecret)) machine = name;
   }
   if (!machine) {
-    log({ event: 'daemon', outcome: 'unauthorized' });
+    log({ event: 'runner', outcome: 'unauthorized' });
     return text(401, 'Unauthorized', { 'WWW-Authenticate': 'Bearer' });
   }
 

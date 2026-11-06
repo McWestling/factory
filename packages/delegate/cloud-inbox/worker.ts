@@ -1,11 +1,11 @@
-// The relay Worker: routes /install/<machine> and /callback/<machine> to that
+// The Cloud Inbox Worker: routes /install/<machine> and /callback/<machine> to that
 // machine's Durable Object, which holds its Linear install, token and job queue.
-// /webhook and the daemon API are handled in routes.ts.
+// /webhook and the Runner API are handled in routes.ts.
 
 import { DurableObject } from 'cloudflare:workers';
 import { isAdmin, MachineAuth, readConfig, type InstallResult } from './auth.ts';
 import { MachineQueue, type AgentEvent, type Outcome } from './queue.ts';
-import { BASE_PATH, handleDaemon, handleWebhook, log, text, underBasePath, type Machines } from './routes.ts';
+import { BASE_PATH, handleRunner, handleWebhook, log, text, underBasePath, type Machines } from './routes.ts';
 
 interface Env {
   MACHINE: DurableObjectNamespace<Machine>;
@@ -29,7 +29,7 @@ export default {
     const config = readConfig({ ...env });
     if (typeof config === 'string') {
       log({ event: 'config', outcome: config });
-      return text(503, 'Relay is not configured');
+      return text(503, 'Cloud Inbox is not configured');
     }
 
     const url = new URL(request.url);
@@ -43,7 +43,7 @@ export default {
       };
     };
     if (url.pathname === '/webhook' && request.method === 'POST') return handleWebhook(request, config, machines);
-    if (route === 'jobs') return handleDaemon(request, config, machines);
+    if (route === 'jobs') return handleRunner(request, config, machines);
 
     if (request.method !== 'GET' || rest.length || (route !== 'install' && route !== 'callback') ||
       !machine || !Object.hasOwn(config.machines, machine)) return text(404, 'Not found');
@@ -55,7 +55,7 @@ export default {
       const location = await stub.startInstall(machine, redirectUri, isAdmin(request, config.adminSecret));
       if (!location) {
         log({ event: 'install', machine, outcome: 'unauthorized' });
-        return text(401, 'Installation requires the admin secret.', { 'WWW-Authenticate': 'Basic realm="relay"' });
+        return text(401, 'Installation requires the admin secret.', { 'WWW-Authenticate': 'Basic realm="cloud-inbox"' });
       }
       return Response.redirect(location, 302);
     }
@@ -80,7 +80,7 @@ export class Machine extends DurableObject<Env> {
   #for(machine: string): MachineAuth {
     const config = readConfig({ ...this.env });
     if (typeof config === 'string' || !Object.hasOwn(config.machines, machine)) {
-      throw new Error('Relay is not configured');
+      throw new Error('Cloud Inbox is not configured');
     }
     return (this.#auth ??= new MachineAuth(this.ctx.storage, config.machines[machine]!, config.orgId));
   }
