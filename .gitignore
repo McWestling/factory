@@ -17,3 +17,6 @@ node_modules/
 # Wrangler local secrets and state
 .dev.vars
 .wrangler/
+
+# Cloud Inbox operator checkpoint and generated Wrangler config
+packages/delegator/.cloud-inbox.local.*

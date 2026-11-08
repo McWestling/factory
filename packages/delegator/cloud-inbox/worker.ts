@@ -49,6 +49,21 @@ export default {
     if (url.pathname === '/webhook' && request.method === 'POST') return handleWebhook(request, config, machines);
     if (route === 'jobs') return handleRunner(request, config, machines);
 
+    if (!rest.length && machine && Object.hasOwn(config.machines, machine) &&
+      ((route === 'status' && request.method === 'GET') || (route === 'disconnect' && request.method === 'POST'))) {
+      if (!isAdmin(request, config.adminSecret)) return text(401, 'Owner authentication required.');
+      const stub = env.MACHINE.get(env.MACHINE.idFromName(machine));
+      try {
+        if (route === 'status') return Response.json(await stub.status(machine), { headers: { 'Cache-Control': 'no-store' } });
+        await stub.disconnect(machine);
+        return text(200, 'Disconnected; Linear access and refresh are revoked. Stored jobs are preserved.');
+      } catch {
+        return text(502, route === 'status'
+          ? 'Linear access could not be verified. Check workspace and app access, then reconnect.'
+          : 'Revocation could not be confirmed. Access is blocked locally; retry disconnect or revoke the app in Linear.');
+      }
+    }
+
     if (request.method !== 'GET' || rest.length || (route !== 'install' && route !== 'callback') ||
       !machine || !Object.hasOwn(config.machines, machine)) return text(404, 'Not found');
 
@@ -72,7 +87,7 @@ export default {
     }
     const result = await stub.completeInstall(machine, state, code, redirectUri);
     log({ event: 'install', machine, outcome: result.ok ? 'installed' : result.reason });
-    return result.ok ? text(200, `Installed ${machine}.`) : text(400, FAILURES[result.reason]);
+    return result.ok ? text(200, `Installed ${machine}. Cloud Inbox holds the Linear credentials. Runner pairing is not implemented yet.`) : text(400, FAILURES[result.reason]);
   },
 } satisfies ExportedHandler<Env>;
 
@@ -96,6 +111,10 @@ export class Machine extends DurableObject<Env> {
   completeInstall(machine: string, state: string, code: string, redirectUri: string) {
     return this.#for(machine).completeInstall(state, code, redirectUri);
   }
+
+  status(machine: string) { return this.#for(machine).status(); }
+
+  disconnect(machine: string) { return this.#for(machine).disconnect(); }
 
   #queueFor(machine: string): MachineQueue {
     // Remembered so the alarm, which gets no arguments, can rebuild the queue.

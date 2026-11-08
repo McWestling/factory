@@ -37,97 +37,96 @@ production; Linear cannot deliver webhooks to localhost.
 
 ## Set up your Cloud Inbox
 
+Use Node.js 26 and run from `packages/delegator` after `npm ci --ignore-scripts`.
 You need a Cloudflare account with Workers and SQLite-backed Durable Objects,
-and a Linear workspace admin who can create and install OAuth apps.
-Run these commands from `packages/delegator` after testing above.
+and a Linear workspace admin who can create and authorize a private app.
 
-1. **Deploy to Cloudflare:**
+```sh
+npm run inbox -- login
+npm run inbox -- setup
+```
 
-   ```sh
-   npx wrangler login
-   npx wrangler deploy
-   ```
+These are the two deployment entry actions. Cloudflare login/approval and the
+one-time Linear app registration are required human steps within the guide, not
+an automatic installation. Setup asks for the Cloudflare account ID, Worker name,
+stable machine key and Linear organization UUID (from your admin or Linear MCP).
+It deploys storage, generates owner and machine secrets, opens a prefilled private
+app-registration page, asks for the app's three credentials with hidden input,
+uploads configuration and returns the permanent setup URL. Keep webhook delivery
+enabled. No personal Linear API key or JSON editing is needed.
 
-   Save the HTTPS address printed by Wrangler. Below, `<cloud-inbox-origin>` means that
-   address followed by `/delegator`, with no trailing slash. Every Cloud Inbox route lives
-   under `/delegator`. To serve it from your own domain on Cloudflare, also pass
-   `--x-route-zones --route '<hostname>/delegator/*' --zone <zone>`; the hostname needs
-   a proxied DNS record, and the Worker's `workers.dev` address turns off. Until secrets
-   are set, requests return 503.
+The supported guided path uses the Worker's `workers.dev` HTTPS address. Custom
+routes remain an advanced manual deployment; don't use setup to change their identity.
 
-2. **Create a Linear app for your computer.** Follow Linear's
-   [agent setup guide](https://linear.app/developers/agents). Choose a stable machine
-   key such as `example-machine`: lowercase letters, digits and hyphens, starting
-   with a letter or digit, at most 63 characters. Set:
+Setup checkpoints each answer in `.cloud-inbox.local.json`, with owner-only file
+permissions; the generated `.cloud-inbox.local.json.toml` uses the same Worker,
+account, binding and migrations. Both are gitignored. Back up the checkpoint in
+your secret manager: it contains app credentials and machine connection authority,
+but never Linear access or refresh tokens. Rerun setup after an interruption;
+it preserves credentials and machine keys and doesn't redeploy a completed setup.
+Never rename the Worker or a machine key: they select the stored installation/jobs.
 
-   - OAuth callback: `<cloud-inbox-origin>/callback/example-machine`
-   - Webhook URL: `<cloud-inbox-origin>/webhook`
-   - Webhook category: **Agent session events**
-   - Webhook delivery status: **Enabled** (a new app can have it off, and then
-     delegations get no reply)
+For an existing installation, restore its checkpoint, or import its **complete,
+original** secrets before setup:
 
-   Keep the app private to your workspace and enable only the authorization-code
-   grant. Save its client ID, client secret and webhook signing secret. Delegator
-   doesn't need a personal API key.
+```sh
+npm run inbox -- import /path/to/private/.dev.vars
+npm run inbox -- setup
+```
 
-   Linear supports [prefilled app creation](https://linear.app/developers/oauth-app-manifests)
-   with `distribution=private`, `oauth.redirect_uris`, `webhook.url` and
-   `webhook.resourceTypes=AgentSessionEvent`. The guided setup follow-up will
-   generate that page from your Cloud Inbox address and machine key.
+Use its original account, Worker name and machine key. Import preserves every
+machine entry. Setup refuses existing remote secrets without a checkpoint/import;
+Wrangler cannot download secret values for recovery. Don't generate replacements.
 
-3. **Set production secrets** using Wrangler's interactive prompts:
+## Connect and check
 
-   ```sh
-   npx wrangler secret put LINEAR_ORG_ID
-   npx wrangler secret put ADMIN_SECRET
-   npx wrangler secret put MACHINES
-   ```
+```sh
+npm run inbox -- connect
+npm run inbox -- status
+```
 
-   `LINEAR_ORG_ID` is your workspace's organization UUID, obtainable from your
-   Linear admin or a Linear MCP connection. For `ADMIN_SECRET` and each machine's
-   `bearerSecret`, generate separate random values with `openssl rand -hex 32`.
-   `MACHINES` is a JSON object:
+Connect uses the saved owner credential to open Cloud Inbox's Linear authorization
+flow in your browser. Approve the exact `read,write,app:assignable` grant. You can
+also visit the setup URL and use the saved `config.adminSecret` as the HTTP Basic
+password (any username). Status checks the workspace and app identity against Linear
+without returning a token. If access is missing or revoked, check the app and workspace,
+then reconnect; don't add scopes to bypass a failure. Correct a pasted app credential
+with `npm run inbox -- credentials`, then reconnect. This preserves owner/machine
+secrets and jobs; use the same app, not a replacement installation.
 
-   ```json
-   {"example-machine":{"clientId":"replace-me","clientSecret":"replace-me","webhookSecret":"replace-me","bearerSecret":"replace-with-random-secret"}}
-   ```
+Deployment is separate from the intended everyday two-step connection: visit Cloud
+Inbox and authorize with Linear, then open the running Mac Runner and redeem a
+short-lived, single-use pairing code or app link. **Runner and pairing are not built
+in this ticket**, so that end-to-end experience is not available yet. Pairing will
+transfer only machine authority for the restricted API, never a Linear token.
 
-   Keep real values in your secret manager. `.dev.vars.example` shows the local
-   format; `.dev.vars` is not uploaded by deploy. Each `secret put` takes effect
-   immediately ([Cloudflare secrets guide](https://developers.cloudflare.com/workers/configuration/secrets/)).
-
-4. **Install into Linear.** Open `<cloud-inbox-origin>/install/example-machine` as a
-   workspace admin, enter `ADMIN_SECRET` as the HTTP Basic password (username is
-   ignored), and approve in Linear. This is required even for the first install.
-   Expect `Installed example-machine.` Tokens stay inside Cloud Inbox; OAuth uses
-   `read,write,app:assignable`, S256 PKCE and the client secret for installation and
-   automatic refresh.
-
-5. **Check it.** Run `npx wrangler tail`. Delegate a disposable issue to the app;
-   expect a "Queued on ..." reply. Stop the session; expect the stopped reply.
-   Stopping in Linear does not stop an agent already running in Orca.
-
-   A real delegation and stop got these replies from a deployed Cloud Inbox. The Runner API's
-   full claim flow has also run there against real Linear, called by hand on disposable
-   issues, as the Runner doesn't exist yet.
+For a live smoke test, delegate a disposable issue to your app and expect its queued
+reply in Linear; stop the session and expect the stopped reply. This doesn't launch
+Orca. Cloud Inbox's token refresh, delivery retries and Cloudflare process lifecycle
+are automatic; normal use needs no refresh, restart or retry command.
 
 ## Operate it
 
-- **Update:** test, dry-run, then `npx wrangler deploy`. Stored jobs and tokens
-  persist. Clients must send the `claimId` returned by a claim when reporting its
-  outcome. Claims made before this field was added cannot report an outcome;
-  they become available again after their existing ten-minute lease expires.
-  See the [API reference](cloud-inbox/README.md) for request formats and migration behavior.
-- **Add a computer:** repeat app registration, add its entry to the complete
-  `MACHINES` JSON, upload that secret, then visit its install URL. Preserve existing
-  entries and keys: renaming a key selects new, empty storage.
-  Each machine needs its own client ID and bearer secret. Duplicates make
-  Cloud Inbox return 503 until corrected, without deleting stored jobs or tokens.
-- **Reinstall:** revisit the install URL; use `ADMIN_SECRET` as the HTTP Basic
-  password when prompted (username is ignored).
-- **Runner:** installation instructions will be added with its implementation.
-  It will need Cloud Inbox address, its bearer secret and local repo/model settings,
-  and no Linear credentials.
+```sh
+npm test && npx wrangler deploy --dry-run
+npm run inbox -- update
+npm run inbox -- disconnect
+npm run inbox -- reconnect
+npm run inbox -- status
+```
+
+Update deploys code deliberately, retaining configuration, installation identity
+and jobs. Disconnect blocks local credential use immediately, revokes both tokens
+at Linear, and confirms API access returns 401 and refresh returns `invalid_grant`.
+It preserves queued jobs. Revocation can take time: if confirmation fails, retry
+`disconnect`; credentials remain blocked and retained only for retry. Reconnect
+requires owner authentication and browser approval again. If the app was deleted,
+restore/register its credentials separately rather than overwriting the checkpoint.
+Commands never export a Linear token to the Runner.
+
+The command does not delete Cloudflare resources or Linear app registrations.
+Keep the private app for reconnect; delete a disposable test app in Linear settings
+when testing is finished. Adding computers remains a manual configuration task.
 
 ## Security
 
