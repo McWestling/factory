@@ -7,9 +7,10 @@
     "node": "^26.0.0"
   },
   "scripts": {
-    "test": "npm run typecheck && node --test *.test.ts cloud-inbox/*.test.ts",
+    "test": "npm run typecheck && node --test *.test.ts cloud-inbox/*.test.ts runner/*.test.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p cloud-inbox",
-    "inbox": "node cloud-inbox/setup.ts"
+    "inbox": "node cloud-inbox/setup.ts",
+    "runner": "node runner/runner.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20261103.1",

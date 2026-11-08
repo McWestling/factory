@@ -1,0 +1,14 @@
+{
+  "inboxUrl": "https://<worker-name>.<account>.workers.dev/delegator",
+  "bearerSecret": "<this machine's bearer secret from Cloud Inbox setup>",
+  "machine": "<this machine's Linear app name>",
+  "allowedCreatorIds": ["<Linear user id allowed to delegate>"],
+  "repos": {
+    "owner/name": "/absolute/path/to/local/checkout"
+  },
+  "models": {
+    "Claude Opus 5.5": { "agent": "claude", "model": "<model id>", "effort": "high" },
+    "GPT-6 Luna": { "agent": "codex", "model": "<model id>" }
+  },
+  "skill": "do-implement"
+}

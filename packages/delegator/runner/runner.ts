@@ -1,0 +1,263 @@
+// Factory Runner: claims one Cloud Inbox job at a time, checks it, starts the issue's
+// agent in a new Orca worktree, and reports the outcome back through Cloud Inbox.
+// It holds no Linear credential. Everything Cloud Inbox sends is untrusted input.
+
+import { execFile } from 'node:child_process';
+import { readFileSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { isAbsolute, join } from 'node:path';
+import { promisify } from 'node:util';
+import type { Claim } from '../job.ts';
+import { parseIssue } from '../parse-issue.ts';
+
+export const CONFIG_PATH = join(homedir(), '.config', 'factory-delegator', 'config.json');
+const POLL_MS = 15_000;
+const RETRY = 'Fix it and delegate again to retry.';
+export const NOT_ALLOWED = "This machine doesn't accept dispatches from you.";
+
+export type ModelSettings = { agent: string; model: string; effort?: string };
+export type RunnerConfig = {
+  inboxUrl: string;
+  bearerSecret: string;
+  /** The Linear app's name, as Cloud Inbox's queued thought shows it. */
+  machine: string;
+  allowedCreatorIds: readonly string[];
+  /** `owner/name` → absolute path of the local checkout Orca knows. */
+  repos: Readonly<Record<string, string>>;
+  /** Preferred models name → how Orca starts it. */
+  models: Readonly<Record<string, ModelSettings>>;
+  skill: string;
+};
+
+export type Task = {
+  delegated: boolean;
+  creatorId: string | null;
+  identifier: string;
+  description: string;
+  branchName: string;
+  statusType: string;
+};
+
+export type Exec = (file: string, args: string[]) => Promise<{ stdout: string }>;
+export type Deps = { fetch: typeof fetch; exec: Exec; log: (fields: Record<string, string>) => void };
+
+// Flag-like or shell-like values never reach argv, even though there's no shell.
+const ARG = /^[\w.:]+[\w.:-]*$/;
+const REPO = /^[\w.-]+\/[\w.-]+$/;
+const IDENTIFIER = /^[A-Z][A-Z0-9]*-[0-9]+$/;
+const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
+
+const isText = (value: unknown): value is string => typeof value === 'string' && value.trim() !== '';
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/** Reads and checks the config, throwing with a reason (never a value) when it's unusable. */
+export function loadConfig(path = CONFIG_PATH): RunnerConfig {
+  let mode: number;
+  try {
+    mode = statSync(path).mode & 0o777;
+  } catch {
+    throw new Error(`no config at ${path}`);
+  }
+  if (mode !== 0o600) throw new Error(`${path} must have mode 600 (chmod 600 it)`);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    throw new Error(`${path} is not valid JSON`);
+  }
+  if (!isObject(raw)) throw new Error('config must be a JSON object');
+  const fail = (key: string, expected: string): never => {
+    throw new Error(`config \`${key}\` must be ${expected}`);
+  };
+
+  const { inboxUrl, bearerSecret, machine, allowedCreatorIds, repos, models, skill = 'do-implement' } = raw;
+  let url: URL | undefined;
+  try {
+    url = new URL(String(inboxUrl));
+  } catch {}
+  if (!url || url.protocol !== 'https:') fail('inboxUrl', 'an https URL');
+  if (!isText(bearerSecret)) fail('bearerSecret', 'a nonempty string');
+  if (!isText(machine)) fail('machine', 'a nonempty string');
+  if (!Array.isArray(allowedCreatorIds) || !allowedCreatorIds.length || !allowedCreatorIds.every(isText)) {
+    fail('allowedCreatorIds', 'a nonempty list of Linear user ids');
+  }
+  if (!isObject(repos) || !Object.keys(repos).length) fail('repos', 'a nonempty map of owner/name to a local path');
+  for (const [repo, path] of Object.entries(repos as object)) {
+    if (!REPO.test(repo) || typeof path !== 'string' || !isAbsolute(path)) {
+      fail('repos', 'a map of owner/name to an absolute local path');
+    }
+  }
+  if (!isObject(models) || !Object.keys(models).length) fail('models', 'a nonempty map of model name to settings');
+  for (const settings of Object.values(models as object)) {
+    const { agent, model, effort } = isObject(settings) ? settings : ({} as Record<string, unknown>);
+    if (typeof agent !== 'string' || !ARG.test(agent) || typeof model !== 'string' || !ARG.test(model)
+      || (effort !== undefined && (typeof effort !== 'string' || !ARG.test(effort)))) {
+      fail('models', 'a map of model name to {agent, model, effort?} with plain identifiers');
+    }
+  }
+  if (typeof skill !== 'string' || !/^[a-z0-9-]+$/.test(skill)) fail('skill', 'a name matching ^[a-z0-9-]+$');
+
+  return {
+    inboxUrl: url!.href.replace(/\/+$/, ''),
+    bearerSecret: bearerSecret as string,
+    machine: machine as string,
+    allowedCreatorIds: allowedCreatorIds as string[],
+    repos: repos as Record<string, string>,
+    models: models as Record<string, ModelSettings>,
+    skill: skill as string,
+  };
+}
+
+/** The Runner API from Cloud Inbox. Every operation on a job carries its claim id. */
+function inbox(config: RunnerConfig, deps: Deps) {
+  const call = async (method: string, path: string, body?: unknown) => {
+    const response = await deps.fetch(`${config.inboxUrl}${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${config.bearerSecret}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) throw new Error(`cloud-inbox-${response.status}`);
+    return response;
+  };
+  const job = (claim: Claim, op: string) =>
+    `/jobs/${encodeURIComponent(claim.sessionId)}/${op}?claimId=${encodeURIComponent(claim.claimId)}`;
+  return {
+    async claim(): Promise<Claim | null> {
+      const response = await call('POST', '/jobs/claim');
+      if (response.status === 204) return null;
+      const claim = await response.json() as Partial<Claim>;
+      if (!isText(claim.issueId) || !isText(claim.sessionId) || !isText(claim.claimId)) throw new Error('cloud-inbox-claim');
+      return claim as Claim;
+    },
+    task: async (claim: Claim) => await (await call('GET', job(claim, 'task'))).json() as Partial<Task>,
+    update: (claim: Claim, type: 'thought' | 'error', body: string) => call('POST', job(claim, 'updates'), { type, body }),
+    finish: (claim: Claim, outcome: 'launched' | 'failed') => call('POST', job(claim, outcome)),
+  };
+}
+
+/** The exact argv for `orca worktree create`, per docs/issue-format.md. */
+export function launchArgs(config: RunnerConfig, repo: string, model: string, task: Pick<Task, 'identifier' | 'branchName'>) {
+  const { agent, model: id, effort } = config.models[model]!;
+  return [
+    'worktree', 'create',
+    '--name', task.branchName.split('/').pop()!,
+    '--repo', `path:${config.repos[repo]}`,
+    '--branch', task.branchName,
+    '--agent', agent,
+    '--model', id,
+    ...(effort ? ['--effort', effort] : []),
+    `--prompt=/${config.skill} ${task.identifier}`,
+    '--setup', config.skill === 'do-implement' ? 'run' : 'skip',
+    '--linear-issue', task.identifier,
+    '--json',
+  ];
+}
+
+/** Runs `orca`, returning null on success or Orca's error code. */
+async function orca(exec: Exec, args: string[]): Promise<string | null> {
+  let stdout: string;
+  try {
+    ({ stdout } = await exec('orca', args));
+  } catch (error) {
+    // Orca prints its JSON error and exits non-zero; no output means it never ran.
+    stdout = String((error as { stdout?: unknown }).stdout ?? '');
+    if (!stdout) return (error as { code?: unknown }).code === 'ENOENT' ? 'orca_not_found' : 'orca_failed';
+  }
+  try {
+    const result = JSON.parse(stdout);
+    if (result?.ok === true) return null;
+    const code = result?.error?.code;
+    return typeof code === 'string' && /^[a-z0-9_]{1,64}$/.test(code) ? code : 'orca_failed';
+  } catch {
+    return 'orca_bad_output';
+  }
+}
+
+/** Checks one claimed job, launches it if it passes, and reports the outcome. */
+export async function handleJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<string> {
+  const api = inbox(config, deps);
+  const log = (outcome: string) => deps.log({ event: 'job', session: claim.sessionId, outcome });
+  const refuse = async (outcome: string, message: string) => {
+    log(outcome);
+    // Each report is tried even if the one before it failed; a lost report leaves the lease to expire.
+    await api.update(claim, 'error', message).catch(() => log('error-update-failed'));
+    await api.finish(claim, 'failed').catch(() => log('failed-report-failed'));
+    return outcome;
+  };
+
+  let task: Partial<Task>;
+  try {
+    task = await api.task(claim);
+  } catch {
+    return refuse('task-unreadable', `Couldn't read the issue from Cloud Inbox. Check that Cloud Inbox is connected. ${RETRY}`);
+  }
+  if (task.delegated !== true) {
+    log('undelegated');
+    await api.finish(claim, 'failed').catch(() => log('failed-report-failed'));
+    return 'undelegated';
+  }
+  if (!isText(task.creatorId) || !config.allowedCreatorIds.includes(task.creatorId)) {
+    return refuse('creator-refused', NOT_ALLOWED);
+  }
+  const issue = parseIssue(typeof task.description === 'string' ? task.description : '', {
+    models: config.models,
+    repos: Object.keys(config.repos),
+  });
+  if ('field' in issue) {
+    return refuse(`refused-${issue.field}`, `Refused \`${issue.field}\`: expected ${issue.expected}. ${RETRY}`);
+  }
+  const { identifier, branchName } = task;
+  if (typeof identifier !== 'string' || !IDENTIFIER.test(identifier)) {
+    return refuse('bad-identifier', `The issue id isn't a plain Linear id like ABC-123. ${RETRY}`);
+  }
+  if (typeof branchName !== 'string' || !BRANCH.test(branchName) || branchName.includes('..') || branchName.endsWith('/')) {
+    return refuse('bad-branch', `The issue's Linear branch name isn't a plain git branch name. ${RETRY}`);
+  }
+
+  const args = launchArgs(config, issue.repo, issue.model, { identifier, branchName });
+  await orca(deps.exec, ['open', '--json']);
+  let code = await orca(deps.exec, args);
+  if (code === 'runtime_unavailable') code = await orca(deps.exec, args);
+  if (code === 'runtime_unavailable') {
+    return refuse('orca-unavailable', `Orca isn't running on ${config.machine}. Open Orca and delegate again to retry.`);
+  }
+  if (code) return refuse(`orca-${code}`, `Orca couldn't start the agent (\`${code}\`). ${RETRY}`);
+
+  log('launched');
+  await api.update(claim, 'thought', `Started ${issue.model} in Orca on \`${branchName}\`.`).catch(() => log('thought-failed'));
+  await api.finish(claim, 'launched').catch(() => log('launched-report-failed'));
+  return 'launched';
+}
+
+/** One poll: claims a job and handles it. Returns whether there was one. */
+export async function poll(config: RunnerConfig, deps: Deps): Promise<boolean> {
+  const claim = await inbox(config, deps).claim();
+  if (!claim) return false;
+  await handleJob(config, deps, claim);
+  return true;
+}
+
+if (import.meta.main) {
+  let config: RunnerConfig;
+  try {
+    config = loadConfig();
+  } catch (error) {
+    console.error(`factory-runner: ${(error as Error).message}`);
+    process.exit(1);
+  }
+  const run = promisify(execFile);
+  const deps: Deps = {
+    fetch,
+    // Launch must finish well inside Cloud Inbox's 10-minute lease.
+    exec: (file, args) => run(file, args, { timeout: 180_000, maxBuffer: 4 * 1024 * 1024 }),
+    log: (fields) => console.log(JSON.stringify(fields)),
+  };
+  deps.log({ event: 'start', outcome: 'ok' });
+  for (;;) {
+    // Ids and outcomes only: the error itself may carry the URL or a body.
+    await poll(config, deps).catch((error: Error) => deps.log({ event: 'claim', outcome: error.message.startsWith('cloud-inbox-') ? error.message : 'unreachable' }));
+    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+  }
+}

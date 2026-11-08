@@ -9,9 +9,8 @@ own Linear agent integration, so the agent you delegate to decides the machine.
 - **Cloud Inbox:** you deploy this application to your Cloudflare account. It
   receives tasks from Linear and holds them while your computer is busy or asleep.
   Cloudflare also runs its storage and message retries; no database server to manage.
-- **Runner:** a background process on your machine that will pick up tasks from
-  Cloud Inbox and start them in Orca. It is not implemented yet; its code will live
-  in `packages/delegator/runner/`.
+- **Runner:** a process on your machine that picks up tasks from Cloud Inbox and
+  starts them in Orca. See [Run the Runner](#run-the-runner).
 
 Cloud Inbox is available for controlled testing. On Cloudflare it has answered a real
 delegation and stop, and served the Runner API's task, update and write-back operations
@@ -96,8 +95,8 @@ secrets and jobs; use the same app, not a replacement installation.
 
 Deployment is separate from the intended everyday two-step connection: visit Cloud
 Inbox and authorize with Linear, then open the running Mac Runner and redeem a
-short-lived, single-use pairing code or app link. **Runner and pairing are not built
-in this ticket**, so that end-to-end experience is not available yet. Pairing will
+short-lived, single-use pairing code or app link. **Pairing and the background Runner are not built
+yet**, so that end-to-end experience is not available. Pairing will
 transfer only machine authority for the restricted API, never a Linear token.
 
 For a live smoke test, delegate a disposable issue to your app and expect its queued
@@ -127,6 +126,30 @@ Commands never export a Linear token to the Runner.
 The command does not delete Cloudflare resources or Linear app registrations.
 Keep the private app for reconnect; delete a disposable test app in Linear settings
 when testing is finished. Adding computers remains a manual configuration task.
+
+## Run the Runner
+
+Copy [config.example.json](config.example.json) to
+`~/.config/factory-delegator/config.json`, fill it in and `chmod 600` it. The Runner
+refuses to start without it, with a looser mode, or with any key missing or empty;
+nothing has a default except `skill` (`do-implement`). `machine` is the Linear app's
+name, used in messages. Each `repos` path is a local checkout Orca knows, and each
+`models` key is an exact Preferred models name.
+
+```sh
+npm run runner
+```
+
+Every 15 s it claims one job and checks it with what Cloud Inbox returns. Delegation
+by a user on `allowedCreatorIds` is the approval to launch. It drops a job whose issue
+is no longer delegated to the app, and refuses an unlisted or missing creator, an issue
+that fails the [issue format](../../docs/issue-format.md), or a model or repo not in
+its config. Otherwise it runs `orca open --json` and the documented
+`orca worktree create`, retrying once if Orca's runtime is unavailable, then posts
+"Started …" and reports `launched`; Cloud Inbox sets the status, `Orca` label and
+assignee. Any failure posts one `error` and reports `failed`, which clears the delegate.
+It never requeues. It logs ids and outcomes only. Running it in the background and
+watching for the PR are not built yet.
 
 ## Security
 

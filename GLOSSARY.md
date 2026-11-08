@@ -17,7 +17,7 @@ The system that starts work on a machine from a Linear delegation: Cloud Inbox, 
 _Avoid_: Dispatch, Factory Dispatch
 
 **Job**:
-The `{issueId, sessionId}` payload Cloud Inbox queues for a machine's Runner; the Runner reads the issue from Linear at pickup.
+The `{issueId, sessionId}` payload Cloud Inbox queues for a machine's Runner; the Runner reads the issue through Cloud Inbox at pickup.
 _Avoid_: task, dispatch payload
 
 **Job state**:
@@ -33,7 +33,7 @@ The computer that runs jobs, with its own Linear app and its own Durable Object 
 _Avoid_: host
 
 **Runner**:
-The local process on a machine that claims jobs from Cloud Inbox through its restricted machine-facing API and launches them in Orca. It holds no Linear credentials. Planned, in `packages/delegator/runner/`.
+The local process on a machine that claims jobs from Cloud Inbox through its restricted machine-facing API and launches them in Orca. It holds no Linear credentials. Lives in `packages/delegator/runner/`.
 _Avoid_: daemon, local client
 
 ## Verifier
