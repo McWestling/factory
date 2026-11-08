@@ -85,7 +85,8 @@ test('a skill other than do-implement skips setup, and a model without effort om
 });
 
 // Cloud Inbox's `launched` write-back makes the field changes (status unless already
-// started/completed/canceled, Orca label, assignee); see its routes tests.
+// started/completed/canceled, Orca label, assignee); see "launched keeps the status of
+// an issue" in cloud-inbox/routes.test.ts. The Runner's requests don't vary with status.
 for (const statusType of ['unstarted', 'started', 'completed']) {
   test(`success on a ${statusType} issue posts the started thought, then reports launched, and nothing else`, async () => {
     const f = fakes({ ...goodTask, statusType });
@@ -112,6 +113,8 @@ const refusals: [string, Partial<Task>, string][] = [
   ['a repo not on the allowlist', { description: description('Claude Opus 5.5', 'owner/other') },
     'Refused `repo`: expected a repo on the machine allowlist. Fix it and delegate again to retry.'],
   ['a flag-like branch name', { branchName: '--upload-pack=evil' },
+    "The issue's Linear branch name isn't a plain git branch name. Fix it and delegate again to retry."],
+  ['a branch segment that starts with a dash', { branchName: 'someone/-x' },
     "The issue's Linear branch name isn't a plain git branch name. Fix it and delegate again to retry."],
   ['an unusual issue id', { identifier: '-x' }, "The issue id isn't a plain Linear id like ABC-123. Fix it and delegate again to retry."],
 ];
@@ -146,12 +149,21 @@ test('Orca becoming available on the retry launches', async () => {
   assert.equal(f.argv.length, 3);
 });
 
-test('any other Orca failure names its code and is not retried', async () => {
-  const f = fakes(goodTask, [ok, orcaError('repo_not_found')]);
-  assert.equal(await handleJob(config, f.deps, claim), 'orca-repo_not_found');
-  assert.equal(f.argv.length, 2);
-  assert.deepEqual(f.updates, [['error', "Orca couldn't start the agent (`repo_not_found`). Fix it and delegate again to retry."]]);
-});
+const orcaFailures: [string | Error, string][] = [
+  [orcaError('repo_not_found'), "Orca doesn't know owner/repo's checkout on Example Mac. Add it in Orca, or fix its path in the Runner config. Fix it and delegate again to retry."],
+  [Object.assign(new Error('spawn orca ENOENT'), { code: 'ENOENT' }), "The Runner can't find the `orca` command on Example Mac. Put Orca's CLI on its PATH. Fix it and delegate again to retry."],
+  [orcaError('worktree_conflict'), "Orca couldn't start the agent (`worktree_conflict`). Check Orca on Example Mac. Fix it and delegate again to retry."],
+  [JSON.stringify({ ok: false, error: { code: 'Not A Code; rm -rf' } }), "Orca couldn't start the agent (`orca_failed`). Check Orca on Example Mac. Fix it and delegate again to retry."],
+];
+for (const [failure, message] of orcaFailures) {
+  test(`an Orca failure is reported, not retried: ${message.slice(0, 40)}`, async () => {
+    const f = fakes(goodTask, [ok, failure]);
+    assert.notEqual(await handleJob(config, f.deps, claim), 'launched');
+    assert.equal(f.argv.length, 2);
+    assert.deepEqual(f.updates, [['error', message]]);
+    assert.equal(f.requests.at(-1), 'POST /jobs/session-1/failed');
+  });
+}
 
 test('an unreadable task is refused', async () => {
   const f = fakes();
@@ -193,6 +205,7 @@ const badConfigs: [string, unknown][] = [
   ['a flag-like model', { ...valid, models: { X: { agent: 'claude', model: '--danger' } } }],
   ['a bad skill', { ...valid, skill: 'Do Implement' }],
   ['an http inbox', { ...valid, inboxUrl: 'http://inbox.example' }],
+  ['an inbox URL with a query', { ...valid, inboxUrl: 'https://inbox.example/delegator?x=1' }],
   ['no secret', { ...valid, bearerSecret: '' }],
 ];
 for (const [label, value] of badConfigs) {

@@ -38,14 +38,15 @@ export type Task = {
   statusType: string;
 };
 
-export type Exec = (file: string, args: string[]) => Promise<{ stdout: string }>;
+export type Exec = (file: string, args: string[], timeoutMs: number) => Promise<{ stdout: string }>;
 export type Deps = { fetch: typeof fetch; exec: Exec; log: (fields: Record<string, string>) => void };
 
 // Flag-like or shell-like values never reach argv, even though there's no shell.
 const ARG = /^[\w.:]+[\w.:-]*$/;
 const REPO = /^[\w.-]+\/[\w.-]+$/;
 const IDENTIFIER = /^[A-Z][A-Z0-9]*-[0-9]+$/;
-const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
+// Every segment starts alphanumeric, so the last one is safe as `--name` too.
+const BRANCH = /^[A-Za-z0-9][\w.-]*(\/[A-Za-z0-9][\w.-]*)*$/;
 
 const isText = (value: unknown): value is string => typeof value === 'string' && value.trim() !== '';
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -76,7 +77,7 @@ export function loadConfig(path = CONFIG_PATH): RunnerConfig {
   try {
     url = new URL(String(inboxUrl));
   } catch {}
-  if (!url || url.protocol !== 'https:') fail('inboxUrl', 'an https URL');
+  if (!url || url.protocol !== 'https:' || url.search || url.hash) fail('inboxUrl', 'an https URL with no query');
   if (!isText(bearerSecret)) fail('bearerSecret', 'a nonempty string');
   if (!isText(machine)) fail('machine', 'a nonempty string');
   if (!Array.isArray(allowedCreatorIds) || !allowedCreatorIds.length || !allowedCreatorIds.every(isText)) {
@@ -156,10 +157,12 @@ export function launchArgs(config: RunnerConfig, repo: string, model: string, ta
 }
 
 /** Runs `orca`, returning null on success or Orca's error code. */
+// Open, create and its retry stay well inside Cloud Inbox's 10-minute lease.
+// ponytail: a create killed at its timeout may leave a worktree behind; the job still fails.
 async function orca(exec: Exec, args: string[]): Promise<string | null> {
   let stdout: string;
   try {
-    ({ stdout } = await exec('orca', args));
+    ({ stdout } = await exec('orca', args, args[0] === 'open' ? 60_000 : 120_000));
   } catch (error) {
     // Orca prints its JSON error and exits non-zero; no output means it never ran.
     stdout = String((error as { stdout?: unknown }).stdout ?? '');
@@ -194,6 +197,7 @@ export async function handleJob(config: RunnerConfig, deps: Deps, claim: Claim):
     return refuse('task-unreadable', `Couldn't read the issue from Cloud Inbox. Check that Cloud Inbox is connected. ${RETRY}`);
   }
   if (task.delegated !== true) {
+    // Reporting ends the claim; Cloud Inbox clears the delegate only while it's still this app.
     log('undelegated');
     await api.finish(claim, 'failed').catch(() => log('failed-report-failed'));
     return 'undelegated';
@@ -212,7 +216,7 @@ export async function handleJob(config: RunnerConfig, deps: Deps, claim: Claim):
   if (typeof identifier !== 'string' || !IDENTIFIER.test(identifier)) {
     return refuse('bad-identifier', `The issue id isn't a plain Linear id like ABC-123. ${RETRY}`);
   }
-  if (typeof branchName !== 'string' || !BRANCH.test(branchName) || branchName.includes('..') || branchName.endsWith('/')) {
+  if (typeof branchName !== 'string' || branchName.length > 200 || !BRANCH.test(branchName) || branchName.includes('..')) {
     return refuse('bad-branch', `The issue's Linear branch name isn't a plain git branch name. ${RETRY}`);
   }
 
@@ -223,7 +227,13 @@ export async function handleJob(config: RunnerConfig, deps: Deps, claim: Claim):
   if (code === 'runtime_unavailable') {
     return refuse('orca-unavailable', `Orca isn't running on ${config.machine}. Open Orca and delegate again to retry.`);
   }
-  if (code) return refuse(`orca-${code}`, `Orca couldn't start the agent (\`${code}\`). ${RETRY}`);
+  if (code === 'orca_not_found') {
+    return refuse('orca-not-found', `The Runner can't find the \`orca\` command on ${config.machine}. Put Orca's CLI on its PATH. ${RETRY}`);
+  }
+  if (code === 'repo_not_found') {
+    return refuse('orca-repo_not_found', `Orca doesn't know ${issue.repo}'s checkout on ${config.machine}. Add it in Orca, or fix its path in the Runner config. ${RETRY}`);
+  }
+  if (code) return refuse(`orca-${code}`, `Orca couldn't start the agent (\`${code}\`). Check Orca on ${config.machine}. ${RETRY}`);
 
   log('launched');
   await api.update(claim, 'thought', `Started ${issue.model} in Orca on \`${branchName}\`.`).catch(() => log('thought-failed'));
@@ -250,8 +260,7 @@ if (import.meta.main) {
   const run = promisify(execFile);
   const deps: Deps = {
     fetch,
-    // Launch must finish well inside Cloud Inbox's 10-minute lease.
-    exec: (file, args) => run(file, args, { timeout: 180_000, maxBuffer: 4 * 1024 * 1024 }),
+    exec: (file, args, timeout) => run(file, args, { timeout, maxBuffer: 4 * 1024 * 1024 }),
     log: (fields) => console.log(JSON.stringify(fields)),
   };
   deps.log({ event: 'start', outcome: 'ok' });
