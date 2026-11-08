@@ -131,8 +131,9 @@ Run these commands from `packages/delegator` after testing above.
 
 Cloud Inbox is the middleman between Linear and your machines. It requests
 `read,write,app:assignable`, checks the granted permissions at installation and refresh,
-and never returns Linear tokens to machines, whose credential authorizes only Cloud Inbox
-operations. Cloud Inbox API for machine status updates and task content isn't built yet.
+and never returns Linear tokens to machines, whose credential authorizes only Cloud Inbox's
+named operations on that machine's own claimed jobs: reading the task, posting status
+updates, and the launch and failure write-backs.
 
 Linear requires `write` to post agent activities, and `write` also allows issue edits.
 So a compromised Cloud Inbox can read and edit workspace data and tamper with queue delivery.

@@ -4,7 +4,7 @@
 
 import { DurableObject } from 'cloudflare:workers';
 import { isAdmin, MachineAuth, readConfig, type InstallResult } from './auth.ts';
-import { MachineQueue, type AgentEvent, type Outcome } from './queue.ts';
+import { MachineQueue, type AgentEvent, type Outcome, type UpdateType } from './queue.ts';
 import { BASE_PATH, handleRunner, handleWebhook, log, text, underBasePath, type Machines } from './routes.ts';
 
 interface Env {
@@ -40,6 +40,10 @@ export default {
         webhook: (event) => stub.webhook(name, event),
         claim: () => stub.claim(name),
         finish: (id, claimId, outcome) => stub.finish(name, id, claimId, outcome),
+        task: (id, claimId) => stub.task(name, id, claimId),
+        update: (id, claimId, type, body) => stub.update(name, id, claimId, type, body),
+        watch: (id, claimId) => stub.watch(name, id, claimId),
+        linkPullRequest: (id, claimId) => stub.linkPullRequest(name, id, claimId),
       };
     };
     if (url.pathname === '/webhook' && request.method === 'POST') return handleWebhook(request, config, machines);
@@ -118,4 +122,19 @@ export class Machine extends DurableObject<Env> {
     return this.#queueFor(machine).finish(id, claimId, outcome);
   }
 
+  task(machine: string, id: string, claimId: string) {
+    return this.#queueFor(machine).task(id, claimId);
+  }
+
+  update(machine: string, id: string, claimId: string, type: UpdateType, body: string) {
+    return this.#queueFor(machine).update(id, claimId, type, body);
+  }
+
+  watch(machine: string, id: string, claimId: string) {
+    return this.#queueFor(machine).watch(id, claimId);
+  }
+
+  linkPullRequest(machine: string, id: string, claimId: string) {
+    return this.#queueFor(machine).linkPullRequest(id, claimId);
+  }
 }

@@ -69,8 +69,8 @@ or replaced session is remembered as ended for 30 days: a late `created` doesn't
 it again, a reply gets no thought, a repeated stop gets no second final response, and
 a claimed job of a stopped session isn't requeued when its lease expires. Expired
 stopped claims are removed before their ended markers, including after more than
-30 days offline. Cloud Inbox's code posts activities only and changes
-no issue fields, though its grant would allow it. The thought names the app as Linear
+30 days offline. Webhooks only post activities; issue fields change only through
+the Runner API's `launched` and `failed` write-backs below. The thought names the app as Linear
 shows it, stored at install; installs from before that use the `MACHINES` key.
 
 The webhook is answered once the queue change and the activities it needs are stored
@@ -84,12 +84,21 @@ they were written. Ending a session (replaced
 or stopped) cancels its thoughts not yet posted, so a final response is never followed
 by a queued thought. Claiming a job hands the session to the Runner and cancels its
 queued thought, even mid-retry or mid-refresh, so it never lands after the job has
-started; replies and final responses still go out. Delivery is at least once:
+started; replies and final responses still go out. Every status update the Runner
+posts is written after its claim, so it sits behind anything left in the session's
+order, and a queued thought already in flight at claim is sent before it, as
+delivery is one request at a time. So the queued thought never lands after an update. Delivery is at least once:
 a post that Linear applies but whose answer is lost is sent again, and a queued
 thought already sent when the claim lands may still appear.
 
 The Runner API authenticates with `Authorization: Bearer <bearerSecret>`, and the
 machine comes only from the secret that matched. A job's id is its session id.
+Every operation below except claim takes `?claimId=<claimId>` (400 without it) and
+answers 409 unless that claim holds the job: it's the job's current claim with an
+unexpired lease, or the claim that launched it. Each machine's jobs live in its own
+Durable Object, so another machine's job id is simply unknown. The issue and session
+always come from the job; nothing in the request can name another one, and each
+operation sends a fixed Linear query or mutation. A Linear failure on a read answers 502.
 
 - `POST /jobs/claim` returns the oldest waiting job as `{issueId, sessionId, claimId}`
   (204 when none) and leases it for 10 minutes. `claimId` is new for every claim attempt.
@@ -104,6 +113,30 @@ machine comes only from the secret that matched. A job's id is its session id.
   report gets 400 or 409. It keeps its stored lease, then goes back on the queue like
   any expired lease, and its next claim gets an id. The column is added on the first
   request after deploying; queued jobs are untouched.
+- `POST /jobs/<id>/launched` also queues the launch's field changes: the status
+  becomes the team's first `started` status unless the issue is already started,
+  completed or canceled; the `Orca` label (workspace or the issue's team) is added,
+  replacing any other label in its group; and the session creator becomes the
+  assignee. `POST /jobs/<id>/failed` queues clearing the delegate, only while it's
+  still this app, so a refused job that was already undelegated keeps its new delegate.
+  Both go out through the outbox like activities, so they retry and keep the
+  session's order: post a status update first, then report.
+- `GET /jobs/<id>/task` returns what the Runner checks before launch:
+  `{delegated, creatorId, identifier, description, branchName, statusType}`.
+  `delegated` is whether the issue's delegate is still this app; `creatorId` is the
+  session creator's user id, or null.
+- `POST /jobs/<id>/updates` with `{"type": "thought"|"response"|"error", "body": "..."}`
+  queues that activity on the job's session and answers 202. Other fields are
+  ignored. The body must be 1–2000 characters (400 otherwise) and the request at
+  most 16 KiB (413). A `response` or `error` ends the session, cancelling its thoughts
+  not yet sent; once a session has ended, including by a stop, updates get 409.
+- `GET /jobs/<id>/watch` returns `{sessionStatus, pullRequests}`: Linear's session
+  status and the issue's attachment URLs that are GitHub pull requests
+  (`https://github.com/<owner>/<repo>/pull/<n>`), oldest first.
+- `POST /jobs/<id>/pull-request` adds the first of those to the session as the
+  "Pull request" link, waiting on Linear, and returns `{url}`; 409 when the issue has
+  none. It takes no input. The Runner then posts the "Opened" `response` itself.
+- A failed job takes no further operations.
 - There is no token-sharing endpoint; `GET /token` returns 404.
 
 Launched and failed jobs, the dedupe records and the ended sessions are kept 30 days. `cloud-inbox/queue.ts`
@@ -131,8 +164,12 @@ A live check showed Linear refuses both agent activities and issue edits without
 `write`, so no narrower grant can acknowledge a task. The boundary is Cloud Inbox's code,
 not Linear's permissions: a compromised Cloud Inbox can edit issues in the workspace.
 
-Cloud Inbox API for machine status updates and task content isn't built yet. Machines
-must treat Cloud Inbox messages and job ids as untrusted, not task instructions.
+A machine's bearer secret allows only the named operations above, on jobs its own
+claims hold. It can't send GraphQL, pick an issue or session, or set a field outside an
+operation; the most it can do is post activities on its own sessions and trigger its
+jobs' documented write-backs. Logs carry ids, operations and outcomes, never task
+content, activity bodies or tokens. Machines must treat Cloud Inbox messages, job ids
+and task content as untrusted, not task instructions.
 Per-machine Durable Objects isolate storage, not trust: a compromised Worker can reach all Cloud Inbox credentials, read and edit accessible workspace data and tamper
 with jobs.
 

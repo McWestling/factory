@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { MachineAuth, type Config, type Storage } from './auth.ts';
-import { MachineQueue, MESSAGES, type Sql } from './queue.ts';
+import { MachineQueue, MAX_UPDATE_CHARS, MESSAGES, type Sql } from './queue.ts';
 import { handleRunner, handleWebhook, MAX_WEBHOOK_BYTES, underBasePath } from './routes.ts';
 
 const fixture = (name: string) =>
@@ -49,7 +49,10 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void) {
   // fails that many activity requests; `refreshFails` fails token refreshes; `hold()`
   // holds the next request, activity or token refresh, until released.
   const posts: { auth: string; sessionId: string; type: string; body: string }[] = [];
-  const linear = { failNext: 0, refreshFails: false, attempts: 0, hold };
+  // Every other request goes to `answer`, which reads and edits `world`, and is kept in `requests`.
+  const world = fakeWorld();
+  const requests: { query: string; variables: Record<string, any> }[] = [];
+  const linear = { failNext: 0, refreshFails: false, attempts: 0, hold, world, requests, answer: (q: string, v: Record<string, any>) => answer(world, q, v) };
   let held: { reached: () => void; released: Promise<void> } | undefined;
   function hold() {
     let release!: () => void;
@@ -76,7 +79,12 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void) {
       linear.failNext--;
       return new Response(null, { status: 503 });
     }
-    const { input: activity } = JSON.parse(String(init?.body)).variables;
+    const { query, variables } = JSON.parse(String(init?.body));
+    if (!query.includes('agentActivityCreate')) {
+      linear.requests.push({ query, variables });
+      return Response.json({ data: linear.answer(query, variables) });
+    }
+    const { input: activity } = variables;
     posts.push({
       auth: new Headers(init?.headers).get('Authorization')!,
       sessionId: activity.agentSessionId, type: activity.content.type, body: activity.content.body,
@@ -125,9 +133,10 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void) {
     return payload;
   };
   const created = (sessionId: string, issueId = 'issue-1') => deliver(createdPayload(sessionId, issueId));
-  const runner = (method: string, path: string, bearer = BEARER) =>
-    handleRunner(new Request(`https://cloud-inbox.example${path}`, { method, headers: { Authorization: `Bearer ${bearer}` } }),
-      config, () => queue);
+  const runner = (method: string, path: string, bearer = BEARER, body?: unknown) =>
+    handleRunner(new Request(`https://cloud-inbox.example${path}`, {
+      method, headers: { Authorization: `Bearer ${bearer}` }, body: body === undefined ? undefined : JSON.stringify(body),
+    }), config, () => queue);
   /** Claims a job, returning everything the runner receives. */
   const claimed = async () => {
     const res = await runner('POST', '/jobs/claim');
@@ -149,6 +158,75 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void) {
 }
 
 const signed = (body: string) => createHmac('sha256', WEBHOOK_SECRET).update(body).digest('hex');
+
+/** The slice of a Linear workspace the Runner API reads and edits. */
+function fakeWorld() {
+  const issue = (identifier: string) => ({
+    identifier, description: `Task for ${identifier}`, branchName: `abc-${identifier.split('-')[1]}`,
+    stateId: 'state-todo', delegateId: 'app-user-example' as string | null, assigneeId: 'someone-else' as string | null,
+    labelIds: ['label-claude', 'label-factory'], attachments: [] as string[], title: identifier,
+  });
+  return {
+    issues: { 'issue-1': issue('ABC-1'), 'issue-2': issue('ABC-2') } as Record<string, ReturnType<typeof issue>>,
+    sessions: {} as Record<string, { creatorId: string | null; status: string; links: string[] }>,
+    states: [
+      { id: 'state-todo', type: 'unstarted', position: 1 },
+      { id: 'state-review', type: 'started', position: 3 },
+      { id: 'state-progress', type: 'started', position: 2 },
+      { id: 'state-done', type: 'completed', position: 4 },
+    ],
+    labels: [
+      { id: 'label-orca', name: 'Orca', team: null, parent: { id: 'group-dispatch' } },
+      { id: 'label-orca-other-team', name: 'Orca', team: { id: 'team-other' }, parent: null },
+      { id: 'label-claude', name: 'Claude', team: null, parent: { id: 'group-dispatch' } },
+      { id: 'label-factory', name: 'Factory', team: null, parent: null },
+    ],
+  };
+}
+type World = ReturnType<typeof fakeWorld>;
+
+function answer(world: World, query: string, variables: Record<string, any>) {
+  const issue = world.issues[variables.issue]!;
+  const session = (world.sessions[variables.session] ??= { creatorId: 'user-creator', status: 'active', links: [] });
+  const state = () => world.states.find((s) => s.id === issue.stateId)!;
+  if (query.includes('issueUpdate')) {
+    const { stateId, assigneeId, delegateId, addedLabelIds = [], removedLabelIds = [], ...other } = variables.input;
+    assert.deepEqual(other, {}, 'an unexpected field was set');
+    if (stateId !== undefined) issue.stateId = stateId;
+    if (assigneeId !== undefined) issue.assigneeId = assigneeId;
+    if (delegateId !== undefined) issue.delegateId = delegateId;
+    issue.labelIds = [...issue.labelIds.filter((id) => !removedLabelIds.includes(id)), ...addedLabelIds];
+    return { issueUpdate: { success: true } };
+  }
+  if (query.includes('agentSessionUpdate')) {
+    session.links.push(variables.url);
+    return { agentSessionUpdate: { success: true } };
+  }
+  const creator = session.creatorId && { id: session.creatorId };
+  if (query.includes('issueLabels')) {
+    return {
+      issue: {
+        state: { type: state().type },
+        team: { id: 'team-1', states: { nodes: world.states.filter((s) => s.type === 'started') } },
+        labels: { nodes: issue.labelIds.map((id) => world.labels.find((l) => l.id === id)!) },
+      },
+      agentSession: { creator },
+      issueLabels: { nodes: world.labels.filter((l) => l.name === 'Orca') },
+    };
+  }
+  if (query.includes('branchName')) {
+    const { identifier, description, branchName, delegateId } = issue;
+    return {
+      issue: { identifier, description, branchName, state: { type: state().type }, delegate: delegateId && { id: delegateId } },
+      agentSession: { creator },
+    };
+  }
+  if (query.includes('attachments')) {
+    return { issue: { attachments: { nodes: issue.attachments.map((url) => ({ url })) } }, agentSession: { status: session.status } };
+  }
+  assert.match(query, /delegate/);
+  return { issue: { delegate: issue.delegateId && { id: issue.delegateId } } };
+}
 
 test('a created webhook queues the job and posts the queued thought', async () => {
   const { created, posts, rows } = setup();
@@ -481,7 +559,8 @@ test('a failed queued thought is not retried once the runner claims and fails th
   await flush();
   assert.deepEqual(sent(posts), [['session-1', 'error', 'Launch failed.']]);
   assert.deepEqual(rows().outbox, []);
-  assert.equal(linear.attempts, 1);
+  // The failed thought, then the failure's delegate read and clear.
+  assert.equal(linear.attempts, 3);
 });
 
 test('a claim during the token refresh cancels the queued thought before it is sent', async () => {
@@ -731,4 +810,266 @@ test('the alarm alone expires an activity failing for 30 days, logs it, and free
   assert.equal(linear.attempts, 2);
   assert.deepEqual(rows().outbox, []);
   assert.deepEqual(rows().jobs, [{ id: 'session-1', issue_id: 'issue-1', state: 'queued' }]);
+});
+
+// The Runner API's named operations on a claimed job.
+
+type Harness = ReturnType<typeof setup>;
+const OPERATIONS: [method: string, op: string, body?: unknown][] = [
+  ['GET', 'task'], ['GET', 'watch'], ['POST', 'updates', { type: 'thought', body: 'Working.' }],
+  ['POST', 'pull-request'], ['POST', 'launched'], ['POST', 'failed'],
+];
+/** Calls an operation on a job with a claim id. */
+const call = (h: Harness, method: string, op: string, claimId: string | undefined, body?: unknown, session = 'session-1', bearer = BEARER) =>
+  h.runner(method, `/jobs/${session}/${op}?claimId=${claimId}`, bearer, body);
+const update = (h: Harness, claimId: string | undefined, type: string, body: string, session = 'session-1') =>
+  call(h, 'POST', 'updates', claimId, { type, body }, session);
+/** A harness with session-1 (issue-1) claimed, its queued thought already sent. */
+async function claimedJob() {
+  const h = setup();
+  await h.created('session-1');
+  const claim = await h.claimed();
+  h.posts.length = 0;
+  h.linear.requests.length = 0;
+  return { ...h, claimId: claim!.claimId };
+}
+
+for (const [method, op, body] of OPERATIONS) {
+  test(`${method} ${op} needs the bearer secret, a claim id and a current claim by this machine`, async () => {
+    const h = await claimedJob();
+    assert.equal((await call(h, method, op, h.claimId, body, 'session-1', 'x'.repeat(32))).status, 401);
+    assert.equal((await h.runner(method, `/jobs/session-1/${op}`, BEARER, body)).status, 400);
+    assert.equal((await call(h, method, op, 'not-the-claim', body)).status, 409);
+    // Another machine's bearer secret reaches only that machine's queue, where this job doesn't exist.
+    const other = setup();
+    const res = await handleRunner(new Request(`https://cloud-inbox.example/jobs/session-1/${op}?claimId=${h.claimId}`, {
+      method, headers: { Authorization: `Bearer ${'o'.repeat(32)}` }, body: body === undefined ? undefined : JSON.stringify(body),
+    }), config, (name) => (name === 'other-machine' ? other.machines() : h.machines()));
+    assert.equal(res.status, 409);
+    // An unclaimed job, and a claim past its lease, are refused too.
+    await h.created('session-2', 'issue-2');
+    assert.equal((await call(h, method, op, h.claimId, body, 'session-2')).status, 409);
+    h.clock.now += LEASE_MS;
+    assert.equal((await call(h, method, op, h.claimId, body)).status, 409);
+    await h.flush();
+    assert.deepEqual(sent(h.posts), [['session-2', 'thought', QUEUED]]); // From session-2's own delegation.
+    assert.deepEqual(h.linear.requests, []);
+  });
+}
+
+test('task returns what the Runner checks, read from the job and never from the request', async () => {
+  const h = await claimedJob();
+  const res = await h.runner('GET', `/jobs/session-1/task?claimId=${h.claimId}&issueId=issue-2&sessionId=session-2`);
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), {
+    delegated: true, creatorId: 'user-creator', identifier: 'ABC-1', description: 'Task for ABC-1',
+    branchName: 'abc-1', statusType: 'unstarted',
+  });
+  assert.deepEqual(h.linear.requests.map((r) => r.variables), [{ issue: 'issue-1', session: 'session-1' }]);
+
+  h.linear.world.issues['issue-1']!.delegateId = 'someone-else';
+  h.linear.world.sessions['session-1']!.creatorId = null;
+  const task = await (await call(h, 'GET', 'task', h.claimId)).json();
+  assert.equal(task.delegated, false);
+  assert.equal(task.creatorId, null);
+});
+
+test('task and watch answer 502 when Linear fails', async () => {
+  const h = await claimedJob();
+  h.linear.failNext = 2;
+  assert.equal((await call(h, 'GET', 'task', h.claimId)).status, 502);
+  assert.equal((await call(h, 'GET', 'watch', h.claimId)).status, 502);
+});
+
+test('a status update posts only its type and body, on the job session', async () => {
+  const h = await claimedJob();
+  const res = await call(h, 'POST', 'updates', h.claimId,
+    { type: 'thought', body: 'Started.', agentSessionId: 'session-2', sessionId: 'session-2', content: { type: 'action' } });
+  assert.equal(res.status, 202);
+  await h.flush();
+  assert.deepEqual(sent(h.posts), [['session-1', 'thought', 'Started.']]);
+});
+
+for (const [label, body, status] of [
+  ['another activity type', { type: 'action', body: 'x' }, 400],
+  ['an empty body', { type: 'thought', body: '  ' }, 400],
+  ['a body over the limit', { type: 'thought', body: 'x'.repeat(MAX_UPDATE_CHARS + 1) }, 400],
+  ['a non-string body', { type: 'thought', body: { text: 'x' } }, 400],
+  ['a request over 16 KiB', { type: 'thought', body: 'x'.repeat(17 * 1024) }, 413],
+] as const) {
+  test(`a status update with ${label} gets ${status} and posts nothing`, async () => {
+    const h = await claimedJob();
+    assert.equal((await call(h, 'POST', 'updates', h.claimId, body)).status, status);
+    await h.flush();
+    assert.deepEqual(h.posts, []);
+  });
+}
+
+test('a status update at the limit is accepted', async () => {
+  const h = await claimedJob();
+  assert.equal((await update(h, h.claimId, 'thought', 'x'.repeat(MAX_UPDATE_CHARS))).status, 202);
+});
+
+test('status updates retry through the outbox and keep per-session order', async () => {
+  const h = await claimedJob();
+  h.linear.failNext = 1;
+  await update(h, h.claimId, 'thought', 'First.');
+  await update(h, h.claimId, 'thought', 'Second.');
+  await h.flush();
+  assert.deepEqual(h.posts, []); // Second waits behind First.
+  h.rebuild(); // And both survive a restart.
+  h.clock.now += 10_000;
+  await h.flush();
+  assert.deepEqual(sent(h.posts), [['session-1', 'thought', 'First.'], ['session-1', 'thought', 'Second.']]);
+});
+
+test("a queued thought still pending at claim never lands after the Runner's update", async () => {
+  const h = setup();
+  h.linear.failNext = 1;
+  await h.created('session-1');
+  const { claimId } = (await h.claimed())!;
+  await update(h, claimId, 'thought', 'Started.');
+  h.clock.now += 10_000;
+  await h.flush();
+  assert.deepEqual(sent(h.posts), [['session-1', 'thought', 'Started.']]);
+});
+
+test("a queued thought in flight at claim lands before the Runner's update", async () => {
+  const h = setup();
+  await h.send(h.createdPayload('session-1'));
+  const { waiting, release } = h.linear.hold();
+  const delivering = h.flush();
+  await waiting; // Linear holds the queued thought.
+  const { claimId } = await (await h.runner('POST', '/jobs/claim')).json();
+  await update(h, claimId, 'thought', 'Started.');
+  release();
+  await delivering;
+  assert.deepEqual(sent(h.posts), [['session-1', 'thought', QUEUED], ['session-1', 'thought', 'Started.']]);
+});
+
+for (const type of ['response', 'error']) {
+  test(`a ${type} ends the session, so later updates are refused`, async () => {
+    const h = await claimedJob();
+    assert.equal((await update(h, h.claimId, type, 'Done.')).status, 202);
+    assert.equal((await update(h, h.claimId, 'thought', 'Late.')).status, 409);
+    await h.flush();
+    assert.deepEqual(sent(h.posts), [['session-1', type, 'Done.']]);
+  });
+}
+
+test('a stopped session refuses status updates', async () => {
+  const h = await claimedJob();
+  await h.deliver(h.stoppedPayload('session-1'));
+  assert.equal((await update(h, h.claimId, 'thought', 'Started.')).status, 409);
+});
+
+test('a launched job still takes updates and watch calls from the claim that launched it', async () => {
+  const h = await claimedJob();
+  assert.equal((await call(h, 'POST', 'launched', h.claimId)).status, 204);
+  h.clock.now += 2 * LEASE_MS;
+  assert.equal((await call(h, 'GET', 'watch', h.claimId)).status, 200);
+  assert.equal((await update(h, h.claimId, 'response', 'Opened.')).status, 202);
+  assert.equal((await update(h, 'another-claim', 'response', 'Opened.')).status, 409);
+});
+
+test('a failed job takes no more operations', async () => {
+  const h = await claimedJob();
+  assert.equal((await call(h, 'POST', 'failed', h.claimId)).status, 204);
+  assert.equal((await update(h, h.claimId, 'error', 'Late.')).status, 409);
+  assert.equal((await call(h, 'GET', 'task', h.claimId)).status, 409);
+});
+
+test('launched sets In Progress, the Orca label and the creator as assignee, and nothing else', async () => {
+  const h = await claimedJob();
+  const before = structuredClone(h.linear.world.issues['issue-1']!);
+  await update(h, h.claimId, 'thought', 'Started.');
+  await call(h, 'POST', 'launched', h.claimId);
+  await h.flush();
+  assert.deepEqual(h.linear.world.issues['issue-1'], {
+    ...before, stateId: 'state-progress', assigneeId: 'user-creator', labelIds: ['label-factory', 'label-orca'],
+  });
+  assert.deepEqual(h.linear.world.issues['issue-2'], fakeWorld().issues['issue-2']);
+  assert.deepEqual(sent(h.posts), [['session-1', 'thought', 'Started.']]);
+  // The thought went before the write-back.
+  assert.equal(h.linear.requests.filter((r) => r.query.includes('issueUpdate')).length, 1);
+});
+
+for (const [label, stateId] of [['already started', 'state-review'], ['done', 'state-done']]) {
+  test(`launched keeps the status of an issue ${label}`, async () => {
+    const h = await claimedJob();
+    h.linear.world.issues['issue-1']!.stateId = stateId!;
+    await call(h, 'POST', 'launched', h.claimId);
+    await h.flush();
+    assert.equal(h.linear.world.issues['issue-1']!.stateId, stateId);
+    assert.equal(h.linear.world.issues['issue-1']!.assigneeId, 'user-creator');
+  });
+}
+
+test("launched's write-back retries until Linear accepts it", async () => {
+  const h = await claimedJob();
+  h.linear.failNext = 1;
+  await call(h, 'POST', 'launched', h.claimId);
+  await h.flush();
+  assert.equal(h.linear.world.issues['issue-1']!.stateId, 'state-todo');
+  h.clock.now += 10_000;
+  await h.flush();
+  assert.equal(h.linear.world.issues['issue-1']!.stateId, 'state-progress');
+  assert.deepEqual(h.rows().outbox, []);
+});
+
+test('failed clears the delegate and nothing else', async () => {
+  const h = await claimedJob();
+  const before = structuredClone(h.linear.world.issues['issue-1']!);
+  await update(h, h.claimId, 'error', 'Repo not allowed. Fix it and delegate again to retry.');
+  await call(h, 'POST', 'failed', h.claimId);
+  await h.flush();
+  assert.deepEqual(h.linear.world.issues['issue-1'], { ...before, delegateId: null });
+  assert.deepEqual(sent(h.posts), [['session-1', 'error', 'Repo not allowed. Fix it and delegate again to retry.']]);
+});
+
+test("failed leaves a delegate that isn't this app", async () => {
+  const h = await claimedJob();
+  h.linear.world.issues['issue-1']!.delegateId = 'another-app';
+  await call(h, 'POST', 'failed', h.claimId);
+  await h.flush();
+  assert.equal(h.linear.world.issues['issue-1']!.delegateId, 'another-app');
+  assert.equal(h.linear.requests.filter((r) => r.query.includes('issueUpdate')).length, 0);
+  assert.deepEqual(h.rows().outbox, []);
+});
+
+test('watch returns the session status and only GitHub pull request links', async () => {
+  const h = await claimedJob();
+  h.linear.world.issues['issue-1']!.attachments = [
+    'https://example.com/doc', 'https://github.com/owner/repo/issues/3', 'https://github.com/owner/repo/pull/7',
+    'https://github.com/owner/repo/pull/8/files', 'https://github.com.evil.example/owner/repo/pull/9',
+  ];
+  h.linear.world.sessions['session-1'] = { creatorId: 'user-creator', status: 'complete', links: [] };
+  const res = await h.runner('GET', `/jobs/session-1/watch?claimId=${h.claimId}&issueId=issue-2`);
+  assert.deepEqual(await res.json(), {
+    sessionStatus: 'complete',
+    pullRequests: ['https://github.com/owner/repo/pull/7', 'https://github.com/owner/repo/pull/8/files'],
+  });
+  assert.deepEqual(h.linear.requests.map((r) => r.variables), [{ issue: 'issue-1', session: 'session-1' }]);
+});
+
+test("pull-request links the issue's first pull request on the job session, and 409 without one", async () => {
+  const h = await claimedJob();
+  assert.equal((await call(h, 'POST', 'pull-request', h.claimId)).status, 409);
+  h.linear.world.issues['issue-1']!.attachments = ['https://github.com/owner/repo/pull/7', 'https://github.com/owner/repo/pull/8'];
+  const res = await call(h, 'POST', 'pull-request', h.claimId, { url: 'https://evil.example', session: 'session-2' });
+  assert.deepEqual(await res.json(), { url: 'https://github.com/owner/repo/pull/7' });
+  assert.deepEqual(h.linear.world.sessions['session-1']!.links, ['https://github.com/owner/repo/pull/7']);
+  assert.deepEqual(h.linear.requests.at(-1)!.variables, { session: 'session-1', url: 'https://github.com/owner/repo/pull/7' });
+});
+
+test('Runner operations never log task content, activity bodies or tokens', async (t) => {
+  const logged = t.mock.method(console, 'log', () => {});
+  const h = await claimedJob();
+  await call(h, 'GET', 'task', h.claimId);
+  await update(h, h.claimId, 'thought', 'secret-body');
+  h.linear.failNext = 1;
+  await h.flush();
+  const output = logged.mock.calls.map((c) => String(c.arguments[0])).join('\n');
+  assert.doesNotMatch(output, /Task for|secret-body|access-example|bbbbbbbb/);
+  assert.match(output, /"event":"task"/);
 });
