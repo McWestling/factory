@@ -3,15 +3,17 @@
 // It holds no Linear credential. Everything Cloud Inbox sends is untrusted input.
 
 import { execFile } from 'node:child_process';
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
 import type { Claim } from '../job.ts';
 import { parseIssue } from '../parse-issue.ts';
 
 export const CONFIG_PATH = join(homedir(), '.config', 'factory-delegator', 'config.json');
 const POLL_MS = 15_000;
+/** Cloud Inbox's history window: a session not reclaimed by then never will be. */
+const LAUNCH_KEEP_MS = 30 * 24 * 60 * 60_000;
 const RETRY = 'Fix it and delegate again to retry.';
 export const NOT_ALLOWED = "This machine doesn't accept dispatches from you.";
 
@@ -39,7 +41,13 @@ export type Task = {
 };
 
 export type Exec = (file: string, args: string[], timeoutMs: number) => Promise<{ stdout: string }>;
-export type Deps = { fetch: typeof fetch; exec: Exec; log: (fields: Record<string, string>) => void };
+export type Deps = {
+  fetch: typeof fetch;
+  exec: Exec;
+  log: (fields: Record<string, string>) => void;
+  /** File of sessions launched but not yet confirmed by Cloud Inbox: session id → launch time. */
+  launches: string;
+};
 
 // Flag-like or shell-like values never reach argv, even though there's no shell.
 const ARG = /^[\w.:]+[\w.:-]*$/;
@@ -132,7 +140,11 @@ function inbox(config: RunnerConfig, deps: Deps) {
       if (!isText(claim.issueId) || !isText(claim.sessionId) || !isText(claim.claimId)) throw new Error('cloud-inbox-claim');
       return claim as Claim;
     },
-    task: async (claim: Claim) => await (await call('GET', job(claim, 'task'))).json() as Partial<Task>,
+    async task(claim: Claim): Promise<Partial<Task>> {
+      const task: unknown = await (await call('GET', job(claim, 'task'))).json();
+      if (!isObject(task)) throw new Error('cloud-inbox-task');
+      return task as Partial<Task>;
+    },
     update: (claim: Claim, type: 'thought' | 'error', body: string) => call('POST', job(claim, 'updates'), { type, body }),
     finish: (claim: Claim, outcome: 'launched' | 'failed') => call('POST', job(claim, outcome)),
   };
@@ -178,6 +190,48 @@ async function orca(exec: Exec, args: string[]): Promise<string | null> {
   }
 }
 
+// A launch whose report is lost leaves the job claimed until its lease expires, when Cloud
+// Inbox hands the same session out again under a new claim. Recording the launch before any
+// report lets that reclaim, even after a restart, report it instead of launching twice.
+function readLaunches(path: string): Record<string, number> {
+  try {
+    const launches: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    return isObject(launches) ? launches as Record<string, number> : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeLaunches(path: string, change: (launches: Record<string, number>) => void) {
+  const launches = readLaunches(path);
+  change(launches);
+  for (const [session, at] of Object.entries(launches)) {
+    if (!(at > Date.now() - LAUNCH_KEEP_MS)) delete launches[session];
+  }
+  // Renamed into place, so a crash mid-write never leaves half a file.
+  writeFileSync(`${path}.tmp`, JSON.stringify(launches), { mode: 0o600 });
+  renameSync(`${path}.tmp`, path);
+}
+
+/** A record that can't be written only loses recovery, so it's logged, not thrown. */
+function record(deps: Deps, log: (outcome: string) => void, change: (launches: Record<string, number>) => void) {
+  try {
+    writeLaunches(deps.launches, change);
+  } catch {
+    log('launch-record-failed');
+  }
+}
+
+/** Reports a recorded launch, forgetting it once Cloud Inbox has it. */
+async function reportLaunch(api: ReturnType<typeof inbox>, deps: Deps, claim: Claim, log: (outcome: string) => void) {
+  if (await api.finish(claim, 'launched').then(() => true, () => false)) {
+    record(deps, log, (launches) => delete launches[claim.sessionId]);
+  } else {
+    log('launched-report-failed');
+  }
+  return 'launched';
+}
+
 /** Checks one claimed job, launches it if it passes, and reports the outcome. */
 export async function handleJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<string> {
   const api = inbox(config, deps);
@@ -189,6 +243,12 @@ export async function handleJob(config: RunnerConfig, deps: Deps, claim: Claim):
     await api.finish(claim, 'failed').catch(() => log('failed-report-failed'));
     return outcome;
   };
+
+  if (readLaunches(deps.launches)[claim.sessionId]) {
+    // Launched under an earlier claim whose report was lost: the agent is already running.
+    log('launch-recovered');
+    return reportLaunch(api, deps, claim, log);
+  }
 
   let task: Partial<Task>;
   try {
@@ -235,10 +295,10 @@ export async function handleJob(config: RunnerConfig, deps: Deps, claim: Claim):
   }
   if (code) return refuse(`orca-${code}`, `Orca couldn't start the agent (\`${code}\`). Check Orca on ${config.machine}. ${RETRY}`);
 
+  record(deps, log, (launches) => { launches[claim.sessionId] = Date.now(); });
   log('launched');
   await api.update(claim, 'thought', `Started ${issue.model} in Orca on \`${branchName}\`.`).catch(() => log('thought-failed'));
-  await api.finish(claim, 'launched').catch(() => log('launched-report-failed'));
-  return 'launched';
+  return reportLaunch(api, deps, claim, log);
 }
 
 /** One poll: claims a job and handles it. Returns whether there was one. */
@@ -262,6 +322,7 @@ if (import.meta.main) {
     fetch,
     exec: (file, args, timeout) => run(file, args, { timeout, maxBuffer: 4 * 1024 * 1024 }),
     log: (fields) => console.log(JSON.stringify(fields)),
+    launches: join(dirname(CONFIG_PATH), 'launches.json'),
   };
   deps.log({ event: 'start', outcome: 'ok' });
   for (;;) {

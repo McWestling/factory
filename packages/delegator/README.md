@@ -148,7 +148,11 @@ its config. Otherwise it runs `orca open --json` and the documented
 `orca worktree create`, retrying once if Orca's runtime is unavailable, then posts
 "Started …" and reports `launched`; Cloud Inbox sets the status, `Orca` label and
 assignee. Any failure posts one `error` and reports `failed`, which clears the delegate.
-It never requeues. It logs ids and outcomes only. Running it in the background and
+It never requeues. A launch is recorded in `launches.json` beside the config before
+it's reported, so if the report is lost, Cloud Inbox hands the session back after its
+10-minute lease and the Runner, even restarted, reports `launched` without starting Orca
+again. A Runner killed while `orca worktree create` runs has no record, so the retry fails
+on the existing worktree. It logs ids and outcomes only. Running it in the background and
 watching for the PR are not built yet.
 
 ## Security

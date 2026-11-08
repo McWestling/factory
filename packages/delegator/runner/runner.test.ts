@@ -3,7 +3,11 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import type { MachineAuth } from '../cloud-inbox/auth.ts';
+import { MachineQueue } from '../cloud-inbox/queue.ts';
+import { handleRunner } from '../cloud-inbox/routes.ts';
 import { handleJob, launchArgs, loadConfig, NOT_ALLOWED, poll, type Deps, type RunnerConfig, type Task } from './runner.ts';
 
 const example = new URL('../config.example.json', import.meta.url);
@@ -34,7 +38,7 @@ const ok = JSON.stringify({ ok: true, result: {} });
 const orcaError = (code: string) => Object.assign(new Error('exit 1'), { stdout: JSON.stringify({ ok: false, error: { code } }) });
 
 /** A fake Cloud Inbox and Orca, recording every call. */
-function fakes(task: Partial<Task> = goodTask, orca: (string | Error)[] = [ok, ok]) {
+function fakes(task: Partial<Task> | null = goodTask, orca: (string | Error)[] = [ok, ok]) {
   const requests: string[] = [];
   const updates: [string, string][] = [];
   const argv: string[][] = [];
@@ -62,6 +66,7 @@ function fakes(task: Partial<Task> = goodTask, orca: (string | Error)[] = [ok, o
       return { stdout: next };
     },
     log() {},
+    launches: join(mkdtempSync(join(tmpdir(), 'runner-state-')), 'launches.json'),
   };
   return { deps, requests, updates, argv };
 }
@@ -172,6 +177,86 @@ test('an unreadable task is refused', async () => {
   assert.equal(await handleJob(config, f.deps, claim), 'task-unreadable');
   assert.deepEqual(f.requests.slice(-2), ['POST /jobs/session-1/updates', 'POST /jobs/session-1/failed']);
 });
+
+test('a null task is refused as unreadable and never launches', async () => {
+  const f = fakes(null);
+  assert.equal(await handleJob(config, f.deps, claim), 'task-unreadable');
+  assert.equal(f.updates.length, 1);
+  assert.equal(f.updates[0]![0], 'error');
+  assert.deepEqual(f.requests.slice(-2), ['POST /jobs/session-1/updates', 'POST /jobs/session-1/failed']);
+  assert.deepEqual(f.argv, []);
+});
+
+/** The real queue and Runner API behind the Runner's fetch, with Linear faked. */
+function realInbox() {
+  const db = new DatabaseSync(':memory:');
+  const clock = { now: 1_800_000_000_000 };
+  const issueEdits: Record<string, unknown>[] = [];
+  const linear: typeof fetch = async (_, init) => {
+    const { query, variables } = JSON.parse(String(init?.body));
+    if (query.includes('agentActivityCreate')) return Response.json({ data: { agentActivityCreate: { success: true } } });
+    if (query.includes('issueUpdate')) {
+      issueEdits.push(variables.input);
+      return Response.json({ data: { issueUpdate: { success: true } } });
+    }
+    return Response.json({ data: {
+      issue: {
+        identifier: goodTask.identifier, description: goodTask.description, branchName: goodTask.branchName,
+        state: { type: 'unstarted' }, delegate: { id: 'app-user' }, team: { id: 'team-1', states: { nodes: [] } }, labels: { nodes: [] },
+      },
+      agentSession: { creator: { id: 'user-allowed' } },
+      issueLabels: { nodes: [] },
+    } });
+  };
+  const auth = { installation: async () => ({ appUserId: 'app-user', appName: 'Example' }), getAccessToken: async () => 'token' };
+  const queue = new MachineQueue({ exec: (query, ...bindings) => {
+    const rows = db.prepare(query).all(...bindings);
+    return { toArray: () => rows };
+  } }, auth as unknown as MachineAuth, 'example-machine', () => {}, linear, () => clock.now);
+  const inboxConfig = { orgId: 'org', adminSecret: 'admin', machines: {
+    'example-machine': { clientId: 'client', clientSecret: 'secret', webhookSecret: 'webhook', bearerSecret: config.bearerSecret },
+  } };
+  const ops: string[] = [];
+  let loseLaunched = 0;
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    url.pathname = url.pathname.replace('/delegator', '');
+    ops.push(url.pathname.split('/').pop()!);
+    // Lost before it reaches Cloud Inbox.
+    if (url.pathname.endsWith('/launched') && loseLaunched-- > 0) throw new TypeError('fetch failed');
+    return handleRunner(new Request(url, init), inboxConfig, () => queue);
+  };
+  const state = () => db.prepare('SELECT state FROM jobs').all().map((row) => row.state);
+  return { queue, clock, issueEdits, ops, fetch, state, lose: (n: number) => { loseLaunched = n; } };
+}
+
+for (const restart of [false, true]) {
+  test(`a lost launch report is recovered on reclaim${restart ? ' after a Runner restart' : ''}, launching once`, async () => {
+    const inbox = realInbox();
+    await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
+    let f = fakes();
+    f.deps.fetch = inbox.fetch;
+    inbox.lose(1);
+    assert.equal(await poll(config, f.deps), true);
+    assert.deepEqual(inbox.state(), ['claimed']);
+    const argv = f.argv;
+    if (restart) {
+      // A new process: nothing carries over but the launches file.
+      const launches = f.deps.launches;
+      f = fakes();
+      f.deps = { ...f.deps, fetch: inbox.fetch, launches };
+    }
+    inbox.clock.now += 10 * 60_000;
+    assert.equal(await poll(config, f.deps), true);
+    await inbox.queue.deliver();
+    const runs = restart ? [...argv, ...f.argv] : argv;
+    assert.equal(runs.filter((args) => args[0] === 'worktree').length, 1);
+    assert.deepEqual(inbox.state(), ['launched']);
+    assert.ok(!inbox.ops.includes('failed'));
+    assert.ok(inbox.issueEdits.length > 0 && inbox.issueEdits.every((edit) => !('delegateId' in edit)));
+    assert.equal(readFileSync(f.deps.launches, 'utf8'), '{}');
+  });
+}
 
 test('an empty queue claims nothing more', async () => {
   const f = fakes();
