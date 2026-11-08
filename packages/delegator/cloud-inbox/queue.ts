@@ -11,6 +11,11 @@ const LEASE_MS = 10 * 60_000;
 const HISTORY_MS = 30 * 24 * 60 * 60_000;
 const POST_TIMEOUT_MS = 10_000;
 const RETRY_MAX_MS = 60 * 60_000;
+/** The longest status update a machine may post, in characters. */
+export const MAX_UPDATE_CHARS = 2000;
+/** The Dispatch target label a launch sets. The Runner only launches in Orca. */
+const DISPATCH_LABEL = 'Orca';
+const PULL_REQUEST = /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+(?:[/?#]|$)/;
 
 export const MESSAGES = {
   queued: (machine: string) =>
@@ -20,7 +25,22 @@ export const MESSAGES = {
   replies: "Delegator doesn't read replies; steer the agent in Orca.",
 };
 
+// Every Linear document Cloud Inbox sends. Variables come only from the job, never the machine.
 const ACTIVITY = 'mutation ($input: AgentActivityCreateInput!) { agentActivityCreate(input: $input) { success } }';
+const TASK = `query ($issue: String!, $session: String!) {
+  issue(id: $issue) { identifier description branchName state { type } delegate { id } }
+  agentSession(id: $session) { creator { id } } }`;
+const WATCH = `query ($issue: String!, $session: String!) {
+  issue(id: $issue) { attachments { nodes { url } } } agentSession(id: $session) { status } }`;
+const LINK = `mutation ($session: String!, $url: String!) {
+  agentSessionUpdate(id: $session, input: { addedExternalUrls: [{ label: "Pull request", url: $url }] }) { success } }`;
+const LAUNCH = `query ($issue: String!, $session: String!) {
+  issue(id: $issue) { delegate { id } state { type } team { id states(filter: { type: { eq: "started" } }) { nodes { id position } } }
+    labels { nodes { id parent { id } } } }
+  agentSession(id: $session) { creator { id } }
+  issueLabels(filter: { name: { eq: "${DISPATCH_LABEL}" } }) { nodes { id team { id } parent { id } } } }`;
+const DELEGATE = 'query ($issue: String!) { issue(id: $issue) { delegate { id } } }';
+const ISSUE_UPDATE = 'mutation ($issue: String!, $input: IssueUpdateInput!) { issueUpdate(id: $issue, input: $input) { success } }';
 
 export type Sql = {
   exec(query: string, ...bindings: (string | number | null)[]): { toArray(): Record<string, unknown>[] };
@@ -39,7 +59,42 @@ export type AgentEvent = {
 
 export type WebhookResult = 'queued' | 'duplicate' | 'answered' | 'ended' | 'no-issue' | 'app-user';
 export type Outcome = 'launched' | 'failed';
-type ActivityType = 'thought' | 'response';
+export type UpdateType = 'thought' | 'response' | 'error';
+/**
+ * An outbox row: an activity, or a write-back. `launch` applies a launch's field changes
+ * and `release` clears the delegate; their body holds the issue id, not text.
+ */
+type RowType = UpdateType | 'launch' | 'release';
+
+/** Why a Runner operation was refused: no current claim, an ended session, no PR, or Linear failed. */
+export type Refusal = 'not-claimed' | 'ended' | 'no-pr' | 'linear';
+/** What the Runner checks before launch. */
+export type Task = {
+  delegated: boolean;
+  creatorId: string | null;
+  identifier: string;
+  description: string;
+  branchName: string;
+  statusType: string;
+};
+export type Watch = { sessionStatus: string; pullRequests: string[] };
+
+type Id = { id?: string } | null | undefined;
+type TaskData = {
+  issue?: { identifier?: string; description?: string | null; branchName?: string; state?: { type?: string }; delegate?: Id };
+  agentSession?: { creator?: Id };
+};
+type WatchData = { issue?: { attachments?: { nodes?: { url?: string }[] } }; agentSession?: { status?: string } };
+type LaunchData = {
+  issue?: {
+    delegate?: Id;
+    state?: { type?: string };
+    team?: { id?: string; states?: { nodes?: { id: string; position: number }[] } };
+    labels?: { nodes?: { id: string; parent?: Id }[] };
+  };
+  agentSession?: { creator?: Id };
+  issueLabels?: { nodes?: { id: string; team?: Id; parent?: Id }[] };
+};
 
 // An outbox row is the head of its session when no earlier row for that session is
 // pending. Only heads are sent, so a session's activities go out in the order written.
@@ -92,6 +147,8 @@ export class MachineQueue {
     sql.exec('CREATE TABLE IF NOT EXISTS seen (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     sql.exec('CREATE TABLE IF NOT EXISTS seen_activities (id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     sql.exec('CREATE TABLE IF NOT EXISTS ended (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
+    // Sessions whose issue was delegated again, so their write-backs never apply.
+    sql.exec('CREATE TABLE IF NOT EXISTS superseded (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     // `queued` marks the queued thought, which a claim cancels.
     sql.exec(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL,
       type TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
@@ -125,11 +182,16 @@ export class MachineQueue {
     }
 
     if (!event.issueId) return 'no-issue';
-    if (ended) return 'ended';
     const fresh = this.#sql.exec(
       'INSERT INTO seen (session_id, at) VALUES (?, ?) ON CONFLICT DO NOTHING RETURNING session_id',
       event.sessionId, now).toArray();
-    if (!fresh.length) return 'duplicate';
+    // A replayed delegation is older than what came after it, so it supersedes nothing.
+    if (!fresh.length) return ended ? 'ended' : 'duplicate';
+    // A new delegation supersedes the issue's older jobs, even if it was stopped before
+    // this webhook arrived.
+    this.#sql.exec(`INSERT INTO superseded (session_id, at) SELECT id, ? FROM jobs WHERE issue_id = ? AND id != ?
+      ON CONFLICT DO NOTHING`, now, event.issueId, event.sessionId);
+    if (ended) return 'ended';
     this.#sql.exec("INSERT INTO jobs (id, issue_id, state, updated_at) VALUES (?, ?, 'queued', ?)",
       event.sessionId, event.issueId, now);
     this.#settle(now);
@@ -154,13 +216,83 @@ export class MachineQueue {
     return { issueId: String(row.issue_id), sessionId: String(row.id), claimId };
   }
 
-  /** Records a claim's outcome. False unless it's the job's current claim and its lease hasn't expired. */
+  /**
+   * Records a claim's outcome and queues its write-back: a launch's field changes, or
+   * clearing a failed job's delegate. False unless it's the job's current claim and its
+   * lease hasn't expired.
+   */
   async finish(id: string, claimId: string, outcome: Outcome): Promise<boolean> {
     const now = this.#now();
-    return this.#sql.exec(
+    const [row] = this.#sql.exec(
       `UPDATE jobs SET state = ?, lease_until = NULL, updated_at = ?
-       WHERE id = ? AND state = 'claimed' AND claim_id = ? AND lease_until > ? RETURNING id`,
-      outcome, now, id, claimId, now).toArray().length > 0;
+       WHERE id = ? AND state = 'claimed' AND claim_id = ? AND lease_until > ? RETURNING issue_id`,
+      outcome, now, id, claimId, now).toArray();
+    if (!row) return false;
+    this.#enqueue(id, outcome === 'launched' ? 'launch' : 'release', String(row.issue_id), now);
+    this.#wake();
+    return true;
+  }
+
+  /** The job's issue id while `claimId` holds it: claimed with a live lease, or launched by that claim. */
+  #held(id: string, claimId: string): string | undefined {
+    const [row] = this.#sql.exec(
+      `SELECT issue_id FROM jobs WHERE id = ? AND claim_id = ?
+       AND ((state = 'claimed' AND lease_until > ?) OR state = 'launched')`, id, claimId, this.#now()).toArray();
+    return row ? String(row.issue_id) : undefined;
+  }
+
+  /** Reads what the Runner checks before launch, from the job's own issue and session. */
+  async task(id: string, claimId: string): Promise<Task | Refusal> {
+    const issueId = this.#held(id, claimId);
+    if (!issueId) return 'not-claimed';
+    const data = await this.#read<TaskData>(TASK, { issue: issueId, session: id });
+    const issue = data?.issue;
+    if (!issue?.identifier || !issue.branchName || !issue.state?.type) return 'linear';
+    const app = await this.#auth.installation();
+    return {
+      delegated: Boolean(app && issue.delegate?.id === app.appUserId),
+      creatorId: data?.agentSession?.creator?.id ?? null,
+      identifier: issue.identifier,
+      description: issue.description ?? '',
+      branchName: issue.branchName,
+      statusType: issue.state.type,
+    };
+  }
+
+  /**
+   * Queues a status update on the job's session, behind its earlier activities. A
+   * `response` or `error` ends the session, so later updates are refused.
+   */
+  async update(id: string, claimId: string, type: UpdateType, body: string): Promise<'queued' | Refusal> {
+    if (!this.#held(id, claimId)) return 'not-claimed';
+    // No await from here on, so a stop can't land between the check and the write.
+    if (this.#sql.exec('SELECT 1 FROM ended WHERE session_id = ?', id).toArray().length) return 'ended';
+    const now = this.#now();
+    if (type === 'thought') this.#enqueue(id, type, body, now);
+    else this.#end(id, body, now, type);
+    this.#wake();
+    return 'queued';
+  }
+
+  /** The session's status and the issue's GitHub pull request links, oldest first. */
+  async watch(id: string, claimId: string): Promise<Watch | Refusal> {
+    const issueId = this.#held(id, claimId);
+    if (!issueId) return 'not-claimed';
+    const data = await this.#read<WatchData>(WATCH, { issue: issueId, session: id });
+    const status = data?.agentSession?.status;
+    if (!status || !data?.issue) return 'linear';
+    const urls = (data.issue.attachments?.nodes ?? []).map((a) => a.url ?? '');
+    return { sessionStatus: status, pullRequests: urls.filter((url) => PULL_REQUEST.test(url)) };
+  }
+
+  /** Links the issue's first GitHub pull request on the session as "Pull request". */
+  async linkPullRequest(id: string, claimId: string): Promise<{ url: string } | Refusal> {
+    const found = await this.watch(id, claimId);
+    if (typeof found === 'string') return found;
+    const url = found.pullRequests[0];
+    if (!url) return 'no-pr';
+    const data = await this.#read<{ agentSessionUpdate?: { success?: boolean } }>(LINK, { session: id, url });
+    return data?.agentSessionUpdate?.success === true ? { url } : 'linear';
   }
 
   /**
@@ -186,8 +318,8 @@ export class MachineQueue {
       }
       const id = Number(row.id);
       const sessionId = String(row.session_id);
-      const type = String(row.type) as ActivityType;
-      if (await this.#post(id, sessionId, type, String(row.body))) {
+      const type = String(row.type) as RowType;
+      if (await this.#send(id, sessionId, type, String(row.body))) {
         this.#sql.exec('DELETE FROM outbox WHERE id = ?', id);
       } else {
         const attempts = Number(row.attempts) + 1;
@@ -205,16 +337,16 @@ export class MachineQueue {
     if (row?.at != null) this.#schedule(Number(row.at));
   }
 
-  #enqueue(sessionId: string, type: ActivityType, body: string, now: number, queued = false) {
+  #enqueue(sessionId: string, type: RowType, body: string, now: number, queued = false) {
     this.#sql.exec('INSERT INTO outbox (session_id, type, body, created_at, next_at, queued) VALUES (?, ?, ?, ?, ?, ?)',
       sessionId, type, body, now, now, queued ? 1 : 0);
   }
 
-  /** Marks a session ended and posts its final response, cancelling its thoughts not yet sent. */
-  #end(sessionId: string, body: string, now: number) {
+  /** Marks a session ended and posts its final activity, cancelling its thoughts not yet sent. */
+  #end(sessionId: string, body: string, now: number, type: 'response' | 'error' = 'response') {
     this.#sql.exec('INSERT INTO ended (session_id, at) VALUES (?, ?) ON CONFLICT DO NOTHING', sessionId, now);
     this.#sql.exec("DELETE FROM outbox WHERE session_id = ? AND type = 'thought'", sessionId);
-    this.#enqueue(sessionId, 'response', body, now);
+    this.#enqueue(sessionId, type, body, now);
   }
 
   /** Drops expired history, including activities Linear has refused for the whole window. */
@@ -226,6 +358,9 @@ export class MachineQueue {
     this.#sql.exec('DELETE FROM seen WHERE at <= ?', now - HISTORY_MS);
     this.#sql.exec('DELETE FROM seen_activities WHERE at <= ?', now - HISTORY_MS);
     this.#sql.exec('DELETE FROM ended WHERE at <= ?', now - HISTORY_MS);
+    // Kept while a write-back of the session is still pending, however old.
+    this.#sql.exec('DELETE FROM superseded WHERE at <= ? AND session_id NOT IN (SELECT session_id FROM outbox)',
+      now - HISTORY_MS);
     // ponytail: an activity Linear keeps refusing is dropped after the history window.
     for (const { session_id, type } of this.#sql.exec(
       'DELETE FROM outbox WHERE created_at <= ? RETURNING session_id, type', now - HISTORY_MS).toArray()) {
@@ -257,23 +392,91 @@ export class MachineQueue {
     return replaced;
   }
 
-  /** Posts an agent activity. True on success; a failure, including the token's, is never thrown. */
-  async #post(id: number, sessionId: string, type: ActivityType, body: string): Promise<boolean> {
+  /** Sends one outbox row. True on success; a failure, including the token's, is never thrown. */
+  async #send(id: number, sessionId: string, type: RowType, body: string): Promise<boolean> {
     try {
       const token = await this.#auth.getAccessToken();
       // Cancelled while the token refreshed: nothing left to send.
       if (!this.#sql.exec('SELECT 1 FROM outbox WHERE id = ?', id).toArray().length) return true;
-      const res = await this.#fetch(GRAPHQL_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ query: ACTIVITY, variables: { input: { agentSessionId: sessionId, content: { type, body } } } }),
-        signal: AbortSignal.timeout(POST_TIMEOUT_MS),
-      });
-      const result = res.ok ? ((await res.json()) as { data?: { agentActivityCreate?: { success?: boolean } } }) : undefined;
-      return result?.data?.agentActivityCreate?.success === true;
+      if (type === 'launch') return await this.#launch(token, id, body, sessionId);
+      if (type === 'release') return await this.#release(token, id, body, sessionId);
+      const data = await this.#linear<{ agentActivityCreate?: { success?: boolean } }>(token, ACTIVITY,
+        { input: { agentSessionId: sessionId, content: { type, body } } });
+      return data.agentActivityCreate?.success === true;
     } catch {
       // The message could quote a body or token, so it isn't logged.
       return false;
     }
+  }
+
+  /**
+   * A launch's field changes: `In Progress` (the team's first started status) unless the
+   * issue is already started, completed or canceled; the `Orca` label, replacing any other
+   * label in its group; and the session creator as assignee. Dropped once the issue is
+   * handed to someone else or delegated again.
+   */
+  async #launch(token: string, row: number, issueId: string, sessionId: string): Promise<boolean> {
+    const { issue, agentSession, issueLabels } = await this.#linear<LaunchData>(token, LAUNCH, { issue: issueId, session: sessionId });
+    if (!issue?.state?.type) return false;
+    const app = await this.#auth.installation();
+    if (!app || issue.delegate?.id !== app.appUserId) return true;
+    const input: Record<string, unknown> = {};
+    if (['triage', 'backlog', 'unstarted'].includes(issue.state.type)) {
+      const [started] = (issue.team?.states?.nodes ?? []).toSorted((a, b) => a.position - b.position);
+      if (started) input.stateId = started.id;
+    }
+    const label = issueLabels?.nodes?.find((l) => !l.team || l.team.id === issue.team?.id);
+    if (label) {
+      input.addedLabelIds = [label.id];
+      const group = label.parent?.id;
+      const siblings = (issue.labels?.nodes ?? []).filter((l) => group && l.parent?.id === group && l.id !== label.id);
+      if (siblings.length) input.removedLabelIds = siblings.map((l) => l.id);
+    }
+    const creator = agentSession?.creator?.id;
+    if (creator) input.assigneeId = creator;
+    return this.#updateIssue(token, row, issueId, sessionId, input);
+  }
+
+  /** Clears the delegate, but only while it's still this app: a newer delegation keeps its own. */
+  async #release(token: string, row: number, issueId: string, sessionId: string): Promise<boolean> {
+    const { issue } = await this.#linear<{ issue?: { delegate?: Id } }>(token, DELEGATE, { issue: issueId });
+    if (!issue) return false;
+    const app = await this.#auth.installation();
+    if (!app || issue.delegate?.id !== app.appUserId) return true;
+    return this.#updateIssue(token, row, issueId, sessionId, { delegateId: null });
+  }
+
+  /**
+   * Applies a write-back's field changes unless its row was cancelled or a newer delegation
+   * of the issue reached this machine, checked with no await before the edit is sent.
+   */
+  async #updateIssue(token: string, row: number, issueId: string, sessionId: string, input: Record<string, unknown>): Promise<boolean> {
+    const stale = !this.#sql.exec('SELECT 1 FROM outbox WHERE id = ?', row).toArray().length
+      || this.#sql.exec('SELECT 1 FROM superseded WHERE session_id = ?', sessionId).toArray().length;
+    if (stale) return true;
+    const data = await this.#linear<{ issueUpdate?: { success?: boolean } }>(token, ISSUE_UPDATE, { issue: issueId, input });
+    return data.issueUpdate?.success === true;
+  }
+
+  /** A read or write the Runner waits on. Undefined if Linear or the token failed. */
+  async #read<T>(query: string, variables: Record<string, unknown>): Promise<T | undefined> {
+    try {
+      return await this.#linear<T>(await this.#auth.getAccessToken(), query, variables);
+    } catch {
+      return undefined; // Never logged: the message could quote task content or a token.
+    }
+  }
+
+  /** One GraphQL request, bounded by the timeout. Throws unless Linear returns data without errors. */
+  async #linear<T>(token: string, query: string, variables: Record<string, unknown>): Promise<T> {
+    const res = await this.#fetch(GRAPHQL_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ query, variables }),
+      signal: AbortSignal.timeout(POST_TIMEOUT_MS),
+    });
+    const result = res.ok ? ((await res.json()) as { data?: T; errors?: unknown }) : undefined;
+    if (!result?.data || result.errors) throw new Error('Linear request failed');
+    return result.data;
   }
 }

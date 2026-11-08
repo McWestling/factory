@@ -13,8 +13,9 @@ own Linear agent integration, so the agent you delegate to decides the machine.
   Cloud Inbox and start them in Orca. It is not implemented yet; its code will live
   in `packages/delegator/runner/`.
 
-Cloud Inbox is available for controlled testing, and has answered a real delegation
-and stop on Cloudflare. It cannot launch Orca by itself.
+Cloud Inbox is available for controlled testing. On Cloudflare it has answered a real
+delegation and stop, and served the Runner API's task, update and write-back operations
+against real Linear. It cannot launch Orca by itself.
 One deployment supports one Linear workspace and several computers, each with its
 own Linear app. Installing Factory's skills does not deploy Delegator.
 
@@ -107,7 +108,8 @@ Run these commands from `packages/delegator` after testing above.
    Stopping in Linear does not stop an agent already running in Orca.
 
    A real delegation and stop got these replies from a deployed Cloud Inbox. The Runner API's
-   full claim flow has only run on the local runtime, as the Runner doesn't exist yet.
+   full claim flow has also run there against real Linear, called by hand on disposable
+   issues, as the Runner doesn't exist yet.
 
 ## Operate it
 
@@ -131,8 +133,9 @@ Run these commands from `packages/delegator` after testing above.
 
 Cloud Inbox is the middleman between Linear and your machines. It requests
 `read,write,app:assignable`, checks the granted permissions at installation and refresh,
-and never returns Linear tokens to machines, whose credential authorizes only Cloud Inbox
-operations. Cloud Inbox API for machine status updates and task content isn't built yet.
+and never returns Linear tokens to machines, whose credential authorizes only Cloud Inbox's
+named operations on that machine's own claimed jobs: reading the task, posting status
+updates, and the launch and failure write-backs.
 
 Linear requires `write` to post agent activities, and `write` also allows issue edits.
 So a compromised Cloud Inbox can read and edit workspace data and tamper with queue delivery.
