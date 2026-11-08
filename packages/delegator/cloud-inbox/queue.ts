@@ -182,15 +182,18 @@ export class MachineQueue {
     }
 
     if (!event.issueId) return 'no-issue';
-    if (ended) return 'ended';
     const fresh = this.#sql.exec(
       'INSERT INTO seen (session_id, at) VALUES (?, ?) ON CONFLICT DO NOTHING RETURNING session_id',
       event.sessionId, now).toArray();
-    if (!fresh.length) return 'duplicate';
-    this.#sql.exec("INSERT INTO jobs (id, issue_id, state, updated_at) VALUES (?, ?, 'queued', ?)",
-      event.sessionId, event.issueId, now);
+    // A replayed delegation is older than what came after it, so it supersedes nothing.
+    if (!fresh.length) return ended ? 'ended' : 'duplicate';
+    // A new delegation supersedes the issue's older jobs, even if it was stopped before
+    // this webhook arrived.
     this.#sql.exec(`INSERT INTO superseded (session_id, at) SELECT id, ? FROM jobs WHERE issue_id = ? AND id != ?
       ON CONFLICT DO NOTHING`, now, event.issueId, event.sessionId);
+    if (ended) return 'ended';
+    this.#sql.exec("INSERT INTO jobs (id, issue_id, state, updated_at) VALUES (?, ?, 'queued', ?)",
+      event.sessionId, event.issueId, now);
     this.#settle(now);
     this.#enqueue(event.sessionId, 'thought', MESSAGES.queued(app.appName ?? this.#machine), now, true);
     this.#wake();

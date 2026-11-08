@@ -1102,6 +1102,47 @@ for (const outcome of ['launched', 'failed']) {
   }
 }
 
+for (const outcome of ['launched', 'failed']) {
+  test(`a delayed ${outcome} write-back is superseded by a newer delegation whose stop arrived first`, async () => {
+    const h = await claimedJob();
+    h.linear.failNext = 1;
+    await call(h, 'POST', outcome, h.claimId);
+    await h.flush();
+    await h.deliver(h.stoppedPayload('session-2'));
+    assert.equal((await h.created('session-2')).status, 200);
+    assert.ok(!h.rows().jobs.some((j) => j.id === 'session-2')); // The stopped session isn't queued.
+    const before = structuredClone(h.linear.world.issues['issue-1']!);
+    h.rebuild();
+    h.clock.now += 10_000;
+    await h.flush();
+    assert.deepEqual(h.linear.world.issues['issue-1'], before);
+    assert.equal(h.linear.requests.filter((r) => r.query.includes('issueUpdate')).length, 0);
+    assert.deepEqual(h.rows().outbox, []);
+  });
+}
+
+for (const [label, settle] of [
+  ['stopped', (h: Harness) => h.deliver(h.stoppedPayload('session-1'))],
+  ['still claimed', (h: Harness) => h.claimed()],
+] as const) {
+  test(`a replayed created webhook of an older session (${label}) supersedes nothing`, async () => {
+    const h = setup();
+    await h.created('session-1');
+    await settle(h);
+    await h.created('session-2');
+    const { claimId, sessionId } = (await h.claimed())!;
+    assert.equal(sessionId, 'session-2');
+    h.linear.failNext = 1;
+    await call(h, 'POST', 'launched', claimId, undefined, 'session-2');
+    await h.flush();
+    assert.equal((await h.created('session-1')).status, 200);
+    h.clock.now += 10_000;
+    await h.flush();
+    assert.equal(h.linear.world.issues['issue-1']!.stateId, 'state-progress');
+    assert.deepEqual(h.rows().outbox, []);
+  });
+}
+
 test('a row cancelled in flight neither deletes nor blocks newer activity', async () => {
   const h = setup();
   (h.data.get('token') as { expiresAt: number }).expiresAt = h.clock.now + 1000;

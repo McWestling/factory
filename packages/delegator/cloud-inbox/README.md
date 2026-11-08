@@ -121,8 +121,10 @@ operation sends a fixed Linear query or mutation. A Linear failure on a read ans
   still this app, so a refused job that was already undelegated keeps its new delegate.
   The launch's changes apply only while the delegate is still this app. Both go out
   through the outbox like activities, so they retry and keep the session's order:
-  post a status update first, then report. A newer delegation's `created` webhook
-  marks every older job of the issue as superseded, and a superseded job's write-backs
+  post a status update first, then report. The first `created` webhook of a newer
+  delegation marks every older job of the issue as superseded, even when that session
+  was stopped before the webhook arrived (it still isn't queued); a redelivered
+  `created` marks nothing. A superseded job's write-backs
   are dropped, even if the newer job is later stopped or deleted. The mark is stored,
   so it survives restarts, and is kept while the job has a write-back pending. A newer
   delegation whose webhook hasn't arrived yet can't be told apart from the old one in
