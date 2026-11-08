@@ -124,6 +124,23 @@ export async function setup(file: string, io: SetupIO): Promise<void> {
   io.say('Owner authentication is saved in the private checkpoint. Back it up securely. Runner pairing is not implemented yet.');
 }
 
+/** Deliberate correction/rotation of app credentials, preserving all machine authorities. */
+export async function credentials(file: string, io: SetupIO): Promise<void> {
+  const state = await load(file);
+  const config = validate(state);
+  const machine = config.machines[state.machine!]!;
+  const clientId = (await io.ask('clientId', 'Original app client ID (correct a typo; do not replace a working app)')).trim();
+  const clientSecret = (await io.ask('clientSecret', 'App client secret', true)).trim();
+  const webhookSecret = (await io.ask('webhookSecret', 'App webhook signing secret', true)).trim();
+  state.config = { ...config, machines: { ...config.machines,
+    [state.machine!]: { ...machine, clientId, clientSecret, webhookSecret } } };
+  validate(state);
+  state.uploaded = false;
+  state.uploading = true;
+  await save(file, state);
+  await setup(file, io);
+}
+
 async function main() {
   process.umask(0o077);
   const action = process.argv[2] ?? 'setup';
@@ -169,10 +186,10 @@ async function main() {
     console.log('Imported original configuration. Run setup with the original Worker name and account.');
     return;
   }
-  if (action === 'setup') {
+  if (action === 'setup' || action === 'credentials') {
     const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false });
     try {
-      await setup(file, { command, open, say: console.log, async ask(_key, label, secret) {
+      await (action === 'credentials' ? credentials : setup)(file, { command, open, say: console.log, async ask(_key, label, secret) {
         if (!secret) return rl.question(`${label}: `);
         // Disable terminal echo while reading credentials; never put them in argv or logs.
         console.log(`${label} (input hidden):`);
@@ -188,7 +205,7 @@ async function main() {
     } finally { rl.close(); }
     return;
   }
-  if (!['update', 'connect', 'reconnect', 'status', 'disconnect'].includes(action)) throw new Error('Use login, setup, import, update, connect, reconnect, status or disconnect.');
+  if (!['update', 'connect', 'reconnect', 'status', 'disconnect'].includes(action)) throw new Error('Use login, setup, import, credentials, update, connect, reconnect, status or disconnect.');
   const state = await load(file);
   const config = validate(state);
   if (!state.uploaded || !state.origin) throw new Error('Run setup first.');

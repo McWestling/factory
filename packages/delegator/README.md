@@ -90,7 +90,9 @@ flow in your browser. Approve the exact `read,write,app:assignable` grant. You c
 also visit the setup URL and use the saved `config.adminSecret` as the HTTP Basic
 password (any username). Status checks the workspace and app identity against Linear
 without returning a token. If access is missing or revoked, check the app and workspace,
-then reconnect; don't add scopes to bypass a failure.
+then reconnect; don't add scopes to bypass a failure. Correct a pasted app credential
+with `npm run inbox -- credentials`, then reconnect. This preserves owner/machine
+secrets and jobs; use the same app, not a replacement installation.
 
 Deployment is separate from the intended everyday two-step connection: visit Cloud
 Inbox and authorize with Linear, then open the running Mac Runner and redeem a

@@ -50,6 +50,19 @@ Workers by routing `<hostname>/delegator/*` here. Paths are shown without that p
   with the org id and the machine's client id, and only if no other install landed
   while it waited on Linear.
 
+Owner-only operations use the same HTTP Basic password as install:
+
+- `GET /status/<machine>` verifies the stored app identity and workspace against
+  Linear and returns only `{connected: boolean}`; provider failure returns 502.
+- `POST /disconnect/<machine>` blocks token use and new installs, drains any in-flight
+  install/refresh, revokes access and refresh credentials, and verifies API 401 plus
+  refresh `invalid_grant`. Only then are credentials removed and reconnect allowed.
+  On failure, credentials stay blocked and saved for a retry; jobs/outbox are untouched.
+  The response contains no tokens. A GET cannot disconnect.
+
+The operator commands in `cloud-inbox/setup.ts` checkpoint deployment/configuration
+separately from browser authorization. See the [command guide](../README.md).
+
 Point each machine's Linear app webhook (Agent session events, delivery enabled) at
 `POST /webhook`.
 `cloud-inbox/routes.ts` handles it before the machine's queue sees anything: it answers 401

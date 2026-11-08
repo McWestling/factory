@@ -446,3 +446,60 @@ test('disconnect waits for an initial callback so its newly issued credentials a
   assert.equal(revoked, true);
   await assert.rejects(auth.getAccessToken(), /not installed/);
 });
+
+test('revocation can report already unauthorized; success still requires both independent probes', async () => {
+  const storage = memoryStorage();
+  const linear = fakeLinear();
+  let revoked = false;
+  const auth = new MachineAuth(storage, client, ORG, async (input, init) => {
+    const url = String(input);
+    if (url.endsWith('/oauth/revoke')) { revoked = true; return new Response(null, { status: 401 }); }
+    if (revoked) return url.endsWith('/oauth/token')
+      ? Response.json({ error: 'invalid_grant' }, { status: 400 }) : new Response(null, { status: 401 });
+    return linear.fetchFn(input, init);
+  });
+  await auth.completeInstall(stateOf((await auth.startInstall(REDIRECT, true))!), 'code', REDIRECT);
+  await auth.disconnect();
+  assert.deepEqual(await auth.status(), { connected: false });
+});
+
+test('overlapping disconnects share revocation and cannot remove a subsequent reconnect', async () => {
+  const storage = memoryStorage();
+  const linear = fakeLinear();
+  let revoked = false;
+  let revocations = 0;
+  let release!: () => void;
+  let reached!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const waiting = new Promise<void>((resolve) => { reached = resolve; });
+  const auth = new MachineAuth(storage, client, ORG, async (input, init) => {
+    const url = String(input);
+    if (url.endsWith('/oauth/revoke')) {
+      revocations++;
+      if (revocations === 1) { reached(); await held; }
+      revoked = true;
+      return new Response();
+    }
+    if (revoked) return url.endsWith('/oauth/token')
+      ? Response.json({ error: 'invalid_grant' }, { status: 400 }) : new Response(null, { status: 401 });
+    return linear.fetchFn(input, init);
+  });
+  await auth.completeInstall(stateOf((await auth.startInstall(REDIRECT, true))!), 'code', REDIRECT);
+  const first = auth.disconnect();
+  await waiting;
+  const second = auth.disconnect();
+  release();
+  await Promise.all([first, second]);
+  assert.equal(revocations, 2, 'one access and one refresh revocation');
+  revoked = false;
+  assert.equal((await auth.completeInstall(stateOf((await auth.startInstall(REDIRECT, true))!), 'code', REDIRECT)).ok, true);
+  assert.deepEqual(await auth.status(), { connected: true });
+});
+
+test('disconnect invalidates an install link that was still being generated', async () => {
+  const { auth } = setup();
+  const pending = auth.startInstall(REDIRECT, true);
+  await auth.disconnect();
+  assert.equal(await pending, undefined);
+  assert.ok(await auth.startInstall(REDIRECT, true));
+});

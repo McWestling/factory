@@ -129,7 +129,8 @@ export class MachineAuth {
   #fetch: typeof fetch;
   #now: () => number;
   #refreshing?: Promise<string>;
-  #installing = new Set<Promise<InstallResult>>();
+  #installing = new Set<Promise<unknown>>();
+  #disconnecting?: Promise<void>;
 
   constructor(
     storage: Storage,
@@ -150,12 +151,23 @@ export class MachineAuth {
    * Returns Linear's authorize URL with a fresh single-use state, replacing any
    * pending one. Only an authenticated administrator may begin an install.
    */
-  async startInstall(redirectUri: string, admin: boolean): Promise<string | undefined> {
+  startInstall(redirectUri: string, admin: boolean): Promise<string | undefined> {
+    return this.#trackInstall(this.#startInstall(redirectUri, admin));
+  }
+
+  #trackInstall<T>(pending: Promise<T>): Promise<T> {
+    this.#installing.add(pending);
+    void pending.finally(() => this.#installing.delete(pending)).catch(() => {});
+    return pending;
+  }
+
+  async #startInstall(redirectUri: string, admin: boolean): Promise<string | undefined> {
     if (!admin || await this.#storage.get('disconnecting')) return undefined;
     const reinstall = Boolean(await this.#storage.get('token'));
     const value = hex(crypto.getRandomValues(new Uint8Array(32)));
     const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
     const challenge = base64url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
+    if (await this.#storage.get('disconnecting')) return undefined;
     const pending: PendingState = { value, verifier, expiresAt: this.#now() + STATE_TTL_MS, reinstall };
     await this.#storage.put('oauthState', pending);
     const url = new URL(AUTHORIZE_URL);
@@ -173,10 +185,7 @@ export class MachineAuth {
   }
 
   completeInstall(state: string, code: string, redirectUri: string): Promise<InstallResult> {
-    const pending = this.#completeInstall(state, code, redirectUri);
-    this.#installing.add(pending);
-    void pending.finally(() => this.#installing.delete(pending)).catch(() => {});
-    return pending;
+    return this.#trackInstall(this.#completeInstall(state, code, redirectUri));
   }
 
   async #completeInstall(state: string, code: string, redirectUri: string): Promise<InstallResult> {
@@ -225,7 +234,11 @@ export class MachineAuth {
   }
 
   /** Retains credentials on failure so revocation can be retried; never deletes jobs. */
-  async disconnect(): Promise<void> {
+  disconnect(): Promise<void> {
+    return this.#disconnecting ??= this.#disconnect().finally(() => { this.#disconnecting = undefined; });
+  }
+
+  async #disconnect(): Promise<void> {
     await this.#storage.put('disconnecting', true);
     await this.#storage.delete('oauthState');
     // A rotating refresh already in flight must settle before we revoke its credentials.
@@ -238,7 +251,7 @@ export class MachineAuth {
           method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: new URLSearchParams({ token: value!, token_type_hint: hint! }),
         });
-        if (!res.ok && res.status !== 400) throw new Error('Linear revocation failed. Retry disconnect.');
+        if (!res.ok && res.status !== 400 && res.status !== 401) throw new Error('Linear revocation failed. Retry disconnect.');
       }
       const probe = await this.#fetch(GRAPHQL_URL, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token.accessToken}` },

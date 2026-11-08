@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { setup, type SetupIO } from './setup.ts';
+import { setup, credentials, type SetupIO } from './setup.ts';
 
 test('setup resumes an interrupted registration and reruns without changing credentials or redeploying', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'inbox-test-'));
@@ -86,5 +86,34 @@ test('an interrupted secret upload retries the identical complete configuration'
     await setup(file, io);
     const secrets = JSON.parse(uploaded!);
     assert.equal(JSON.parse(secrets.MACHINES)['example-machine'].clientSecret, 'secret');
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+
+test('guided credential correction preserves owner, machine authority and identity', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'inbox-test-'));
+  const file = join(dir, 'setup.local.json');
+  const answers: Record<string, string> = { accountId: 'account-example', name: 'factory-cloud-inbox',
+    machine: 'example-machine', orgId: 'org-example', clientId: 'client-example', clientSecret: 'wrong-secret', webhookSecret: 'webhook' };
+  let upload = '';
+  const io: SetupIO = {
+    async ask(key) { return answers[key]!; }, say() {}, async open() {},
+    async command(args, input) {
+      if (args.includes('deploy')) return 'https://factory-cloud-inbox.example.workers.dev';
+      if (args.includes('bulk')) upload = input!;
+      return args.includes('list') ? '[]' : '';
+    },
+  };
+  try {
+    await setup(file, io);
+    const before = JSON.parse(await readFile(file, 'utf8'));
+    answers.clientSecret = 'corrected-secret';
+    await credentials(file, io);
+    const after = JSON.parse(await readFile(file, 'utf8'));
+    assert.equal(after.machine, before.machine);
+    assert.equal(after.name, before.name);
+    assert.equal(after.config.adminSecret, before.config.adminSecret);
+    assert.equal(after.config.machines['example-machine'].bearerSecret, before.config.machines['example-machine'].bearerSecret);
+    assert.equal(JSON.parse(JSON.parse(upload).MACHINES)['example-machine'].clientSecret, 'corrected-secret');
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
