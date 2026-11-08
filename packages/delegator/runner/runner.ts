@@ -45,7 +45,7 @@ export type Deps = {
   fetch: typeof fetch;
   exec: Exec;
   log: (fields: Record<string, string>) => void;
-  /** File of sessions launched but not yet confirmed by Cloud Inbox: session id → launch time. */
+  /** Private file of launch intents and outcomes, keyed by session id. */
   launches: string;
 };
 
@@ -190,40 +190,82 @@ async function orca(exec: Exec, args: string[]): Promise<string | null> {
   }
 }
 
-// A launch whose report is lost leaves the job claimed until its lease expires, when Cloud
-// Inbox hands the same session out again under a new claim. Recording the launch before any
-// report lets that reclaim, even after a restart, report it instead of launching twice.
-function readLaunches(path: string): Record<string, number> {
+type Launch = {
+  at: number;
+  repo: string;
+  branch: string;
+  model: string;
+  launched: boolean;
+  thoughtPosted: boolean;
+};
+// Numbers are the previous file format: a confirmed local launch without thought metadata.
+type Launches = Record<string, Launch | number>;
+
+function readLaunches(deps: Deps): Launches {
   try {
-    const launches: unknown = JSON.parse(readFileSync(path, 'utf8'));
-    return isObject(launches) ? launches as Record<string, number> : {};
-  } catch {
+    const launches: unknown = JSON.parse(readFileSync(deps.launches, 'utf8'));
+    if (!isObject(launches) || !Object.values(launches).every((entry) =>
+      typeof entry === 'number' ? Number.isFinite(entry) : isObject(entry)
+        && typeof entry.at === 'number' && Number.isFinite(entry.at)
+        && typeof entry.repo === 'string' && isAbsolute(entry.repo)
+        && typeof entry.branch === 'string' && entry.branch.length <= 200 && BRANCH.test(entry.branch) && !entry.branch.includes('..')
+        && isText(entry.model) && typeof entry.launched === 'boolean' && typeof entry.thoughtPosted === 'boolean'
+    )) throw new Error('invalid launch record');
+    return launches as Launches;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      deps.log({ event: 'launches', outcome: 'launches-unreadable' });
+    }
     return {};
   }
 }
 
-function writeLaunches(path: string, change: (launches: Record<string, number>) => void) {
-  const launches = readLaunches(path);
-  change(launches);
-  for (const [session, at] of Object.entries(launches)) {
-    if (!(at > Date.now() - LAUNCH_KEEP_MS)) delete launches[session];
-  }
-  // Renamed into place, so a crash mid-write never leaves half a file.
-  writeFileSync(`${path}.tmp`, JSON.stringify(launches), { mode: 0o600 });
-  renameSync(`${path}.tmp`, path);
-}
-
-/** A record that can't be written only loses recovery, so it's logged, not thrown. */
-function record(deps: Deps, log: (outcome: string) => void, change: (launches: Record<string, number>) => void) {
+function record(deps: Deps, log: (outcome: string) => void, change: (launches: Launches) => void): boolean {
   try {
-    writeLaunches(deps.launches, change);
+    const launches = readLaunches(deps);
+    change(launches);
+    for (const [session, entry] of Object.entries(launches)) {
+      if (!((typeof entry === 'number' ? entry : entry.at) > Date.now() - LAUNCH_KEEP_MS)) delete launches[session];
+    }
+    // Renamed into place, so a crash mid-write never leaves half a file.
+    writeFileSync(`${deps.launches}.tmp`, JSON.stringify(launches), { mode: 0o600 });
+    renameSync(`${deps.launches}.tmp`, deps.launches);
+    return true;
   } catch {
     log('launch-record-failed');
+    return false;
+  }
+}
+
+/** Read-only evidence for an interrupted create; a conflict alone proves nothing. */
+// shortcut: a worktree does not prove agent startup; use a durable caller-supplied launch id when Orca supports one.
+async function hasWorktree(deps: Deps, launch: Launch): Promise<boolean> {
+  try {
+    const selector = `path:${launch.repo}`;
+    const repo = JSON.parse((await deps.exec('orca', ['repo', 'show', '--repo', selector, '--json'], 30_000)).stdout);
+    if (repo?.ok !== true || !isText(repo.result?.repo?.id) || repo.result.repo.path !== launch.repo) return false;
+    const list = JSON.parse((await deps.exec('orca', ['worktree', 'list', '--repo', selector, '--limit', '10000', '--json'], 30_000)).stdout);
+    return list?.ok === true && Array.isArray(list.result?.worktrees) && list.result.worktrees.some((row: unknown) =>
+      isObject(row) && row.repoId === repo.result.repo.id && row.hostId === 'local'
+      && row.branch === `refs/heads/${launch.branch}`);
+  } catch {
+    return false;
   }
 }
 
 /** Reports a recorded launch, forgetting it once Cloud Inbox has it. */
-async function reportLaunch(api: ReturnType<typeof inbox>, deps: Deps, claim: Claim, log: (outcome: string) => void) {
+async function reportLaunch(api: ReturnType<typeof inbox>, deps: Deps, claim: Claim, log: (outcome: string) => void, launch: Launch | number) {
+  if (typeof launch !== 'number' && !launch.thoughtPosted) {
+    const posted = await api.update(claim, 'thought', `Started ${launch.model} in Orca on \`${launch.branch}\`.`)
+      .then(() => true, () => false);
+    if (!posted) {
+      // Keep the claim recoverable until its thought can be queued too.
+      log('thought-failed');
+      return 'launched';
+    }
+    launch.thoughtPosted = true;
+    record(deps, log, (launches) => { launches[claim.sessionId] = launch; });
+  }
   if (await api.finish(claim, 'launched').then(() => true, () => false)) {
     record(deps, log, (launches) => delete launches[claim.sessionId]);
   } else {
@@ -244,10 +286,11 @@ export async function handleJob(config: RunnerConfig, deps: Deps, claim: Claim):
     return outcome;
   };
 
-  if (readLaunches(deps.launches)[claim.sessionId]) {
+  const saved = readLaunches(deps)[claim.sessionId];
+  if (saved !== undefined && (typeof saved === 'number' || saved.launched)) {
     // Launched under an earlier claim whose report was lost: the agent is already running.
     log('launch-recovered');
-    return reportLaunch(api, deps, claim, log);
+    return reportLaunch(api, deps, claim, log, saved);
   }
 
   let task: Partial<Task>;
@@ -280,6 +323,19 @@ export async function handleJob(config: RunnerConfig, deps: Deps, claim: Claim):
     return refuse('bad-branch', `The issue's Linear branch name isn't a plain git branch name. ${RETRY}`);
   }
 
+  if (saved && typeof saved !== 'number' && saved.repo === config.repos[issue.repo]
+    && saved.branch === branchName && Object.hasOwn(config.models, saved.model) && await hasWorktree(deps, saved)) {
+    saved.launched = true;
+    record(deps, log, (launches) => { launches[claim.sessionId] = saved; });
+    log('launch-recovered');
+    return reportLaunch(api, deps, claim, log, saved);
+  }
+
+  const launch: Launch = { at: Date.now(), repo: config.repos[issue.repo]!, branch: branchName,
+    model: issue.model, launched: false, thoughtPosted: false };
+  if (!record(deps, log, (launches) => { launches[claim.sessionId] = launch; })) {
+    return refuse('launch-record-failed', `Couldn't save the launch intent. Check the Runner config directory is writable. ${RETRY}`);
+  }
   const args = launchArgs(config, issue.repo, issue.model, { identifier, branchName });
   await orca(deps.exec, ['open', '--json']);
   let code = await orca(deps.exec, args);
@@ -295,10 +351,10 @@ export async function handleJob(config: RunnerConfig, deps: Deps, claim: Claim):
   }
   if (code) return refuse(`orca-${code}`, `Orca couldn't start the agent (\`${code}\`). Check Orca on ${config.machine}. ${RETRY}`);
 
-  record(deps, log, (launches) => { launches[claim.sessionId] = Date.now(); });
+  launch.launched = true;
+  record(deps, log, (launches) => { launches[claim.sessionId] = launch; });
   log('launched');
-  await api.update(claim, 'thought', `Started ${issue.model} in Orca on \`${branchName}\`.`).catch(() => log('thought-failed'));
-  return reportLaunch(api, deps, claim, log);
+  return reportLaunch(api, deps, claim, log, launch);
 }
 
 /** One poll: claims a job and handles it. Returns whether there was one. */

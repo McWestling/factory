@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -192,9 +194,13 @@ function realInbox() {
   const db = new DatabaseSync(':memory:');
   const clock = { now: 1_800_000_000_000 };
   const issueEdits: Record<string, unknown>[] = [];
+  const thoughts: string[] = [];
   const linear: typeof fetch = async (_, init) => {
     const { query, variables } = JSON.parse(String(init?.body));
-    if (query.includes('agentActivityCreate')) return Response.json({ data: { agentActivityCreate: { success: true } } });
+    if (query.includes('agentActivityCreate')) {
+      if (variables.input.content.type === 'thought') thoughts.push(variables.input.content.body);
+      return Response.json({ data: { agentActivityCreate: { success: true } } });
+    }
     if (query.includes('issueUpdate')) {
       issueEdits.push(variables.input);
       return Response.json({ data: { issueUpdate: { success: true } } });
@@ -218,16 +224,19 @@ function realInbox() {
   } };
   const ops: string[] = [];
   let loseLaunched = 0;
+  let loseThought = 0;
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = new URL(String(input));
     url.pathname = url.pathname.replace('/delegator', '');
     ops.push(url.pathname.split('/').pop()!);
+    if (url.pathname.endsWith('/updates') && loseThought-- > 0) throw new TypeError('fetch failed');
     // Lost before it reaches Cloud Inbox.
     if (url.pathname.endsWith('/launched') && loseLaunched-- > 0) throw new TypeError('fetch failed');
     return handleRunner(new Request(url, init), inboxConfig, () => queue);
   };
   const state = () => db.prepare('SELECT state FROM jobs').all().map((row) => row.state);
-  return { queue, clock, issueEdits, ops, fetch, state, lose: (n: number) => { loseLaunched = n; } };
+  return { queue, clock, issueEdits, thoughts, ops, fetch, state, lose: (n: number) => { loseLaunched = n; },
+    loseThought: () => { loseThought = 1; } };
 }
 
 for (const restart of [false, true]) {
@@ -255,8 +264,137 @@ for (const restart of [false, true]) {
     assert.ok(!inbox.ops.includes('failed'));
     assert.ok(inbox.issueEdits.length > 0 && inbox.issueEdits.every((edit) => !('delegateId' in edit)));
     assert.equal(readFileSync(f.deps.launches, 'utf8'), '{}');
+    assert.deepEqual(inbox.thoughts, ['Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing`.']);
   });
 }
+
+// The fields below mirror the read-only Orca CLI JSON, with no live launches.
+const repoInfo = JSON.stringify({ ok: true, result: { repo: { id: 'repo-1', path: '/repos/repo' } } });
+const listed = (rows: unknown[]) => JSON.stringify({ ok: true, result: { worktrees: rows, truncated: false } });
+const matchingWorktree = { repoId: 'repo-1', hostId: 'local', branch: `refs/heads/${goodTask.branchName}` };
+
+for (const [label, listing, recovers, repoOutput = repoInfo] of [
+  ['exact repo and branch', listed([matchingWorktree]), true],
+  ['no worktree', listed([]), false],
+  ['a different repo', listed([{ ...matchingWorktree, repoId: 'other' }]), false],
+  ['a different branch', listed([{ ...matchingWorktree, branch: 'refs/heads/other' }]), false],
+  ['a remote worktree', listed([{ ...matchingWorktree, hostId: 'remote' }]), false],
+  ['malformed output', 'null', false],
+  ['a different checkout path', listed([matchingWorktree]), false, JSON.stringify({ ok: true, result: { repo: { id: 'repo-1', path: '/repos/other' } } })],
+  ['malformed repo output', listed([matchingWorktree]), false, 'null'],
+  ['a malformed row', listed([null, { branch: 'refs/heads/other' }]), false],
+] as const) {
+  test(`a create whose outcome write was skipped recovers only with ${label}`, async (t) => {
+    const inbox = realInbox();
+    await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
+    const f = fakes();
+    f.deps.fetch = inbox.fetch;
+    inbox.loseThought();
+    let created = false;
+    const rename = fs.renameSync;
+    // Simulate death after create: only the pre-create file survives the first poll.
+    const mocked = t.mock.method(fs, 'renameSync', (...args: Parameters<typeof rename>) => {
+      if (!created) rename(...args);
+    });
+    syncBuiltinESMExports();
+    f.deps.exec = async (_file, args) => {
+      f.argv.push(args);
+      if (args[0] === 'worktree' && args[1] === 'create') created = true;
+      return { stdout: ok };
+    };
+    try {
+      await poll(config, f.deps);
+    } finally {
+      mocked.mock.restore();
+      syncBuiltinESMExports();
+    }
+    assert.equal(JSON.parse(readFileSync(f.deps.launches, 'utf8'))['session-1']?.launched, false);
+    const restarted = fakes();
+    restarted.deps = { ...restarted.deps, fetch: inbox.fetch, launches: f.deps.launches };
+    restarted.deps.exec = async (_file, args) => {
+      restarted.argv.push(args);
+      if (args[0] === 'repo') return { stdout: repoOutput };
+      if (args[0] === 'worktree' && args[1] === 'list') return { stdout: listing };
+      if (args[0] === 'worktree' && args[1] === 'create') throw orcaError('worktree_conflict');
+      return { stdout: ok };
+    };
+    inbox.clock.now += 10 * 60_000;
+    await poll(config, restarted.deps);
+    await inbox.queue.deliver();
+    const creates = [...f.argv, ...restarted.argv].filter((args) => args[0] === 'worktree' && args[1] === 'create');
+    assert.equal(creates.length, recovers ? 1 : 2);
+    assert.deepEqual(inbox.state(), [recovers ? 'launched' : 'failed']);
+    assert.equal(inbox.ops.includes('failed'), !recovers);
+    assert.equal(inbox.issueEdits.some((edit) => 'delegateId' in edit), !recovers);
+    if (recovers) {
+      assert.deepEqual(restarted.argv, [
+        ['repo', 'show', '--repo', 'path:/repos/repo', '--json'],
+        ['worktree', 'list', '--repo', 'path:/repos/repo', '--limit', '10000', '--json'],
+      ]);
+    }
+  });
+}
+
+test('recovery posts a lost thought once and remembers it across another reclaim', async () => {
+  const inbox = realInbox();
+  await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
+  const f = fakes();
+  f.deps.fetch = inbox.fetch;
+  inbox.lose(1);
+  inbox.loseThought();
+  await poll(config, f.deps);
+  assert.equal(inbox.thoughts.length, 0);
+  for (let i = 0; i < 2; i++) {
+    const restarted = fakes();
+    restarted.deps = { ...restarted.deps, fetch: inbox.fetch, launches: f.deps.launches };
+    inbox.clock.now += 10 * 60_000;
+    await poll(config, restarted.deps);
+    await inbox.queue.deliver();
+    assert.deepEqual(restarted.argv, []);
+  }
+  assert.deepEqual(inbox.thoughts, ['Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing`.']);
+  assert.deepEqual(inbox.state(), ['launched']);
+});
+
+for (const contents of ['{broken', 'null', '{"session-1":{"at":42}}']) {
+  test(`a corrupt launch file logs once per read without throwing: ${contents}`, async () => {
+    const f = fakes(null);
+    const logs: Record<string, string>[] = [];
+    f.deps.log = (fields) => { logs.push(fields); };
+    writeFileSync(f.deps.launches, contents);
+    await assert.doesNotReject(() => poll(config, f.deps));
+    assert.deepEqual(logs.filter((fields) => fields.outcome === 'launches-unreadable'), [
+      { event: 'launches', outcome: 'launches-unreadable' },
+    ]);
+  });
+}
+
+test('an unreadable launch file logs without throwing', async () => {
+  const f = fakes(null);
+  const logs: Record<string, string>[] = [];
+  f.deps.log = (fields) => { logs.push(fields); };
+  mkdirSync(f.deps.launches);
+  await assert.doesNotReject(() => poll(config, f.deps));
+  assert.deepEqual(logs.filter((fields) => fields.outcome === 'launches-unreadable'), [
+    { event: 'launches', outcome: 'launches-unreadable' },
+  ]);
+});
+
+test('a failed intent write refuses before Orca can start', async () => {
+  const f = fakes();
+  f.deps.launches = join(f.deps.launches, 'missing', 'launches.json');
+  assert.equal(await handleJob(config, f.deps, claim), 'launch-record-failed');
+  assert.deepEqual(f.argv, []);
+  assert.deepEqual(f.requests.slice(-2), ['POST /jobs/session-1/updates', 'POST /jobs/session-1/failed']);
+});
+
+test('the previous numeric launch file still recovers without Orca', async () => {
+  const f = fakes();
+  writeFileSync(f.deps.launches, JSON.stringify({ 'session-1': Date.now() }));
+  assert.equal(await handleJob(config, f.deps, claim), 'launched');
+  assert.deepEqual(f.argv, []);
+  assert.deepEqual(f.requests, ['POST /jobs/session-1/launched']);
+});
 
 test('an empty queue claims nothing more', async () => {
   const f = fakes();

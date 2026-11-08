@@ -148,12 +148,30 @@ its config. Otherwise it runs `orca open --json` and the documented
 `orca worktree create`, retrying once if Orca's runtime is unavailable, then posts
 "Started …" and reports `launched`; Cloud Inbox sets the status, `Orca` label and
 assignee. Any failure posts one `error` and reports `failed`, which clears the delegate.
-It never requeues. A launch is recorded in `launches.json` beside the config before
-it's reported, so if the report is lost, Cloud Inbox hands the session back after its
-10-minute lease and the Runner, even restarted, reports `launched` without starting Orca
-again. A Runner killed while `orca worktree create` runs has no record, so the retry fails
-on the existing worktree. It logs ids and outcomes only. Running it in the background and
-watching for the PR are not built yet.
+It never requeues explicitly. Before create, the Runner saves an intent in
+`launches.json` beside the config; it refuses to launch if that write fails. It records
+a successful create and whether Cloud Inbox accepted the "Started …" thought. If either
+the thought or launch report fails, the lease expires and Cloud Inbox hands the session
+back. A restarted Runner reports the saved launch without creating another worktree,
+and posts the thought only if its saved flag says it wasn't accepted.
+
+If the Runner dies during create or before recording its result, the saved intent lets
+it check `orca repo show` and `orca worktree list` with `--json`. Recovery requires the
+exact configured checkout path, repo ID and branch on the local host. Without that
+match (including unreadable or incomplete listing results with no match), it follows
+the normal create and failure path; `worktree_conflict` alone never proves a launch.
+Orca confirms a worktree, not that its agent started, received the prompt or is still
+running. A pre-existing matching worktree can also satisfy an intent left before create.
+
+State files are replaced atomically and old entries are pruned on writes after 30 days.
+The previous numeric launch records still recover, but have no thought metadata to retry.
+A missing file is normal; unreadable or corrupt state logs `launches-unreadable` once
+per read, without ids, and is treated as empty. Losing that state loses recovery.
+A thought accepted just before a crash, lost response or failed flag write may be posted
+again on recovery: the updates API has no deduplication key. A timed-out create still
+fails and can leave a worktree; recovery applies to reclaimed claims, not terminal failures.
+Logs contain ids and outcomes only. Running the Runner in the background and watching
+for the PR are not built yet.
 
 ## Security
 
