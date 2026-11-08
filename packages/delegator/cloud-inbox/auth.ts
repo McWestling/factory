@@ -129,6 +129,7 @@ export class MachineAuth {
   #fetch: typeof fetch;
   #now: () => number;
   #refreshing?: Promise<string>;
+  #installing = new Set<Promise<InstallResult>>();
 
   constructor(
     storage: Storage,
@@ -150,7 +151,7 @@ export class MachineAuth {
    * pending one. Only an authenticated administrator may begin an install.
    */
   async startInstall(redirectUri: string, admin: boolean): Promise<string | undefined> {
-    if (!admin) return undefined;
+    if (!admin || await this.#storage.get('disconnecting')) return undefined;
     const reinstall = Boolean(await this.#storage.get('token'));
     const value = hex(crypto.getRandomValues(new Uint8Array(32)));
     const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
@@ -171,10 +172,17 @@ export class MachineAuth {
     return url.toString();
   }
 
-  async completeInstall(state: string, code: string, redirectUri: string): Promise<InstallResult> {
+  completeInstall(state: string, code: string, redirectUri: string): Promise<InstallResult> {
+    const pending = this.#completeInstall(state, code, redirectUri);
+    this.#installing.add(pending);
+    void pending.finally(() => this.#installing.delete(pending)).catch(() => {});
+    return pending;
+  }
+
+  async #completeInstall(state: string, code: string, redirectUri: string): Promise<InstallResult> {
     // No await between the read and the delete, so two callbacks can't both use one state.
     const pending = await this.#storage.get<PendingState>('oauthState');
-    if (!pending || !timingSafeEqual(state, pending.value)) return { ok: false, reason: 'state' };
+    if (await this.#storage.get('disconnecting') || !pending || !timingSafeEqual(state, pending.value)) return { ok: false, reason: 'state' };
     await this.#storage.delete('oauthState');
     if (!pending.verifier || pending.expiresAt <= this.#now()) return { ok: false, reason: 'state' };
     const before = await this.#storage.get<StoredToken>('token');
@@ -194,17 +202,75 @@ export class MachineAuth {
       return { ok: false, reason: pending.reinstall ? 'superseded' : 'reinstall' };
     }
     await this.#storage.put('token', this.#toStored(grant, { appUserId: viewer.id, appName: viewer.name }));
+    if (await this.#storage.get('disconnecting')) return { ok: false, reason: 'superseded' };
     return { ok: true, appUserId: viewer.id };
   }
 
   /** The app user this machine was installed as, or undefined before the install. */
   async installation(): Promise<AppUser | undefined> {
+    if (await this.#storage.get('disconnecting')) return undefined;
     const token = await this.#storage.get<StoredToken>('token');
     return token && { appUserId: token.appUserId, appName: token.appName };
   }
 
+  /** Checks access at Linear, returning no credentials to the operator. */
+  async status(): Promise<{ connected: boolean }> {
+    if (!await this.installation()) return { connected: false };
+    const viewer = await this.#viewer(await this.getAccessToken());
+    const installed = await this.installation();
+    if (!viewer || viewer.orgId !== this.#orgId || viewer.id !== installed?.appUserId) {
+      throw new Error('Linear access failed. Check app access and workspace, then reconnect.');
+    }
+    return { connected: true };
+  }
+
+  /** Retains credentials on failure so revocation can be retried; never deletes jobs. */
+  async disconnect(): Promise<void> {
+    await this.#storage.put('disconnecting', true);
+    await this.#storage.delete('oauthState');
+    // A rotating refresh already in flight must settle before we revoke its credentials.
+    await Promise.allSettled([...this.#installing]);
+    await this.#refreshing?.catch(() => {});
+    const token = await this.#storage.get<StoredToken>('token');
+    if (token) {
+      for (const [value, hint] of [[token.refreshToken, 'refresh_token'], [token.accessToken, 'access_token']]) {
+        const res = await this.#fetch('https://api.linear.app/oauth/revoke', {
+          method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ token: value!, token_type_hint: hint! }),
+        });
+        if (!res.ok && res.status !== 400) throw new Error('Linear revocation failed. Retry disconnect.');
+      }
+      const probe = await this.#fetch(GRAPHQL_URL, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token.accessToken}` },
+        body: JSON.stringify({ query: '{ viewer { id } }' }),
+      });
+      if (probe.status !== 401) throw new Error('Linear still allows access or could not confirm revocation. Retry disconnect.');
+      const refresh = await this.#fetch(TOKEN_URL, {
+        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: token.refreshToken,
+          client_id: this.#client.clientId, client_secret: this.#client.clientSecret }),
+      });
+      if (refresh.ok) {
+        // Keep any rotated pair available for the next revocation attempt.
+        const grant = await json(refresh) as Grant | undefined;
+        if (grant?.access_token && grant.refresh_token) {
+          await this.#storage.put('token', { ...token, accessToken: grant.access_token, refreshToken: grant.refresh_token });
+        }
+        throw new Error('Linear still allows refresh. Retry disconnect.');
+      }
+      let error: unknown;
+      try { error = (await refresh.json() as { error?: unknown }).error; } catch { /* No response bodies in errors. */ }
+      if (refresh.status !== 400 || error !== 'invalid_grant') {
+        throw new Error('Could not confirm refresh revocation. Retry disconnect or revoke the app in Linear.');
+      }
+      await this.#storage.delete('token');
+    }
+    await this.#storage.delete('disconnecting');
+  }
+
   /** Returns the cached access token, refreshing it when under an hour remains. */
   async getAccessToken(): Promise<string> {
+    if (await this.#storage.get('disconnecting')) throw new Error('Machine is disconnected; retry disconnect before reconnecting');
     const token = await this.#storage.get<StoredToken>('token');
     if (!token) throw new Error('Machine is not installed');
     // Also catches records from before the identity was stored.

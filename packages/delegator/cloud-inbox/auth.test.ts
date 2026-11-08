@@ -381,3 +381,68 @@ test('legacy array-form scope responses are accepted with the same allowlist', a
   assert.equal((await install(auth)).ok, true);
   assert.equal(await auth.getAccessToken(), 'access');
 });
+
+test('status checks Linear without exposing credentials; disconnect preserves unrelated storage', async () => {
+  const { storage, linear } = setup();
+  let revoked = false;
+  const auth = new MachineAuth(storage, client, ORG, async (input, init) => {
+    if (String(input).endsWith('/oauth/revoke')) { revoked = true; return new Response(); }
+    if (revoked) return String(input).endsWith('/oauth/token')
+      ? Response.json({ error: 'invalid_grant' }, { status: 400 }) : new Response(null, { status: 401 });
+    return linear.fetchFn(input, init);
+  });
+  await auth.completeInstall(stateOf((await auth.startInstall(REDIRECT, true))!), 'code', REDIRECT);
+  await storage.put('queued-job', { sessionId: 'session-example' });
+  assert.deepEqual(await auth.status(), { connected: true });
+  await auth.disconnect();
+  assert.deepEqual(await auth.status(), { connected: false });
+  await assert.rejects(auth.getAccessToken(), /not installed|disconnected/);
+  assert.deepEqual(await storage.get('queued-job'), { sessionId: 'session-example' });
+  await auth.disconnect();
+});
+
+test('failed revocation blocks use and install until retried, without losing the install', async () => {
+  const { storage, linear } = setup();
+  let revoke = false;
+  let fail = true;
+  const auth = new MachineAuth(storage, client, ORG, async (input, init) => {
+    if (String(input).endsWith('/oauth/revoke')) {
+      if (fail) return new Response(null, { status: 503 });
+      revoke = true;
+      return new Response();
+    }
+    if (revoke) return String(input).endsWith('/oauth/token')
+      ? Response.json({ error: 'invalid_grant' }, { status: 400 }) : new Response(null, { status: 401 });
+    return linear.fetchFn(input, init);
+  });
+  await auth.completeInstall(stateOf((await auth.startInstall(REDIRECT, true))!), 'code', REDIRECT);
+  await assert.rejects(auth.disconnect(), /revocation failed/);
+  await assert.rejects(auth.getAccessToken(), /disconnected/);
+  assert.equal(await auth.startInstall(REDIRECT, true), undefined);
+  fail = false;
+  await auth.disconnect();
+  assert.ok(await auth.startInstall(REDIRECT, true));
+});
+
+test('disconnect waits for an initial callback so its newly issued credentials are revoked too', async () => {
+  const storage = memoryStorage();
+  const linear = fakeLinear();
+  let revoked = false;
+  const auth = new MachineAuth(storage, client, ORG, async (input, init) => {
+    if (String(input).endsWith('/oauth/revoke')) { revoked = true; return new Response(); }
+    if (revoked) return String(input).endsWith('/oauth/token')
+      ? Response.json({ error: 'invalid_grant' }, { status: 400 }) : new Response(null, { status: 401 });
+    return linear.fetchFn(input, init);
+  });
+  const state = stateOf((await auth.startInstall(REDIRECT, true))!);
+  const held = linear.pause();
+  const callback = auth.completeInstall(state, 'code', REDIRECT);
+  await held.waiting;
+  const disconnect = auth.disconnect();
+  await new Promise((resolve) => setImmediate(resolve));
+  held.release();
+  assert.equal((await callback).ok, false);
+  await disconnect;
+  assert.equal(revoked, true);
+  await assert.rejects(auth.getAccessToken(), /not installed/);
+});

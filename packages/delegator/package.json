@@ -8,7 +8,8 @@
   },
   "scripts": {
     "test": "npm run typecheck && node --test *.test.ts cloud-inbox/*.test.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p cloud-inbox"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p cloud-inbox",
+    "inbox": "node cloud-inbox/setup.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20261103.1",
