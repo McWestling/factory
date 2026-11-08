@@ -35,7 +35,7 @@ const WATCH = `query ($issue: String!, $session: String!) {
 const LINK = `mutation ($session: String!, $url: String!) {
   agentSessionUpdate(id: $session, input: { addedExternalUrls: [{ label: "Pull request", url: $url }] }) { success } }`;
 const LAUNCH = `query ($issue: String!, $session: String!) {
-  issue(id: $issue) { state { type } team { id states(filter: { type: { eq: "started" } }) { nodes { id position } } }
+  issue(id: $issue) { delegate { id } state { type } team { id states(filter: { type: { eq: "started" } }) { nodes { id position } } }
     labels { nodes { id parent { id } } } }
   agentSession(id: $session) { creator { id } }
   issueLabels(filter: { name: { eq: "${DISPATCH_LABEL}" } }) { nodes { id team { id } parent { id } } } }`;
@@ -87,6 +87,7 @@ type TaskData = {
 type WatchData = { issue?: { attachments?: { nodes?: { url?: string }[] } }; agentSession?: { status?: string } };
 type LaunchData = {
   issue?: {
+    delegate?: Id;
     state?: { type?: string };
     team?: { id?: string; states?: { nodes?: { id: string; position: number }[] } };
     labels?: { nodes?: { id: string; parent?: Id }[] };
@@ -387,8 +388,8 @@ export class MachineQueue {
       const token = await this.#auth.getAccessToken();
       // Cancelled while the token refreshed: nothing left to send.
       if (!this.#sql.exec('SELECT 1 FROM outbox WHERE id = ?', id).toArray().length) return true;
-      if (type === 'launch') return await this.#launch(token, body, sessionId);
-      if (type === 'release') return await this.#release(token, body);
+      if (type === 'launch') return await this.#launch(token, id, body, sessionId);
+      if (type === 'release') return await this.#release(token, id, body, sessionId);
       const data = await this.#linear<{ agentActivityCreate?: { success?: boolean } }>(token, ACTIVITY,
         { input: { agentSessionId: sessionId, content: { type, body } } });
       return data.agentActivityCreate?.success === true;
@@ -401,11 +402,14 @@ export class MachineQueue {
   /**
    * A launch's field changes: `In Progress` (the team's first started status) unless the
    * issue is already started, completed or canceled; the `Orca` label, replacing any other
-   * label in its group; and the session creator as assignee.
+   * label in its group; and the session creator as assignee. Dropped once the issue is
+   * handed to someone else or delegated again.
    */
-  async #launch(token: string, issueId: string, sessionId: string): Promise<boolean> {
+  async #launch(token: string, row: number, issueId: string, sessionId: string): Promise<boolean> {
     const { issue, agentSession, issueLabels } = await this.#linear<LaunchData>(token, LAUNCH, { issue: issueId, session: sessionId });
     if (!issue?.state?.type) return false;
+    const app = await this.#auth.installation();
+    if (!app || issue.delegate?.id !== app.appUserId) return true;
     const input: Record<string, unknown> = {};
     if (['triage', 'backlog', 'unstarted'].includes(issue.state.type)) {
       const [started] = (issue.team?.states?.nodes ?? []).toSorted((a, b) => a.position - b.position);
@@ -420,19 +424,26 @@ export class MachineQueue {
     }
     const creator = agentSession?.creator?.id;
     if (creator) input.assigneeId = creator;
-    return this.#updateIssue(token, issueId, input);
+    return this.#updateIssue(token, row, issueId, sessionId, input);
   }
 
   /** Clears the delegate, but only while it's still this app: a newer delegation keeps its own. */
-  async #release(token: string, issueId: string): Promise<boolean> {
+  async #release(token: string, row: number, issueId: string, sessionId: string): Promise<boolean> {
     const { issue } = await this.#linear<{ issue?: { delegate?: Id } }>(token, DELEGATE, { issue: issueId });
     if (!issue) return false;
     const app = await this.#auth.installation();
     if (!app || issue.delegate?.id !== app.appUserId) return true;
-    return this.#updateIssue(token, issueId, { delegateId: null });
+    return this.#updateIssue(token, row, issueId, sessionId, { delegateId: null });
   }
 
-  async #updateIssue(token: string, issueId: string, input: Record<string, unknown>): Promise<boolean> {
+  /**
+   * Applies a write-back's field changes unless its row was cancelled or a newer delegation
+   * of the issue reached this machine, checked with no await before the edit is sent.
+   */
+  async #updateIssue(token: string, row: number, issueId: string, sessionId: string, input: Record<string, unknown>): Promise<boolean> {
+    const stale = !this.#sql.exec('SELECT 1 FROM outbox WHERE id = ?', row).toArray().length || this.#sql.exec(
+      'SELECT 1 FROM jobs WHERE issue_id = ? AND rowid > (SELECT rowid FROM jobs WHERE id = ?)', issueId, sessionId).toArray().length;
+    if (stale) return true;
     const data = await this.#linear<{ issueUpdate?: { success?: boolean } }>(token, ISSUE_UPDATE, { issue: issueId, input });
     return data.issueUpdate?.success === true;
   }

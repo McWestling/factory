@@ -119,8 +119,12 @@ operation sends a fixed Linear query or mutation. A Linear failure on a read ans
   replacing any other label in its group; and the session creator becomes the
   assignee. `POST /jobs/<id>/failed` queues clearing the delegate, only while it's
   still this app, so a refused job that was already undelegated keeps its new delegate.
-  Both go out through the outbox like activities, so they retry and keep the
-  session's order: post a status update first, then report.
+  The launch's changes apply only while the delegate is still this app. Both go out
+  through the outbox like activities, so they retry and keep the session's order:
+  post a status update first, then report. A retry is dropped once a newer delegation
+  of the same issue has reached this machine, so an old job never edits the newer
+  one's issue. A newer delegation whose webhook hasn't arrived yet can't be told
+  apart from the old one in Linear, so a retry in that gap still applies.
 - `GET /jobs/<id>/task` returns what the Runner checks before launch:
   `{delegated, creatorId, identifier, description, branchName, statusType}`.
   `delegated` is whether the issue's delegate is still this app; `creatorId` is the

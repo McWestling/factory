@@ -206,6 +206,7 @@ function answer(world: World, query: string, variables: Record<string, any>) {
   if (query.includes('issueLabels')) {
     return {
       issue: {
+        delegate: issue.delegateId && { id: issue.delegateId },
         state: { type: state().type },
         team: { id: 'team-1', states: { nodes: world.states.filter((s) => s.type === 'started') } },
         labels: { nodes: issue.labelIds.map((id) => world.labels.find((l) => l.id === id)!) },
@@ -1036,6 +1037,41 @@ test("failed leaves a delegate that isn't this app", async () => {
   assert.equal(h.linear.requests.filter((r) => r.query.includes('issueUpdate')).length, 0);
   assert.deepEqual(h.rows().outbox, []);
 });
+
+test("a failed job's delayed release leaves a newer delegation to this app alone", async () => {
+  const h = await claimedJob();
+  h.linear.failNext = 1;
+  await call(h, 'POST', 'failed', h.claimId);
+  await h.flush();
+  // Delegated again while the release waits to retry; another issue's session is unaffected.
+  await h.created('session-2');
+  await h.created('session-3', 'issue-2');
+  h.clock.now += 10_000;
+  await h.flush();
+  assert.equal(h.linear.world.issues['issue-1']!.delegateId, 'app-user-example');
+  assert.equal(h.linear.requests.filter((r) => r.query.includes('issueUpdate')).length, 0);
+  assert.deepEqual(sent(h.posts), [['session-2', 'thought', QUEUED], ['session-3', 'thought', QUEUED]]);
+  assert.deepEqual(h.rows().outbox, []);
+});
+
+for (const [label, change] of [
+  ['handed to another app', (h: Harness) => { h.linear.world.issues['issue-1']!.delegateId = 'another-app'; }],
+  ['delegated again to this app', (h: Harness) => h.created('session-2')],
+] as const) {
+  test(`a delayed launch write-back changes nothing once the issue is ${label}`, async () => {
+    const h = await claimedJob();
+    h.linear.failNext = 1;
+    await call(h, 'POST', 'launched', h.claimId);
+    await h.flush();
+    await change(h);
+    const before = structuredClone(h.linear.world.issues['issue-1']!);
+    h.clock.now += 10_000;
+    await h.flush();
+    assert.deepEqual(h.linear.world.issues['issue-1'], before);
+    assert.equal(h.linear.requests.filter((r) => r.query.includes('issueUpdate')).length, 0);
+    assert.deepEqual(h.rows().outbox, []);
+  });
+}
 
 test('watch returns the session status and only GitHub pull request links', async () => {
   const h = await claimedJob();
