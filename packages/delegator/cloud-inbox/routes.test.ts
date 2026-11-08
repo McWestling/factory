@@ -1073,6 +1073,51 @@ for (const [label, change] of [
   });
 }
 
+// A newer delegation whose job is then deleted, before its claim or after a stopped claim expires.
+const forgotten: [label: string, wait: number, drop: (h: Harness) => Promise<unknown>][] = [
+  ['stopped before its claim', 10_000, (h) => h.deliver(h.stoppedPayload('session-2'))],
+  ['stopped after its claim and expired', LEASE_MS, async (h) => {
+    assert.equal((await h.claimed())?.sessionId, 'session-2');
+    await h.deliver(h.stoppedPayload('session-2'));
+  }],
+];
+for (const outcome of ['launched', 'failed']) {
+  for (const [label, wait, drop] of forgotten) {
+    test(`a delayed ${outcome} write-back stays superseded after the newer job is ${label}, across a restart`, async () => {
+      const h = await claimedJob();
+      h.linear.failNext = 1;
+      await call(h, 'POST', outcome, h.claimId);
+      await h.flush();
+      await h.created('session-2');
+      await drop(h);
+      const before = structuredClone(h.linear.world.issues['issue-1']!);
+      h.rebuild();
+      h.clock.now += wait;
+      await h.flush();
+      assert.ok(!h.rows().jobs.some((j) => j.id === 'session-2'));
+      assert.deepEqual(h.linear.world.issues['issue-1'], before);
+      assert.equal(h.linear.requests.filter((r) => r.query.includes('issueUpdate')).length, 0);
+      assert.deepEqual(h.rows().outbox, []);
+    });
+  }
+}
+
+test('a row cancelled in flight neither deletes nor blocks newer activity', async () => {
+  const h = setup();
+  (h.data.get('token') as { expiresAt: number }).expiresAt = h.clock.now + 1000;
+  await h.send(h.createdPayload('session-1'));
+  const { waiting, release } = h.linear.hold();
+  const delivering = h.flush();
+  await waiting; // Linear holds the token refresh for the queued thought.
+  const { claimId } = await (await h.runner('POST', '/jobs/claim')).json() as { claimId: string };
+  assert.equal((await update(h, claimId, 'thought', 'Working.')).status, 202);
+  await h.send(h.createdPayload('session-2', 'issue-2'));
+  release();
+  await delivering;
+  assert.deepEqual(sent(h.posts), [['session-1', 'thought', 'Working.'], ['session-2', 'thought', QUEUED]]);
+  assert.deepEqual(h.rows().outbox, []);
+});
+
 test('watch returns the session status and only GitHub pull request links', async () => {
   const h = await claimedJob();
   h.linear.world.issues['issue-1']!.attachments = [

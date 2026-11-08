@@ -147,6 +147,8 @@ export class MachineQueue {
     sql.exec('CREATE TABLE IF NOT EXISTS seen (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     sql.exec('CREATE TABLE IF NOT EXISTS seen_activities (id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     sql.exec('CREATE TABLE IF NOT EXISTS ended (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
+    // Sessions whose issue was delegated again, so their write-backs never apply.
+    sql.exec('CREATE TABLE IF NOT EXISTS superseded (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     // `queued` marks the queued thought, which a claim cancels.
     sql.exec(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL,
       type TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
@@ -187,6 +189,8 @@ export class MachineQueue {
     if (!fresh.length) return 'duplicate';
     this.#sql.exec("INSERT INTO jobs (id, issue_id, state, updated_at) VALUES (?, ?, 'queued', ?)",
       event.sessionId, event.issueId, now);
+    this.#sql.exec(`INSERT INTO superseded (session_id, at) SELECT id, ? FROM jobs WHERE issue_id = ? AND id != ?
+      ON CONFLICT DO NOTHING`, now, event.issueId, event.sessionId);
     this.#settle(now);
     this.#enqueue(event.sessionId, 'thought', MESSAGES.queued(app.appName ?? this.#machine), now, true);
     this.#wake();
@@ -351,6 +355,9 @@ export class MachineQueue {
     this.#sql.exec('DELETE FROM seen WHERE at <= ?', now - HISTORY_MS);
     this.#sql.exec('DELETE FROM seen_activities WHERE at <= ?', now - HISTORY_MS);
     this.#sql.exec('DELETE FROM ended WHERE at <= ?', now - HISTORY_MS);
+    // Kept while a write-back of the session is still pending, however old.
+    this.#sql.exec('DELETE FROM superseded WHERE at <= ? AND session_id NOT IN (SELECT session_id FROM outbox)',
+      now - HISTORY_MS);
     // ponytail: an activity Linear keeps refusing is dropped after the history window.
     for (const { session_id, type } of this.#sql.exec(
       'DELETE FROM outbox WHERE created_at <= ? RETURNING session_id, type', now - HISTORY_MS).toArray()) {
@@ -441,8 +448,8 @@ export class MachineQueue {
    * of the issue reached this machine, checked with no await before the edit is sent.
    */
   async #updateIssue(token: string, row: number, issueId: string, sessionId: string, input: Record<string, unknown>): Promise<boolean> {
-    const stale = !this.#sql.exec('SELECT 1 FROM outbox WHERE id = ?', row).toArray().length || this.#sql.exec(
-      'SELECT 1 FROM jobs WHERE issue_id = ? AND rowid > (SELECT rowid FROM jobs WHERE id = ?)', issueId, sessionId).toArray().length;
+    const stale = !this.#sql.exec('SELECT 1 FROM outbox WHERE id = ?', row).toArray().length
+      || this.#sql.exec('SELECT 1 FROM superseded WHERE session_id = ?', sessionId).toArray().length;
     if (stale) return true;
     const data = await this.#linear<{ issueUpdate?: { success?: boolean } }>(token, ISSUE_UPDATE, { issue: issueId, input });
     return data.issueUpdate?.success === true;

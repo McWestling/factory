@@ -121,10 +121,12 @@ operation sends a fixed Linear query or mutation. A Linear failure on a read ans
   still this app, so a refused job that was already undelegated keeps its new delegate.
   The launch's changes apply only while the delegate is still this app. Both go out
   through the outbox like activities, so they retry and keep the session's order:
-  post a status update first, then report. A retry is dropped once a newer delegation
-  of the same issue has reached this machine, so an old job never edits the newer
-  one's issue. A newer delegation whose webhook hasn't arrived yet can't be told
-  apart from the old one in Linear, so a retry in that gap still applies.
+  post a status update first, then report. A newer delegation's `created` webhook
+  marks every older job of the issue as superseded, and a superseded job's write-backs
+  are dropped, even if the newer job is later stopped or deleted. The mark is stored,
+  so it survives restarts, and is kept while the job has a write-back pending. A newer
+  delegation whose webhook hasn't arrived yet can't be told apart from the old one in
+  Linear, so a retry in that gap still applies.
 - `GET /jobs/<id>/task` returns what the Runner checks before launch:
   `{delegated, creatorId, identifier, description, branchName, statusType}`.
   `delegated` is whether the issue's delegate is still this app; `creatorId` is the
