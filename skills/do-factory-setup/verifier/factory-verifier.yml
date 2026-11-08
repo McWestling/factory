@@ -1,0 +1,74 @@
+name: factory-verifier
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factory-verifier-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      checks: ${{ steps.plan.outputs.checks }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: python {0}
+        run: |
+          import json
+          import os
+          import subprocess
+
+          args = ["scripts/factory-verifier", "plan"]
+          if os.environ["EVENT_NAME"] == "pull_request":
+              args += ["--base", os.environ["BASE_SHA"], "--head", os.environ["HEAD_SHA"]]
+          else:
+              args += ["--all"]
+          plan = json.loads(subprocess.check_output(args, text=True))
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write("checks=" + json.dumps(plan["checks"], separators=(",", ":")) + "\n")
+
+  checks:
+    needs: plan
+    if: needs.plan.outputs.checks != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        check: ${{ fromJSON(needs.plan.outputs.checks) }}
+    name: ${{ matrix.check }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up repo tools
+        if: hashFiles('.github/actions/factory-verifier-setup/**') != ''
+        uses: ./.github/actions/factory-verifier-setup
+      - name: Run check
+        env:
+          CHECK: ${{ matrix.check }}
+        run: scripts/factory-verifier run "$CHECK"
+
+  verifier:
+    name: verifier
+    needs: [plan, checks]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful checks
+        env:
+          PASSED: ${{ needs.plan.result == 'success' && (needs.checks.result == 'success' || (needs.checks.result == 'skipped' && needs.plan.outputs.checks == '[]')) }}
+        run: test "$PASSED" = true

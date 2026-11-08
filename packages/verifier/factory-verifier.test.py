@@ -92,7 +92,9 @@ paths = ["**"]
         self.assertEqual(delivered.read_bytes(), SCRIPT.read_bytes())
 
     def test_usage_errors_exit_2(self):
-        for args in [(), ("unknown",), ("plan",), ("run",), ("run", "--all", "extra")]:
+        for args in [(), ("unknown",), ("plan",), ("plan", "--base", "HEAD"), ("plan", "--head", "HEAD"),
+                     ("plan", "--all", "--base", "HEAD"),
+                     ("plan", "--all", "--head", "HEAD"), ("run",), ("run", "--all", "extra")]:
             with self.subTest(args=args):
                 result = self.verifier(*args, cwd=self.root.parent)
                 self.assertEqual(result.returncode, 2, result.stderr)
@@ -124,6 +126,21 @@ paths = ["**"]
         result = self.verifier("run", "--all")
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertEqual(result.stdout, "first\nFAIL first\nlast\nPASS last\n")
+
+    def test_plan_all_lists_checks_in_file_order_without_running_them(self):
+        self.write_contract('''version = 1
+[checks.z-last-alphabetically]
+run = "exit 7"
+paths = ["unmodified/**"]
+[checks.a-first-alphabetically]
+run = "exit 8"
+paths = ["also-unmodified/**"]
+''')
+        result = self.verifier("plan", "--all")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {
+            "checks": ["z-last-alphabetically", "a-first-alphabetically"],
+        })
 
     def test_plan_selects_cross_app_and_everything_in_file_order(self):
         self.write_contract('''\
@@ -179,6 +196,9 @@ paths = ["**"]
                 self.assertEqual(json.loads(result.stdout)["checks"], [])
 
     def test_zero_checks(self):
+        result = self.verifier("plan", "--all")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {"checks": []})
         result = self.verifier("run", "--all")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")

@@ -88,13 +88,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     plan = commands.add_parser("plan", help="list checks triggered by a code change")
-    plan.add_argument("--base", required=True, metavar="SHA")
-    plan.add_argument("--head", required=True, metavar="SHA")
+    plan.add_argument("--base", metavar="SHA")
+    plan.add_argument("--head", metavar="SHA")
+    plan.add_argument("--all", action="store_true", help="list every check")
     run = commands.add_parser("run", help="run one check or every check")
     target = run.add_mutually_exclusive_group(required=True)
     target.add_argument("check", nargs="?")
     target.add_argument("--all", action="store_true")
     args = parser.parse_args()
+    if args.command == "plan":
+        if args.all and (args.base is not None or args.head is not None):
+            plan.error("--all cannot be combined with --base or --head")
+        if not args.all and (args.base is None or args.head is None):
+            plan.error("provide --all or both --base and --head")
     root = Path(git_output(None, "rev-parse", "--show-toplevel"))
     checks = read_checks(root)
     if args.command == "run":
@@ -108,7 +114,8 @@ def main():
         if args.check not in checks:
             raise ValueError(f"unknown check: {args.check}")
         return run_check(root, checks[args.check])
-    print(json.dumps(plan_checks(root, checks, args.base, args.head)))
+    result = {"checks": list(checks)} if args.all else plan_checks(root, checks, args.base, args.head)
+    print(json.dumps(result))
     return 0
 
 

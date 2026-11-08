@@ -120,8 +120,7 @@ The setup skill carries a generated, self-contained delivery bundle; regenerate 
 with `node packages/verifier/bundle.ts` and verify with
 `node packages/verifier/bundle.ts --check`. Run core and isolated delivery tests
 with `python3 packages/verifier/factory-verifier.test.py` (Python 3.11+), and bundle
-tests with `node --test packages/verifier/bundle.test.ts`. Full setup installation
-and hosted workflows remain planned.
+tests with `node --test packages/verifier/bundle.test.ts`. The hosted workflow ships in that bundle; full setup installation remains planned.
 
 ## Contributing
 
