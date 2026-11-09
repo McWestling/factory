@@ -9,6 +9,7 @@ if sys.version_info < (3, 11):
         "install or upgrade Python and put it on PATH."
     )
 
+import fcntl
 import argparse
 import json
 import os
@@ -65,8 +66,33 @@ def read_checks(root, commit=None):
     return tables
 
 
-def run_check(root, check):
-    status = subprocess.run(["sh", "-c", check["run"]], cwd=root).returncode
+def run_check(root, name, check, output=None):
+    state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
+    lock_path = state / "factory/verifier.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            message = f"WAIT {name}"
+            try:
+                lock.seek(0)
+                holder = json.load(lock)
+                message += (f": {holder['check']} running in {holder['worktree']} "
+                            f"(pid {holder['pid']})")
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+            print(message, flush=True)
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        lock.seek(0)
+        lock.truncate()
+        json.dump({"check": name, "worktree": str(root), "pid": os.getpid()}, lock)
+        lock.flush()
+        status = subprocess.run(
+            ["sh", "-c", check["run"]], cwd=root, stdout=output,
+            pass_fds=(lock.fileno(),),
+            stderr=subprocess.STDOUT if output is not None else None,
+        ).returncode
     return status if status >= 0 else 128 - status
 
 
@@ -164,8 +190,7 @@ def preflight(root, checks):
         log = record.parent / "logs" / tree / f"{name}.log"
         log.parent.mkdir(parents=True, exist_ok=True)
         with log.open("w", encoding="utf-8") as output:
-            status = subprocess.run(["sh", "-c", check["run"]], cwd=root,
-                                    stdout=output, stderr=subprocess.STDOUT).returncode
+            status = run_check(root, name, check, output)
         failed |= status != 0
         print(f"{'FAIL' if status else 'PASS'} {name}", flush=True)
         if status:
@@ -260,13 +285,13 @@ def main():
         if args.all:
             failed = False
             for name, check in checks.items():
-                status = run_check(root, check)
+                status = run_check(root, name, check)
                 failed |= status != 0
                 print(f"{'FAIL' if status else 'PASS'} {name}", flush=True)
             return int(failed)
         if args.check not in checks:
             raise ValueError(f"unknown check: {args.check}")
-        return run_check(root, checks[args.check])
+        return run_check(root, args.check, checks[args.check])
     result = {"checks": list(checks)} if args.all else plan_checks(root, checks, args.base, args.head)
     print(json.dumps(result))
     return 0
