@@ -101,6 +101,11 @@ function writeStatus(deps: Deps) {
   }
 }
 
+export function startStatusHeartbeat(deps: Deps) {
+  writeStatus(deps);
+  return setInterval(() => writeStatus(deps), 10_000);
+}
+
 // Flag-like or shell-like values never reach argv, even though there's no shell.
 const ARG = /^[\w.:]+[\w.:-]*$/;
 const REPO = /^[\w.-]+\/[\w.-]+$/;
@@ -615,7 +620,7 @@ if (import.meta.main) {
     status: join(stateDir, 'status.json'),
     paused: join(stateDir, 'paused'),
   };
-  writeStatus(deps);
+  startStatusHeartbeat(deps);
   deps.log({ event: 'start', outcome: 'ok' });
   let checking = false;
   const check = async () => {

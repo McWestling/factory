@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import type { MachineAuth } from '../cloud-inbox/auth.ts';
 import { MachineQueue } from '../cloud-inbox/queue.ts';
 import { handleRunner } from '../cloud-inbox/routes.ts';
-import { handleJob, launchArgs, loadConfig, NOT_ALLOWED, poll, resumeWatches, watchJobs, type Deps, type RunnerConfig, type Task } from './runner.ts';
+import { startStatusHeartbeat, handleJob, launchArgs, loadConfig, NOT_ALLOWED, poll, resumeWatches, watchJobs, type Deps, type RunnerConfig, type Task } from './runner.ts';
 
 const example = new URL('../config.example.json', import.meta.url);
 const config: RunnerConfig = {
@@ -771,4 +771,36 @@ test('a stale status temporary file cannot weaken permissions or leak through a 
   await poll(config, f.deps);
   assert.equal(readFileSync(other, 'utf8'), 'untouched');
   assert.equal(fs.statSync(f.deps.status).mode & 0o777, 0o600);
+});
+
+test('heartbeat keeps a pending launch fresh and stops refreshing when cleared', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: 1_800_000_000_000 });
+  const f = fakes();
+  let release!: () => void;
+  let started!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  const launching = new Promise<void>((resolve) => { started = resolve; });
+  const exec = f.deps.exec;
+  f.deps.exec = async (...args) => {
+    if (args[1][0] !== 'open') {
+      started();
+      await pending;
+    }
+    return exec(...args);
+  };
+  const heartbeat = startStatusHeartbeat(f.deps);
+  t.after(() => clearInterval(heartbeat));
+  const job = handleJob(config, f.deps, claim);
+  await launching;
+  for (let i = 0; i < 12; i++) {
+    t.mock.timers.tick(10_000);
+    const snapshot = JSON.parse(readFileSync(f.deps.status, 'utf8'));
+    assert.ok(Date.now() - Date.parse(snapshot.updatedAt) < 30_000);
+    assert.deepEqual(snapshot.current, { identifier: 'ABC-123', sessionId: 'session-1' });
+  }
+  release();
+  await job;
+  clearInterval(heartbeat);
+  t.mock.timers.tick(31_000);
+  assert.ok(Date.now() - Date.parse(JSON.parse(readFileSync(f.deps.status, 'utf8')).updatedAt) > 30_000);
 });
