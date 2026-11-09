@@ -172,23 +172,41 @@ again on recovery: the updates API has no deduplication key. A timed-out create 
 fails and can leave a worktree; recovery applies to reclaimed claims, not terminal failures.
 Logs contain ids and outcomes only.
 
-### Install the Runner at login
+### Install and control the Runner
 
-On macOS, install the Runner as a per-user LaunchAgent after configuring the file
-above. Make sure `node` and `orca` are on your shell's `PATH`, then run:
+On macOS, the menu bar app can be installed before the Runner. To install just the
+app, run:
+
+```sh
+sh packages/delegator/runner/launchd/install.sh --app-only
+```
+
+Open **Factory Runner** in the menu bar. Choose **Install Runner** after configuring
+`~/.config/factory-delegator/config.json`; the app checks that the config has mode
+`600`, and that `node` and `orca` are available in the login shell. The Runner and
+menu bar app run as separate per-user LaunchAgents. The Runner starts at login and
+restarts if it exits; the app's **Start at login** toggle controls its own agent.
+Runner logs are in `~/Library/Logs/factory-delegator/`.
+
+The menu shows **Runner ready** when it can accept work, **Working on …** while it
+handles a job, **Waiting for a PR** while it watches a completed session, **Paused**
+when new work is paused, **Can't reach Cloud Inbox** when its last request failed,
+and **Last job failed** after a failed job. **Runner stopped** means its LaunchAgent
+is not loaded and its status file is missing or stale. The menu can pause pickups,
+open the logs or config, start or stop the Runner, and install or remove its agent.
+
+The same operations remain available from the CLI. With `node` and `orca` on your
+shell's `PATH`, use the default command to install both the app and Runner, or use
+the Runner-specific commands:
 
 ```sh
 sh packages/delegator/runner/launchd/install.sh
+sh packages/delegator/runner/launchd/install.sh --install-runner
+sh packages/delegator/runner/launchd/install.sh --uninstall-runner
 ```
 
-The agent starts at login and restarts if it exits. Its logs are in
-`~/Library/Logs/factory-delegator/`. To stop and remove it, run:
-
-```sh
-sh packages/delegator/runner/launchd/install.sh --uninstall
-```
-
-The installer requires the Runner config to have mode `600`.
+Add `--uninstall` to remove both the app and Runner. The Runner installer requires
+the config to have mode `600`.
 
 After launch, the Runner checks for completion every 45 seconds, independently of
 new job pickup. When a GitHub pull request appears on the issue in Linear, it adds
