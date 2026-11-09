@@ -38,3 +38,25 @@ test('bundle copies executable source and rejects stale content or permissions',
     assert.equal(run('--check').status, 0);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('report job includes failed and timed-out checks but excludes successful checks', async () => {
+  const workflow = readFileSync(new URL('factory-verifier.yml', source), 'utf8');
+  const script = workflow.split('          script: |\n')[1].split('      - name: Report failures')[0];
+  const context = {
+    repo: { owner: 'example', repo: 'repo' }, sha: 'head',
+    serverUrl: 'https://github.com', runId: 42,
+  };
+  const runs = ['failure', 'timed_out', 'success'].map(conclusion => ({
+    name: conclusion, conclusion, app: { slug: 'github-actions' },
+    details_url: 'https://github.com/example/repo/actions/runs/42/job/1',
+  }));
+  const outputs: Record<string, string> = {};
+  const execute = new Function('github', 'context', 'require', 'core',
+    `return (async () => { ${script} })()`);
+  await execute({ rest: { checks: { listForRef: 'listForRef' } }, paginate: async () => runs },
+    context, () => ({ execFileSync: () => JSON.stringify({ checks: ['failure', 'timed_out', 'success'] }) }),
+    { setOutput: (name: string, value: string) => { outputs[name] = value; } });
+  assert.deepEqual(outputs, { checks: 'failure,timed_out' });
+  assert.ok(workflow.includes('FAILED_CHECKS: ${{ steps.failures.outputs.checks }}'));
+  assert.ok(workflow.includes('--failed "$FAILED_CHECKS"'));
+});

@@ -54,3 +54,28 @@ the final `verifier` gate fails if planning or any check fails or is cancelled.
 An empty plan passes. New PR runs cancel older runs for that PR; main runs never
 cancel each other. Checks can use an optional repo-owned composite action at
 `.github/actions/factory-verifier-setup` to install tools before running.
+
+
+## Main-run reporting
+
+`report --before <sha> --after <sha> --failed <name>[,<name>…]` files main
+failures in Linear Triage. An empty or omitted failure list does nothing. A
+failure selected by the push plan is broken (`Bug` plus the repo's Product
+label); another failure is a miss (`Factory`). Missing or all-zero before SHAs
+classify every failure as broken. Open marker matches get a comment; closed
+matches stay closed and the newest is linked to a new issue.
+
+The report job reads failed check runs for this workflow run with `checks: read`.
+It needs `FACTORY_LINEAR_CLIENT_ID` and `FACTORY_LINEAR_CLIENT_SECRET` secrets,
+and `FACTORY_VERIFIER_LINEAR_TEAM` and `FACTORY_VERIFIER_PRODUCT_LABEL` repo
+variables. `FACTORY_VERIFIER_REPO` defaults to `GITHUB_REPOSITORY`. Outside GitHub,
+set `GITHUB_RUN_URL` for the CI run link. Reporter errors fail only the report job.
+
+The Linear app must have client-credentials tokens enabled. The reporter requests
+`read,write` scopes because it reads team metadata and issues, creates issues and
+comments, and creates related-issue links. It exchanges credentials at
+`https://api.linear.app/oauth/token` once per report and uses the returned token
+only in memory. Client-credentials tokens act as the app, last 30 days, and have
+no refresh token; no separate `actor` parameter is required for this grant.
+See [Linear's OAuth documentation](https://linear.app/developers/oauth-2-0-authentication#client-credentials-tokens).
+Creating the app, installing this workflow, and setting secrets remain rollout work.
