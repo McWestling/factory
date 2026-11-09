@@ -1,10 +1,10 @@
 ---
 name: do-implement
-description: Take one implementation issue from the issue tracker to a verified draft PR. Check that it is dispatchable, claim it, build and verify the change, open the draft PR, work the hosted checks, and close the issue out once the PR merges.
+description: Take one implementation issue from the issue tracker to a verified draft PR. Check that it is dispatchable, claim it, build and verify the change, open the draft PR, work the hosted checks, and hand off to `do-closeout` once the PR merges.
 disable-model-invocation: true
 ---
 
-The user hands you one implementation issue: an id like `ABC-123`, or its URL. One run takes it to one verified **draft** PR, then works the hosted checks until the PR is ready for the maintainer. Merging is never yours; closeout waits for the merge.
+The user hands you one implementation issue: an id like `ABC-123`, or its URL. One run takes it to one verified **draft** PR, then works the hosted checks until the PR is ready for the maintainer. Merging is never yours; closeout waits for the merge and runs through `do-closeout`.
 
 This skill is one of the factory's `do-` skills and expects its siblings to be installed alongside it. It checks issues against `do-refine`'s [dispatch-gates.md](../do-refine/dispatch-gates.md) and reads the lifecycle from its [brief-template.md](../do-refine/brief-template.md). PR bodies follow [pr-template.md](pr-template.md).
 
@@ -88,14 +88,7 @@ A cloud session that ends before the checks finish is fine; a later session pick
 
 Closeout happens only once the PR has merged: in a later session the user starts, or in this one if the user merges while you're still here. An unmerged PR never makes the issue done, however green its checks.
 
-1. Set the issue to the done status (the tracker's automation may already have).
-2. Link the merged PR on the issue.
-3. Check off the acceptance criteria that are met.
-4. Post a completion comment with a dateline per **Comment shape**: what landed, and any follow-ups. Post it even when the tracker's automation already set the issue done; it's the record that closeout ran.
-5. Do any doc closeout the repo's `AGENTS.md` asks for.
-6. If the issue sits on a map, update the map per [do-refine's Maps section](../do-refine/SKILL.md#maps). Set the map to its finished status only when its Destination is reached and no open issues remain.
-
-If only some criteria landed, the issue stays in progress, with a comment saying what landed and what remains.
+To close out, run the sibling [`do-closeout`](../do-closeout/SKILL.md) skill on the issue. It owns the post-merge steps.
 
 ## Boundaries
 
