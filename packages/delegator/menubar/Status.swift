@@ -1,10 +1,10 @@
 import Foundation
 
 struct RunnerSnapshot: Decodable {
-    struct Inbox: Decodable { let status: String; let lastOkAt: String? }
-    struct Current: Decodable { let identifier: String; let sessionId: String }
-    struct Watch: Decodable { let identifier: String; let since: String }
-    struct Outcome: Decodable { let identifier: String?; let outcome: String; let time: String }
+    struct Inbox: Decodable, Equatable { let status: String; let lastOkAt: String? }
+    struct Current: Decodable, Equatable { let identifier: String; let sessionId: String }
+    struct Watch: Decodable, Equatable { let identifier: String; let since: String }
+    struct Outcome: Decodable, Equatable { let identifier: String?; let outcome: String; let time: String }
 
     let version: Int
     let updatedAt: String
@@ -16,7 +16,7 @@ struct RunnerSnapshot: Decodable {
     let recent: [Outcome]
 }
 
-enum RunnerState {
+enum RunnerState: Equatable {
     case ready, working(String), waiting, paused, cloudInboxUnreachable
     case failed, stopped, starting
 
@@ -47,11 +47,19 @@ enum RunnerState {
     }
 }
 
-struct RunnerStatus {
+struct RunnerStatus: Equatable {
     let state: RunnerState
     let snapshot: RunnerSnapshot?
 
     var paused: Bool { snapshot?.paused ?? false }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.state == rhs.state &&
+            lhs.snapshot?.current?.identifier == rhs.snapshot?.current?.identifier &&
+            lhs.snapshot?.watching == rhs.snapshot?.watching &&
+            lhs.snapshot?.lastError == rhs.snapshot?.lastError &&
+            lhs.snapshot?.recent == rhs.snapshot?.recent
+    }
 }
 
 func runnerState(json: Data?, launchAgentLoaded: Bool, now: Date) -> RunnerStatus {

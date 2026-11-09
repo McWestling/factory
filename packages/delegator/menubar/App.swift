@@ -16,6 +16,7 @@ private final class RunnerModel: ObservableObject {
         let base = configured.hasPrefix("/") ? URL(fileURLWithPath: configured) : FileManager.default.homeDirectoryForCurrentUser.appending(path: ".local/state")
         return base.appending(path: "factory")
     }
+    private var refreshing = false
     private let agentsDirectory = FileManager.default.homeDirectoryForCurrentUser
         .appending(path: "Library/LaunchAgents")
 
@@ -36,16 +37,22 @@ private final class RunnerModel: ObservableObject {
     }
 
     func refresh() {
-        runnerLoaded = AppCommands.launchctl("print", "gui/\(getuid())/\(runnerLabel)")
+        guard !refreshing else { return }
+        refreshing = true
         let path = stateDirectory.appending(path: "status.json")
-        let data = try? Data(contentsOf: path)
-        status = runnerState(json: data, launchAgentLoaded: runnerLoaded, now: .now)
-        loginEnabled = AppCommands.loginEnabled(menuBarLabel)
+        Task.detached(priority: .utility) { [weak self] in
+            let loaded = AppCommands.launchctl("print", "gui/\(getuid())/\(runnerLabel)")
+            let status = runnerState(json: try? Data(contentsOf: path), launchAgentLoaded: loaded, now: .now)
+            let loginEnabled = AppCommands.loginEnabled(menuBarLabel)
+            await self?.finishRefresh(loaded: loaded, status: status, loginEnabled: loginEnabled)
+        }
     }
 
     func run(_ option: String) {
-        actionError = AppCommands.installer(option)
-        refresh()
+        Task.detached(priority: .utility) { [weak self] in
+            let error = AppCommands.installer(option)
+            await self?.finishAction(error)
+        }
     }
 
     func pause(_ value: Bool) {
@@ -70,6 +77,18 @@ private final class RunnerModel: ObservableObject {
 
     func open(_ path: URL) {
         NSWorkspace.shared.open(path)
+    }
+
+    private func finishRefresh(loaded: Bool, status: RunnerStatus, loginEnabled: Bool) {
+        refreshing = false
+        if runnerLoaded != loaded { runnerLoaded = loaded }
+        if self.status != status { self.status = status }
+        if self.loginEnabled != loginEnabled { self.loginEnabled = loginEnabled }
+    }
+
+    private func finishAction(_ error: String?) {
+        actionError = error
+        refresh()
     }
 }
 
