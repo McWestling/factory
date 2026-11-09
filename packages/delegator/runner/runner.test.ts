@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import type { MachineAuth } from '../cloud-inbox/auth.ts';
@@ -44,6 +44,7 @@ function fakes(task: Partial<Task> | null = goodTask, orca: (string | Error)[] =
   const requests: string[] = [];
   const updates: [string, string][] = [];
   const argv: string[][] = [];
+  const stateDir = mkdtempSync(join(tmpdir(), 'runner-watch-'));
   const deps: Deps = {
     async fetch(input, init) {
       const url = new URL(String(input));
@@ -69,7 +70,9 @@ function fakes(task: Partial<Task> | null = goodTask, orca: (string | Error)[] =
     },
     log() {},
     launches: join(mkdtempSync(join(tmpdir(), 'runner-state-')), 'launches.json'),
-    watches: join(mkdtempSync(join(tmpdir(), 'runner-watch-')), 'watching.json'),
+    watches: join(stateDir, 'watching.json'),
+    status: join(stateDir, 'status.json'),
+    paused: join(stateDir, 'paused'),
   };
   return { deps, requests, updates, argv };
 }
@@ -659,3 +662,108 @@ for (const [label, prepare] of exits) {
     assert.match(result.stderr.toString(), /^factory-runner: /);
   });
 }
+
+test('an idle poll publishes the private menu bar status contract', async () => {
+  const f = fakes();
+  f.deps.now = () => 1_800_000_000_000;
+  f.deps.fetch = async () => new Response(null, { status: 204 });
+  assert.equal(await poll(config, f.deps), false);
+  assert.deepEqual(JSON.parse(readFileSync(f.deps.status, 'utf8')), {
+    version: 1, updatedAt: '2027-01-15T08:00:00.000Z', pid: process.pid,
+    inbox: { status: 'ok', lastOkAt: '2027-01-15T08:00:00.000Z' },
+    paused: false, current: null, watching: [], lastError: null, recent: [],
+  });
+  assert.equal(fs.statSync(f.deps.status).mode & 0o777, 0o600);
+});
+
+test('status shows the current launch, then its outcome and open watch without private task data', async () => {
+  const f = fakes();
+  f.deps.now = () => 1_800_000_000_000;
+  const exec = f.deps.exec;
+  f.deps.exec = async (...args) => {
+    const status = JSON.parse(readFileSync(f.deps.status, 'utf8'));
+    assert.deepEqual(status.current, { identifier: 'ABC-123', sessionId: 'session-1' });
+    return exec(...args);
+  };
+  await poll(config, f.deps);
+  const text = readFileSync(f.deps.status, 'utf8');
+  const status = JSON.parse(text);
+  assert.equal(status.current, null);
+  assert.deepEqual(status.watching, [{ identifier: 'ABC-123', since: '2027-01-15T08:00:00.000Z' }]);
+  assert.deepEqual(status.recent, [{ identifier: 'ABC-123', outcome: 'launched', time: '2027-01-15T08:00:00.000Z' }]);
+  assert.equal(status.lastError, null);
+  for (const secret of [config.bearerSecret, config.inboxUrl, goodTask.description, goodTask.branchName, claim.claimId]) {
+    assert.ok(!text.includes(secret));
+  }
+});
+
+test('failed jobs retain the last error and only the ten latest outcomes', async () => {
+  const f = fakes(goodTask, [ok, orcaError('worktree_conflict')]);
+  f.deps.now = () => 1_800_000_000_000;
+  await poll(config, f.deps);
+  const failure = { identifier: 'ABC-123', outcome: 'orca-worktree_conflict', time: '2027-01-15T08:00:00.000Z' };
+  assert.deepEqual(JSON.parse(readFileSync(f.deps.status, 'utf8')).lastError, failure);
+  for (let i = 0; i < 11; i++) await poll(config, f.deps);
+  const status = JSON.parse(readFileSync(f.deps.status, 'utf8'));
+  assert.equal(status.current, null);
+  assert.equal(status.recent.length, 10);
+  assert.ok(status.recent.every((entry: { outcome: string }) => entry.outcome === 'launched'));
+  assert.deepEqual(status.lastError, failure);
+});
+
+test('pause prevents claims while recovery and PR watching continue, and removal resumes pickup', async () => {
+  const f = await watching();
+  writeFileSync(f.deps.paused, '');
+  f.status.pullRequests = ['https://github.com/owner/repo/pull/7'];
+  const fetch = f.deps.fetch;
+  f.deps.fetch = async (input, init) => String(input).endsWith('/jobs/watching')
+    ? Response.json([]) : fetch(input, init);
+  assert.equal(await poll(config, f.deps), false);
+  assert.deepEqual(f.requests, []);
+  await resumeWatches(config, f.deps);
+  await watchJobs(config, f.deps);
+  const status = JSON.parse(readFileSync(f.deps.status, 'utf8'));
+  assert.equal(status.paused, true);
+  assert.equal(status.inbox.status, 'ok');
+  assert.deepEqual(status.watching, []);
+  assert.equal(f.updates[0]?.[0], 'response');
+  fs.unlinkSync(f.deps.paused);
+  assert.equal(await poll(config, f.deps), true);
+  assert.equal(JSON.parse(readFileSync(f.deps.status, 'utf8')).paused, false);
+});
+
+test('a status write failure logs once without stopping polls and later writes recover', async () => {
+  const f = fakes();
+  const logs: Record<string, string>[] = [];
+  f.deps.log = (entry) => logs.push(entry);
+  mkdirSync(f.deps.status);
+  await poll(config, f.deps);
+  await poll(config, f.deps);
+  assert.equal(logs.filter((entry) => entry.outcome === 'status-write-failed').length, 1);
+  fs.rmdirSync(f.deps.status);
+  await poll(config, f.deps);
+  assert.equal(JSON.parse(readFileSync(f.deps.status, 'utf8')).recent.length, 3);
+});
+
+test('claim failures preserve last contact time without copying error text into status', async () => {
+  const f = fakes();
+  f.deps.now = () => 1_800_000_000_000;
+  f.deps.fetch = async () => new Response(null, { status: 204 });
+  await poll(config, f.deps);
+  f.deps.now = () => 1_800_000_001_000;
+  f.deps.fetch = async () => { throw new Error(config.inboxUrl + config.bearerSecret); };
+  await assert.rejects(() => poll(config, f.deps));
+  const status = JSON.parse(readFileSync(f.deps.status, 'utf8'));
+  assert.deepEqual(status.inbox, { status: 'unreachable', lastOkAt: '2027-01-15T08:00:00.000Z' });
+  assert.deepEqual(status.lastError, { identifier: null, outcome: 'unreachable', time: '2027-01-15T08:00:01.000Z' });
+});
+
+test('a stale status temporary file cannot weaken permissions or leak through a symlink', async () => {
+  const f = fakes();
+  const other = join(dirname(f.deps.status), 'other');
+  writeFileSync(other, 'untouched');
+  fs.symlinkSync(other, `${f.deps.status}.tmp`);
+  await poll(config, f.deps);
+  assert.equal(readFileSync(other, 'utf8'), 'untouched');
+  assert.equal(fs.statSync(f.deps.status).mode & 0o777, 0o600);
+});
