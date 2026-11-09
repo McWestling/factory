@@ -242,7 +242,7 @@ export function launchArgs(config: RunnerConfig, repo: string, model: string, ta
     '--agent', agent,
     '--model', id,
     ...(effort ? ['--effort', effort] : []),
-    `--prompt=/${config.skill} ${task.identifier}`,
+    `--prompt=${agent === 'codex' ? '$' : '/'}${config.skill} ${task.identifier}`,
     '--setup', config.skill === 'do-implement' ? 'run' : 'skip',
     '--linear-issue', task.identifier,
     '--json',
