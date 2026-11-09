@@ -349,10 +349,11 @@ def report_failures(root, before, after, failed):
         # shortcut: concurrent reports can race to create issues; serialize if duplicates appear.
         matches = connection("issues", "IssueFilter",
                              {"team": {"id": {"eq": team}}, "description": {"contains": marker}},
-                             "id description updatedAt state { type }")
+                             "id description updatedAt archivedAt state { type }")
         matches = [issue for issue in matches if marker in (issue.get("description") or "").splitlines()]
         matches.sort(key=lambda issue: issue["updatedAt"], reverse=True)
-        open_match = next((issue for issue in matches if issue["state"]["type"] not in
+        open_match = next((issue for issue in matches if not issue.get("archivedAt")
+                           and issue["state"]["type"] not in
                            ("completed", "canceled")), None)
         evidence = f"Commit: [{after}]({commit_url})\n\nRun: {run_url}"
         if open_match:

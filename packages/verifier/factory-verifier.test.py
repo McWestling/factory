@@ -214,6 +214,15 @@ class FactoryVerifierTests(unittest.TestCase):
         self.assertEqual(len(report("--before", before)), 2)
         relation = next(c["variables"]["input"] for c in calls if "issueRelationCreate" in c["query"])
         self.assertEqual(relation, {"issueId": "new", "relatedIssueId": "latest", "type": "related"})
+        for state in ("triage", "started"):
+            matches[:] = [{"id": "archived", "description": marker, "updatedAt": "2026-02-01",
+                           "archivedAt": "2026-02-02", "state": {"type": state}}]
+            self.assertEqual(len(report("--before", before)), 2)
+            self.assertFalse(any("commentCreate" in c["query"] for c in calls))
+            relation = next(c["variables"]["input"] for c in calls if "issueRelationCreate" in c["query"])
+            self.assertEqual(relation["relatedIssueId"], "archived")
+            issue_queries = [c["query"] for c in calls if "query" in c["query"] and "issues(" in c["query"]]
+            self.assertTrue(all("archivedAt" in query for query in issue_queries))
         errors.append(True)
         result = subprocess.run([sys.executable, "-c", runner, "report", "--after", after,
                                  "--failed", "first"], cwd=self.root,
