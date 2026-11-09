@@ -15,6 +15,8 @@ Every PR body a factory skill writes follows this template, unless the repo has 
 - **Short form:** for tiny PRs, where nothing changes at runtime and reverting is trivial (a docs fix, a pinned dev tool, a typo).
 - **Full form:** everything else.
 
+Skill or template text that agents follow counts as a runtime change: agents run it. A change that migrates other repos' files (a setup changelog entry, say) is never trivial to revert, since a revert here won't undo what already ran there.
+
 ## Short form
 
 ```markdown
@@ -80,4 +82,12 @@ For <ABC-123>. <Links to issues filed during the work, when there are any.>
 - [ ] <step>
 ````
 
-Keep only the checkbox groups that have steps. Put the issue id in the body in either form, so the tracker links the PR.
+Keep only the checkbox groups that have steps. Write each step so the maintainer can do it without working anything out:
+
+- **Something to paste:** under the checkbox, a fenced block with the exact command or prompt, then one line on what a pass looks like.
+- **Existing state:** point the step at an issue, branch or file that already exists. Never ask the maintainer to make a scratch one.
+- **Reinstall first:** when the PR changes installed skills, the first **After merge** step is the reinstall command from the README:
+
+  ```sh
+  npx skills add mcwestling/factory --skill '*' -g
+  ``` Put the issue id in the body in either form, so the tracker links the PR.
