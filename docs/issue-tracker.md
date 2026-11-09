@@ -2,14 +2,14 @@
 
 This is McWestling's config; to adopt, copy it and replace the values.
 
-**Setup version:** 2026-11-09
+**Setup version:** 2026-11-09.2
 
 The skills hold the procedure. This file holds only the values they look up, under the headings below. Keep the headings stable: skills cite them by name.
 
 ## Tracker
 
 - **Tool:** Linear, workspace **McWestling**.
-- **Access:** Linear MCP only. In an Orca workspace, the `orca linear` CLI also qualifies.
+- **Access:** Linear MCP only.
 
 ## Team
 

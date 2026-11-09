@@ -12,7 +12,7 @@ The run asks at most one round of easy questions. It reports whether dependencie
 
 ## Linear
 
-Use the Linear MCP server for every read (in an Orca workspace, `orca linear` also qualifies). If it is unavailable or unauthorized, stop and report that; don't fall back to a browser, the app, or the API. Write to Linear only when the user picks that option in a question.
+Use the Linear MCP server for every read. If it is unavailable or unauthorized, stop and report that; don't fall back to a browser, the app, or the API. Write to Linear only when the user picks that option in a question.
 
 ## Machine check
 
@@ -256,14 +256,14 @@ The model table and its Checked date are the factory's curated pick. Copy them a
 
 This is {{workspace}}'s config; to adopt, copy it and replace the values.
 
-**Setup version:** 2026-11-09
+**Setup version:** 2026-11-09.2
 
 The skills hold the procedure. This file holds only the values they look up, under the headings below. Keep the headings stable: skills cite them by name.
 
 ## Tracker
 
 - **Tool:** Linear, workspace **{{workspace}}**.
-- **Access:** Linear MCP only. In an Orca workspace, the `orca linear` CLI also qualifies.
+- **Access:** Linear MCP only.
 
 ## Team
 
@@ -435,3 +435,10 @@ Apply each entry newer than the doc's version, in order. Compare with slots fill
 - **Old text:** `` **Default target:** `{{default target}}`, for every model below. ``
 - **New text:** `` **Default target:** `{{default target}}`, for every model below, Cursor models included. Never suggest a legacy target. ``
 - **Why:** Cursor models are dispatched from the default target like every other model, and Dispatch now kept suggesting the legacy Linear delegation.
+
+### 2026-11-09.2
+
+- **Where:** `## Tracker`, the **Access** line.
+- **Old text:** ``- **Access:** Linear MCP only. In an Orca workspace, the `orca linear` CLI also qualifies.``
+- **New text:** `- **Access:** Linear MCP only.`
+- **Why:** Linear access must use MCP in every repo.
