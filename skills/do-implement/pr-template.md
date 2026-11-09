@@ -90,4 +90,6 @@ Keep only the checkbox groups that have steps. Write each step so the maintainer
 
   ```sh
   npx skills add mcwestling/factory --skill '*' -g
-  ``` Put the issue id in the body in either form, so the tracker links the PR.
+  ```
+
+Put the issue id in the body in either form, so the tracker links the PR.
