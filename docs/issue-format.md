@@ -26,7 +26,7 @@ reason: <one clause explaining why this model fits>
 - `model` is required and must exactly match a name in the tracker's **Preferred models** table. The machine's `models` config maps that name to its agent, model identifier and effort. A model absent from the machine's config is refused.
 - `reason` is a human-readable clause explaining why the selected model fits.
 - The agent is determined by the configured model mapping, so the block has no `agent` field.
-- The skill is not part of the issue format. Runner config's optional `skill` key selects it and defaults to `do-implement`; its value must match `^[a-z0-9-]+$`. Delegator prompts Codex with `$<skill> <issue id>` and other agents with `/<skill> <issue id>`. Orca setup runs only for `do-implement` and is skipped for other skills. The configured skill decides what it accepts; a `wayfinder:` label is not a Delegator gate.
+- The skill is not part of the issue format. Runner config's optional `skill` key selects it and defaults to `do-implement`; its value must match `^[a-z0-9-]+$`. Delegator prompts Codex with `$<skill> <issue id>` and other agents with `/<skill> <issue id>`, followed by the delegated-run line. Orca setup runs only for `do-implement` and is skipped for other skills. The configured skill decides what it accepts; a `wayfinder:` label is not a Delegator gate.
 
 ## Refusals
 
@@ -44,10 +44,10 @@ These are format and configuration refusals. Runtime and launch failures are han
 The Runner resolves the repo tag, model mapping and configured skill, then launches the Linear branch with Orca:
 
 ```text
-orca worktree create --name <last segment of the branch> --repo path:<local checkout> --branch <Linear gitBranchName> --agent <agent> --model <model> [--effort <effort>] "--prompt=<agent-specific prefix><skill> <issue id>" --setup run|skip --linear-issue <issue id> --json
+orca worktree create --name <last segment of the branch> --repo path:<local checkout> --branch <Linear gitBranchName> --agent <agent> --model <model> [--effort <effort>] "--prompt=<agent-specific prefix><skill> <issue id>\nDelegated run: nobody is watching this session." --setup run|skip --linear-issue <issue id> --json
 ```
 
-Codex uses `$` as the prefix; Claude and other agents use `/`.
+Codex uses `$` as the prefix; Claude and other agents use `/`. The prompt's second line, `Delegated run: nobody is watching this session.`, tells the skill to make default calls instead of stopping to ask; `do-implement` lists them under **Questions along the way**.
 
 Orca requires `--name`. The prompt is one argument in `--prompt=` form, and the Runner calls `execFile` with this argv, never a shell. It refuses an issue id or branch name that isn't plain, so neither can look like a flag.
 

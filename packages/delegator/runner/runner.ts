@@ -247,7 +247,7 @@ export function launchArgs(config: RunnerConfig, repo: string, model: string, ta
     '--agent', agent,
     '--model', id,
     ...(effort ? ['--effort', effort] : []),
-    `--prompt=${agent === 'codex' ? '$' : '/'}${config.skill} ${task.identifier}`,
+    `--prompt=${agent === 'codex' ? '$' : '/'}${config.skill} ${task.identifier}\nDelegated run: nobody is watching this session.`,
     '--setup', config.skill === 'do-implement' ? 'run' : 'skip',
     '--linear-issue', task.identifier,
     '--json',
