@@ -3,6 +3,7 @@
 import fcntl
 import json
 import select
+import signal
 import time
 import os
 import shutil
@@ -77,10 +78,13 @@ class FactoryVerifierTests(unittest.TestCase):
         process = subprocess.Popen(
             [sys.executable, str(SCRIPT), *args], cwd=cwd or self.root,
             env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            start_new_session=True,
         )
         def cleanup():
-            if process.poll() is None:
-                process.kill()
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
             process.communicate()
         self.addCleanup(cleanup)
         return process
@@ -145,6 +149,33 @@ class FactoryVerifierTests(unittest.TestCase):
         lines = events.read_text().splitlines()
         self.assertEqual([line.split()[0] for line in lines], ["start", "end", "start", "end"])
         self.assertLessEqual(int(lines[1].split()[1]), int(lines[2].split()[1]))
+
+    def test_check_keeps_lock_after_verifier_is_killed(self):
+        import shlex
+        release = self.root.parent / "release"
+        code = (
+            "import pathlib,time; "
+            f"release=pathlib.Path({str(release)!r}); "
+            "print('started', flush=True); deadline=time.monotonic()+10; "
+            "exec('while not release.exists() and time.monotonic()<deadline: time.sleep(0.01)'); "
+            "assert release.exists(); print('finished', flush=True)"
+        )
+        # Keep the shell alive too, rather than letting it replace itself with Python.
+        self.save_contract(shlex.join([sys.executable, "-c", code]) + "; :")
+        first = self.start_verifier("run", "first")
+        self.assertEqual(self.wait_line(first), "started")
+        first.kill()
+        first.wait(timeout=5)
+        second = self.start_verifier("run", "first")
+        self.assertEqual(self.wait_line(second),
+                         f"WAIT first: first running in {self.root.resolve()} (pid {first.pid})")
+        self.assertIsNone(second.poll())
+        release.touch()
+        output, errors = first.communicate(timeout=5)
+        self.assertIn("finished", output)
+        output, errors = second.communicate(timeout=5)
+        self.assertEqual(second.returncode, 0, errors)
+        self.assertEqual(output.splitlines(), ["started", "finished"])
 
     def test_killed_holder_releases_lock_and_unreadable_details_still_wait(self):
         self.save_contract()
