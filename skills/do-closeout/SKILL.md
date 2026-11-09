@@ -1,6 +1,6 @@
 ---
 name: do-closeout
-description: Check that an agent thread is good to close, and finish what's left. Close out the thread's issue once its PR has merged, report local git state, list loose ends from the session and any doc closeout, end with a verdict of Good to close or Not yet, and on Good to close suggest the next ticket to pick up.
+description: Check that an agent thread is good to close, and finish what's left. Close out the issue after merge, offer to run unticked after-merge steps, report local git state and loose ends, and give a Good to close or Not yet verdict with a next ticket when good to close.
 disable-model-invocation: true
 ---
 
@@ -61,10 +61,22 @@ Check the tracker before listing a follow-up: one already filed isn't loose.
 
 Do whatever the repo's `AGENTS.md` (and the docs it links) asks for after a merge. If it asks for nothing, say so.
 
+### PR after-merge checklist
+
+Read the merged PR's current body with `gh pr view <n> --json body`. Under **What you need to do**, find the **After merge** checklist, stopping at the next group or section. A missing section or checklist adds nothing. Ticked boxes (`- [x]` or `- [X]`) count as done; leave them out of **Still open** and don't rerun them.
+
+List unticked steps and ask whether to run the runnable commands now. After the user approves a step:
+
+1. Check the command and its effects against **Never** below. If it would touch git, branches or worktrees, report it for the maintainer instead of running it. Other approved after-merge commands may run; they aren't git actions on the thread's branch.
+2. Run the command, compare its result with the step's `Pass:` line, and report pass or fail. If the expected result is missing or unclear, ask before treating it as passed. Manual checks and steps on another machine stay for the maintainer.
+3. When a step passes, re-read the PR body, find that same step in the fresh body, and tick only its box. Save the fresh body to a file and use `gh pr edit <n> --body-file <path>`, preserving every other edit. If the step changed or can't be matched confidently, ask rather than overwriting it. If saving fails, report that its completion is still unrecorded.
+
+A failed, unrun (including declined), non-runnable or unrecorded step stays under **Still open** and makes the verdict **Not yet**. If the user explicitly dismisses a step as no longer needed, it isn't open; declining to run it now alone isn't dismissal.
+
 ## What you may change
 
 - **Fix by yourself:** tracker closeout items only, from [step 2](#2-tracker-closeout).
-- **Ask first:** list the loose ends and doc closeout items, then do each one only after the user says yes to it. File a follow-up as a new issue in the triage status per **Issue statuses**, linked to this issue as related.
+- **Ask first:** list the loose ends, doc closeout items and unticked PR after-merge steps, then do each one only after the user says yes to it. For PR steps, run, verify and record completion per the checklist procedure above. File a follow-up as a new issue in the triage status per **Issue statuses**, linked to this issue as related.
 - **Never:** touch git, branches or worktrees. No commits, pushes, stash drops, branch deletes or worktree removal; report them and let the user act.
 
 ## 6. Verdict
