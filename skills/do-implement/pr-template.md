@@ -20,7 +20,7 @@ Every PR body a factory skill writes follows this template, unless the repo has 
 ```markdown
 <A paragraph: what was wrong or missing, and what this PR changes.> For <ABC-123>.
 
-**Why <choice>:** <the reason behind the one choice a reviewer might question>.
+**Why <choice>:** <the reason behind the one choice a reviewer might question, when there is one>.
 
 **Checked:** <what you ran or compared, and that it passed>.
 ```
