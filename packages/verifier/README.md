@@ -23,7 +23,19 @@ compares content and permissions; the Python suite tests delivery from an isolat
 installed skill, including repeated copies and replacement of an old version.
 
 The core supports `plan --base <sha> --head <sha>`, `plan --all`, `run <check>`
-and `run --all`. Full setup installation, hooks and autopilot are still planned. The future
+and `run --all`. With no command, it runs `preflight`: all checks except those with
+`local = false`, regardless of trigger paths. Preflight installs the shared pre-push
+hook and saves passing checks by tree SHA under the common Git directory, only
+while the worktree is clean and HEAD is unchanged. Repeated runs reuse that proof.
+Failures print a log path and its last 20 lines before continuing.
+
+`install-hook` preserves foreign hooks. The hook requires proof for all local
+checks in each pushed branch commit’s contract; tags and deletes are ignored.
+`FACTORY_VERIFIER_OVERRIDE="<reason>" git push` logs and allows an unverified push;
+agents need explicit user authorization to use it. Local proof does not test a
+later merge result or replace hosted checks.
+
+Full setup installation and autopilot are still planned. The future
 installer copies from the installed skill's `verifier/` directory to the consuming
 repo's `scripts/factory-verifier`, preserving executable permissions. The committed
 copy remains the version pin; setup updates produce reviewable diffs.

@@ -63,8 +63,8 @@ Make a careful pass by hand over the diff against the default branch. Fix what i
 ## 7. Verify and push
 
 1. Merge the latest default branch and commit everything. Commits use plain imperative subjects.
-2. Run the repo's full check, per `AGENTS.md`.
-3. Push only the commit that passed. Push unverified only when the maintainer authorizes that specific push.
+2. In repos adopting Factory Verifier, run `scripts/factory-verifier preflight` after incorporating the latest default branch and committing, before **every** push. It runs all local checks and saves evidence for the committed tree. Any later code change needs evidence for its new tree; a message-only amend can reuse evidence. Repos without Verifier run their documented full check per `AGENTS.md`.
+3. Push only the commit that passed. Agents need explicit user authorization for that specific push to use `FACTORY_VERIFIER_OVERRIDE="<reason>"`; the reason must be non-empty. Local evidence covers the verified tree; main advancing can change the eventual merge result.
 
 ## 8. Open the draft PR
 
