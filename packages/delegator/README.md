@@ -170,7 +170,25 @@ per read, without ids, and is treated as empty. Losing that state loses recovery
 A thought accepted just before a crash, lost response or failed flag write may be posted
 again on recovery: the updates API has no deduplication key. A timed-out create still
 fails and can leave a worktree; recovery applies to reclaimed claims, not terminal failures.
-Logs contain ids and outcomes only. Running the Runner in the background is not built yet.
+Logs contain ids and outcomes only.
+
+### Install the Runner at login
+
+On macOS, install the Runner as a per-user LaunchAgent after configuring the file
+above. Make sure `node` and `orca` are on your shell's `PATH`, then run:
+
+```sh
+sh packages/delegator/runner/launchd/install.sh
+```
+
+The agent starts at login and restarts if it exits. Its logs are in
+`~/Library/Logs/factory-delegator/`. To stop and remove it, run:
+
+```sh
+sh packages/delegator/runner/launchd/install.sh --uninstall
+```
+
+The installer requires the Runner config to have mode `600`.
 
 After launch, the Runner checks for completion every 45 seconds, independently of
 new job pickup. When a GitHub pull request appears on the issue in Linear, it adds
