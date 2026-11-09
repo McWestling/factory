@@ -1,0 +1,2 @@
+scripts:
+  setup: cd packages/delegator && npm ci
