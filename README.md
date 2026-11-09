@@ -93,6 +93,8 @@ Run this in your terminal and select your agents when prompted. Install all the 
 
 You need Git, Node.js 22.20+ with npm, the [GitHub CLI](https://cli.github.com), and [Linear’s MCP server](https://linear.app/docs/mcp) connected to your agent. Run `gh auth login` to sign in to GitHub. Python 3.11+ enables service setup; a POSIX shell and `nc` enable dev ports. [Orca](https://onorca.dev/download) is recommended for parallel agent workspaces.
 
+Delegator development requires Node.js 26.
+
 Delegator is a separate, optional service. It requires deploying Cloud Inbox to your
 own Cloudflare account; installing the skills does not deploy it. Cloud Inbox and
 the manually run Runner are implemented; pairing and automatic background startup
