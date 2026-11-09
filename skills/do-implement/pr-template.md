@@ -42,7 +42,8 @@ Skill or template text that agents follow counts as a runtime change: agents run
 
 **Why <choice>:** <the reason, for any choice that looks surprising. Other judgment calls only when a reviewer would care.>
 
-For <ABC-123>. <Links to issues filed during the work, when there are any.>
+For <ABC-123>.
+Related to <ABC-124>: [<title>](<issue URL>)
 
 ## Evidence
 
