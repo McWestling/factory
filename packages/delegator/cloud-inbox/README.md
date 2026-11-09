@@ -106,7 +106,7 @@ thought already sent when the claim lands may still appear.
 
 The Runner API authenticates with `Authorization: Bearer <bearerSecret>`, and the
 machine comes only from the secret that matched. A job's id is its session id.
-Every operation below except claim takes `?claimId=<claimId>` (400 without it) and
+Every operation below except claim and watch recovery takes `?claimId=<claimId>` (400 without it) and
 answers 409 unless that claim holds the job: it's the job's current claim with an
 unexpired lease, or the claim that launched it. Each machine's jobs live in its own
 Durable Object, so another machine's job id is simply unknown. The issue and session
@@ -117,6 +117,11 @@ operation sends a fixed Linear query or mutation. A Linear failure on a read ans
   (204 when none) and leases it for 10 minutes. `claimId` is new for every claim attempt.
   An expired lease goes back on the queue, unless a newer job for the same issue is
   waiting, which replaces it.
+- `GET /jobs/watching` returns this machine's launched jobs as
+  `[{issueId, sessionId, claimId, at}]`, excluding sessions already ended or superseded.
+  `at` is the launch-report timestamp. This lets an upgraded Runner recover completion
+  watches without creating worktrees again. The bearer secret selects the machine;
+  no request parameter can select another machine or issue. Keep the response private.
 - `POST /jobs/<id>/launched?claimId=<claimId>` and
   `POST /jobs/<id>/failed?claimId=<claimId>` record that claim's outcome: 204, 400 if
   `claimId` is missing, or 409 unless it's the job's current claim with an unexpired

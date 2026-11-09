@@ -22,7 +22,7 @@ export function underBasePath(request: Request): Request | null {
 }
 
 export type Machines = (machine: string) =>
-  Pick<MachineQueue, 'webhook' | 'claim' | 'finish' | 'task' | 'update' | 'watch' | 'linkPullRequest'>;
+  Pick<MachineQueue, 'webhook' | 'claim' | 'finish' | 'task' | 'update' | 'watch' | 'watching' | 'linkPullRequest'>;
 
 // Logs ids and outcomes only: never bodies, headers, tokens or state.
 export const log = (fields: Record<string, string>) => console.log(JSON.stringify(fields));
@@ -165,6 +165,10 @@ export async function handleRunner(request: Request, config: Config, machines: M
   const url = new URL(request.url);
   const [, route, id, op, ...rest] = url.pathname.split('/');
   const method = request.method;
+
+  if (method === 'GET' && route === 'jobs' && id === 'watching' && op === undefined) {
+    return Response.json(await queue.watching());
+  }
 
   if (method === 'POST' && route === 'jobs' && id === 'claim' && op === undefined) {
     const job = await queue.claim();

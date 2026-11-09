@@ -44,7 +44,9 @@ These are format and configuration refusals. Runtime and launch failures are han
 The Runner resolves the repo tag, model mapping and configured skill, then launches the Linear branch with Orca:
 
 ```text
-orca worktree create --repo <repo> --branch <Linear gitBranchName> --agent <agent> --model <model> [--effort <effort>] --prompt "/<skill> <issue id>" --setup run|skip --linear-issue <issue id> --json
+orca worktree create --name <last segment of the branch> --repo path:<local checkout> --branch <Linear gitBranchName> --agent <agent> --model <model> [--effort <effort>] "--prompt=/<skill> <issue id>" --setup run|skip --linear-issue <issue id> --json
 ```
+
+Orca requires `--name`. The prompt is one argument in `--prompt=` form, and the Runner calls `execFile` with this argv, never a shell. It refuses an issue id or branch name that isn't plain, so neither can look like a flag.
 
 This contract lives here; the parser and its tests live in `packages/delegator/` beside the shared job type.

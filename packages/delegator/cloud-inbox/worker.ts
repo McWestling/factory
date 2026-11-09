@@ -43,6 +43,7 @@ export default {
         task: (id, claimId) => stub.task(name, id, claimId),
         update: (id, claimId, type, body) => stub.update(name, id, claimId, type, body),
         watch: (id, claimId) => stub.watch(name, id, claimId),
+        watching: () => stub.watching(name),
         linkPullRequest: (id, claimId) => stub.linkPullRequest(name, id, claimId),
       };
     };
@@ -151,6 +152,10 @@ export class Machine extends DurableObject<Env> {
 
   watch(machine: string, id: string, claimId: string) {
     return this.#queueFor(machine).watch(id, claimId);
+  }
+
+  watching(machine: string) {
+    return this.#queueFor(machine).watching();
   }
 
   linkPullRequest(machine: string, id: string, claimId: string) {

@@ -45,6 +45,7 @@ People who plan their work in Linear and want coding agents to do more of the bu
 │   ├── verifier/         # Canonical check core, tests and skill bundle tooling
 │   └── delegator/
 │       ├── cloud-inbox/  # Application: runs on Cloudflare
+│       ├── runner/       # Local process: picks up jobs and launches Orca
 │       ├── wrangler.toml # Cloud Inbox deployment and storage configuration
 │       └── *.ts          # Shared job types, issue parser and tests
 ├── skills/
@@ -56,19 +57,19 @@ People who plan their work in Linear and want coding agents to do more of the bu
 Folders describe what the code belongs to; they do not all represent applications.
 `skills/` holds agent instructions, `packages/` currently holds both the Delegator
 application and shared code, `tools/` holds tool configuration, and `docs/` holds
-contracts. The Runner's code will live in `packages/delegator/runner/`; it has no folder or
-install command yet.
+contracts. The Runner lives in `packages/delegator/runner/` and runs manually;
+automatic background startup is not built yet.
 
 ## Software and where it runs
 
 | Component | Runtime | Status and setup |
 | --- | --- | --- |
 | Cloud Inbox | Your Cloudflare account: Worker plus per-machine Durable Object storage and alarms | Implemented. [Deploy and configure it](packages/delegator/README.md#set-up-your-cloud-inbox). |
-| Runner | Your machine, alongside Orca | Planned. Will pick up Cloud Inbox jobs and launch Orca; not yet installable. |
+| Runner | Your machine, alongside Orca | Available to run manually. [Configure and run it](packages/delegator/README.md#run-the-runner). Automatic background startup is not built yet. |
 | Shared Delegator code | Imported by the components that use it | Job types and issue parser in `packages/delegator/`; no separate process or deployment. |
 
-Linear sends delegations to Cloud Inbox. The Runner will claim them over HTTPS and
-launch Orca on your machine. Cloud Inbox can queue work while that machine sleeps.
+Linear sends delegations to Cloud Inbox. The Runner claims them over HTTPS and
+launches Orca on your machine. Cloud Inbox can queue work while that machine sleeps.
 See the [Delegator runtime and setup guide](packages/delegator/README.md#where-it-runs)
 for credentials, testing, deployment and day-to-day operation.
 
@@ -93,9 +94,10 @@ Run this in your terminal and select your agents when prompted. Install all the 
 You need Git, Node.js 22.20+ with npm, the [GitHub CLI](https://cli.github.com), and [Linear’s MCP server](https://linear.app/docs/mcp) connected to your agent. Run `gh auth login` to sign in to GitHub. Python 3.11+ enables service setup; a POSIX shell and `nc` enable dev ports. [Orca](https://onorca.dev/download) is recommended for parallel agent workspaces.
 
 Delegator is a separate, optional service. It requires deploying Cloud Inbox to your
-own Cloudflare account; installing the skills does not deploy it. Cloud Inbox is
-implemented, but the Runner that picks up jobs and launches Orca is not yet included.
-See [where Delegator runs and how to set up Cloud Inbox](packages/delegator/README.md#where-it-runs).
+own Cloudflare account; installing the skills does not deploy it. Cloud Inbox and
+the manually run Runner are implemented; pairing and automatic background startup
+are not built yet. See [where Delegator runs and how to set up Cloud Inbox](packages/delegator/README.md#where-it-runs)
+and [how to configure and run the Runner](packages/delegator/README.md#run-the-runner).
 
 ## Adopting
 

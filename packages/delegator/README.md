@@ -9,9 +9,8 @@ own Linear agent integration, so the agent you delegate to decides the machine.
 - **Cloud Inbox:** you deploy this application to your Cloudflare account. It
   receives tasks from Linear and holds them while your computer is busy or asleep.
   Cloudflare also runs its storage and message retries; no database server to manage.
-- **Runner:** a background process on your machine that will pick up tasks from
-  Cloud Inbox and start them in Orca. It is not implemented yet; its code will live
-  in `packages/delegator/runner/`.
+- **Runner:** a process on your machine that picks up tasks from Cloud Inbox and
+  starts them in Orca. See [Run the Runner](#run-the-runner).
 
 Cloud Inbox is available for controlled testing. On Cloudflare it has answered a real
 delegation and stop, and served the Runner API's task, update and write-back operations
@@ -96,8 +95,8 @@ secrets and jobs; use the same app, not a replacement installation.
 
 Deployment is separate from the intended everyday two-step connection: visit Cloud
 Inbox and authorize with Linear, then open the running Mac Runner and redeem a
-short-lived, single-use pairing code or app link. **Runner and pairing are not built
-in this ticket**, so that end-to-end experience is not available yet. Pairing will
+short-lived, single-use pairing code or app link. **Pairing and the background Runner are not built
+yet**, so that end-to-end experience is not available. Pairing will
 transfer only machine authority for the restricted API, never a Linear token.
 
 For a live smoke test, delegate a disposable issue to your app and expect its queued
@@ -127,6 +126,67 @@ Commands never export a Linear token to the Runner.
 The command does not delete Cloudflare resources or Linear app registrations.
 Keep the private app for reconnect; delete a disposable test app in Linear settings
 when testing is finished. Adding computers remains a manual configuration task.
+
+## Run the Runner
+
+Copy [config.example.json](config.example.json) to
+`~/.config/factory-delegator/config.json`, fill it in and `chmod 600` it. The Runner
+refuses to start without it, with a looser mode, or with any key missing or empty;
+nothing has a default except `skill` (`do-implement`). `machine` is the Linear app's
+name, used in messages. Each `repos` path is a local checkout Orca knows, and each
+`models` key is an exact Preferred models name.
+
+```sh
+npm run runner
+```
+
+Every 15 s it claims one job and checks it with what Cloud Inbox returns. Delegation
+by a user on `allowedCreatorIds` is the approval to launch. It drops a job whose issue
+is no longer delegated to the app, and refuses an unlisted or missing creator, an issue
+that fails the [issue format](../../docs/issue-format.md), or a model or repo not in
+its config. Otherwise it runs `orca open --json` and the documented
+`orca worktree create`, retrying once if Orca's runtime is unavailable, then posts
+"Started …" and reports `launched`; Cloud Inbox sets the status, `Orca` label and
+assignee. Any failure posts one `error` and reports `failed`, which clears the delegate.
+It never requeues explicitly. Before create, the Runner saves an intent in
+`launches.json` beside the config; it refuses to launch if that write fails. It records
+a successful create and whether Cloud Inbox accepted the "Started …" thought. If either
+the thought or launch report fails, the lease expires and Cloud Inbox hands the session
+back. A restarted Runner reports the saved launch without creating another worktree,
+and posts the thought only if its saved flag says it wasn't accepted.
+
+If the Runner dies during create or before recording its result, the saved intent lets
+it check `orca repo show` and `orca worktree list` with `--json`. Recovery requires the
+exact configured checkout path, repo ID and branch on the local host. Without that
+match (including unreadable or incomplete listing results with no match), it follows
+the normal create and failure path; `worktree_conflict` alone never proves a launch.
+Orca confirms a worktree, not that its agent started, received the prompt or is still
+running. A pre-existing matching worktree can also satisfy an intent left before create.
+
+State files are replaced atomically and old entries are pruned on writes after 30 days.
+The previous numeric launch records still recover, but have no thought metadata to retry.
+A missing file is normal; unreadable or corrupt state logs `launches-unreadable` once
+per read, without ids, and is treated as empty. Losing that state loses recovery.
+A thought accepted just before a crash, lost response or failed flag write may be posted
+again on recovery: the updates API has no deduplication key. A timed-out create still
+fails and can leave a worktree; recovery applies to reclaimed claims, not terminal failures.
+Logs contain ids and outcomes only. Running the Runner in the background is not built yet.
+
+After launch, the Runner checks for completion every 45 seconds, independently of
+new job pickup. When a GitHub pull request appears on the issue in Linear, it adds
+the PR link to the agent session and posts "Opened <PR URL>." This final response
+ends Linear's "Working…" state; it does not mark the issue Done or merge the PR.
+If there is no PR after 24 hours, it replies "No PR after 24 h; check the Orca worktree."
+Completed, errored and stopped sessions are dropped without another reply.
+
+Open watches are saved in `${XDG_STATE_HOME:-~/.local/state}/factory/watching.json`
+with owner-only permissions and atomic replacement. Keep this file private: it holds
+claim authority, not Linear credentials. The Runner also recovers this machine's
+still-open launched jobs from Cloud Inbox, including launches made before completion
+watching was available. Network failures are retried; an accepted final response is
+not queued twice. Deploy Cloud Inbox before upgrading the Runner so its recovery
+endpoint is available. PR detection requires Linear's GitHub integration to attach
+the PR to the issue; there is no GitHub CLI fallback.
 
 ## Security
 
