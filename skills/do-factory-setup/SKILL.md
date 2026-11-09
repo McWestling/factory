@@ -256,7 +256,7 @@ The model table and its Checked date are the factory's curated pick. Copy them a
 
 This is {{workspace}}'s config; to adopt, copy it and replace the values.
 
-**Setup version:** 2026-11-06
+**Setup version:** 2026-11-09
 
 The skills hold the procedure. This file holds only the values they look up, under the headings below. Keep the headings stable: skills cite them by name.
 
@@ -331,7 +331,7 @@ Each product has an initiative with the same name as its Product label. Its desc
 
 The label records where the work was dispatched from, not where the session runs or which model ran. Set it when work starts{{orca rule}}. The issue's factory-run block target is the plan; the label records what actually ran.
 
-**Default target:** `{{default target}}`, for every model below.
+**Default target:** `{{default target}}`, for every model below, Cursor models included. Never suggest a legacy target.
 
 ## Preferred models
 
@@ -386,7 +386,7 @@ Datelines in use:
 - **PR opened:** `YYYY-MM-DD — PR opened: <link>`
 - **Back to Triage:** `YYYY-MM-DD — Back to Triage: <reason>.`
 - **Decision resolved:** a `## Resolution (YYYY-MM-DD)` heading
-- **Kickoff prompt:** a fenced `text` block reading `To kick this off, run /do-implement {{KEY}}-<number>`
+- **Kickoff prompt:** a fenced `text` block holding only `/do-implement {{KEY}}-<number>`, with no lead-in. Any explanation goes outside the block.
 
 ## Pull requests
 
@@ -423,3 +423,15 @@ Apply each entry newer than the doc's version, in order. Compare with slots fill
 - **Old text:** `The issue's dispatch block target is the plan`
 - **New text:** `The issue's factory-run block target is the plan`
 - **Why:** the fenced `dispatch` block was renamed `factory-run`.
+
+### 2026-11-09
+
+- **Where:** `## Comment shape`, the **Kickoff prompt** dateline.
+- **Old text:** `` - **Kickoff prompt:** a fenced `text` block reading `To kick this off, run /do-implement {{KEY}}-<number>` ``
+- **New text:** `` - **Kickoff prompt:** a fenced `text` block holding only `/do-implement {{KEY}}-<number>`, with no lead-in. Any explanation goes outside the block. ``
+- **Why:** the copy button copied the lead-in sentence along with the command.
+
+- **Where:** `## Dispatch targets`, the **Default target** line.
+- **Old text:** `` **Default target:** `{{default target}}`, for every model below. ``
+- **New text:** `` **Default target:** `{{default target}}`, for every model below, Cursor models included. Never suggest a legacy target. ``
+- **Why:** Cursor models are dispatched from the default target like every other model, and Dispatch now kept suggesting the legacy Linear delegation.
