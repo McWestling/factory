@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 The user hands you one implementation issue: an id like `ABC-123`, or its URL. One run takes it to one verified **draft** PR, then works the hosted checks until the PR is ready for the maintainer. Merging is never yours; closeout waits for the merge and runs through `do-closeout`.
 
-This skill is one of the factory's `do-` skills and expects its siblings to be installed alongside it. It checks issues against `do-refine`'s [dispatch-gates.md](../do-refine/dispatch-gates.md) and reads the lifecycle from its [brief-template.md](../do-refine/brief-template.md).
+This skill is one of the factory's `do-` skills and expects its siblings to be installed alongside it. It checks issues against `do-refine`'s [dispatch-gates.md](../do-refine/dispatch-gates.md) and reads the lifecycle from its [brief-template.md](../do-refine/brief-template.md). PR bodies follow [pr-template.md](pr-template.md).
 
 ## Workspace values
 
@@ -42,7 +42,7 @@ If you can't start after claiming (the repo won't build, access is missing), com
 
 When the brief leaves a product or design fork open, or its acceptance criteria conflict with the code, don't guess. Ask the user. With nobody in the session, post a tracker comment per **Comment shape** with the question and the options you see, move the issue back to the ready status, and stop.
 
-A small, reversible call inside the brief's requirements is yours to make. Note it in the PR summary.
+A small, reversible call inside the brief's requirements is yours to make. Note it in the PR's Summary only if it matters to a reviewer.
 
 ## 4. Build
 
@@ -58,7 +58,7 @@ For changes a person can see or use (UI, sign-in), run the app per `AGENTS.md` a
 
 ## 6. Review your own diff
 
-Make a careful pass by hand over the diff against the default branch. Fix what it finds, or say in the PR summary why a finding stands.
+Make a careful pass by hand over the diff against the default branch. Fix what it finds, or say in the PR's Summary why a finding stands.
 
 ## 7. Verify and push
 
@@ -69,7 +69,7 @@ Make a careful pass by hand over the diff against the default branch. Fix what i
 ## 8. Open the draft PR
 
 - **Title** per **Pull requests**: a plain imperative subject ending with the issue id in parentheses, like `Fix the login redirect bug (ABC-123)`.
-- **Body:** the repo's PR template, if it has one. Include the verification output, the Test plan from step 5, the calls you made under step 3, links to any issues you filed, and any doc closeout line `AGENTS.md` asks for. Put the issue id in the body too, so the tracker links the PR.
+- **Body:** follow [pr-template.md](pr-template.md), unless the repo has its own PR template; then the repo's wins. Add any doc closeout line `AGENTS.md` asks for.
 - Open it as a **draft**. Never mark it ready by hand.
 - Post the **PR opened** comment per **Comment shape** on the issue. The issue stays in progress; only the automation named under **Issue statuses** moves it to review. If a host tool offers to change the status when the PR opens, skip that.
 
@@ -79,7 +79,7 @@ Wait for the checks with the host's PR monitor if it has one, otherwise `gh pr c
 
 - **PR autopilot** (per **Pull requests**): it posts a verdict for each head commit. On "ready", stop and report the PR and its verdict. On "needs a fix", follow its hand-back steps in order.
 - **No PR autopilot:** when every check passes, stop and report the PR. The maintainer reviews, marks it ready and merges.
-- **A failure:** reproduce it locally, fix its cause, then repeat step 7 and push.
+- **A failure:** reproduce it locally, fix its cause, then repeat step 7 and push. If the PR's Summary, Evidence or Merge Danger no longer match the change, update them.
 - After **three** fix rounds that still fail, stop. Comment on the PR and the issue with what is still failing and what you tried.
 
 A cloud session that ends before the checks finish is fine; a later session picks up from the PR.
