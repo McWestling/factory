@@ -256,7 +256,7 @@ The model table and its Checked date are the factory's curated pick. Copy them a
 
 This is {{workspace}}'s config; to adopt, copy it and replace the values.
 
-**Setup version:** 2026-11-09.2
+**Setup version:** 2026-11-09.3
 
 The skills hold the procedure. This file holds only the values they look up, under the headings below. Keep the headings stable: skills cite them by name.
 
@@ -391,7 +391,7 @@ Datelines in use:
 ## Pull requests
 
 - **Title:** a plain imperative subject ending with the issue id in parentheses, like `Fix the login redirect bug ({{KEY}}-<number>)`.
-- **Branch:** exactly the issue's Linear branch name (`gitBranchName` from `get_issue`). Never invent or prefix one.
+- **Branch:** the issue's Linear branch name (`gitBranchName` from `get_issue`), or the branch the host already made for the issue when its name contains the issue id. Linear builds the prefix for whoever asks, and the prefix shows whether a delegated agent or a person did the work, so keep the host's branch rather than renaming it. Never invent or prefix one yourself.
 - **Review:** no PR autopilot in this repo. PRs open as drafts; the maintainer marks them ready and merges.
 ```
 
@@ -442,3 +442,10 @@ Apply each entry newer than the doc's version, in order. Compare with slots fill
 - **Old text:** ``- **Access:** Linear MCP only. In an Orca workspace, the `orca linear` CLI also qualifies.``
 - **New text:** `- **Access:** Linear MCP only.`
 - **Why:** Linear access must use MCP in every repo.
+
+### 2026-11-09.3
+
+- **Where:** `## Pull requests`, the **Branch** line.
+- **Old text:** `` - **Branch:** exactly the issue's Linear branch name (`gitBranchName` from `get_issue`). Never invent or prefix one. ``
+- **New text:** `` - **Branch:** the issue's Linear branch name (`gitBranchName` from `get_issue`), or the branch the host already made for the issue when its name contains the issue id. Linear builds the prefix for whoever asks, and the prefix shows whether a delegated agent or a person did the work, so keep the host's branch rather than renaming it. Never invent or prefix one yourself. ``
+- **Why:** Linear gives each caller its own branch prefix, so delegated runs renamed the host's branch to the person's and collided with earlier runs' worktrees.

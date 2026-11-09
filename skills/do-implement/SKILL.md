@@ -16,9 +16,9 @@ Repo commands (typecheck, tests, the full check or preflight, how to run the app
 
 If a value or command you need is missing, ask the user, use their answer, then offer to add it to the tracker doc or `AGENTS.md`, or to run `do-factory-setup`.
 
-Read and write the tracker only through the access the tracker doc's **Tracker** heading allows. If that access is unavailable or unauthorized, stop and say so; don't fall back to a browser, desktop app or raw API.
+Read and write the tracker only through the access the tracker doc's **Tracker** heading allows. Probe it once before you touch the tracker: call `whoami`, or the tracker's equivalent. The access is unavailable only if that call fails; a tool list that seems to lack the tracker doesn't count, since hosts truncate and defer their tool lists. If the probe fails or the access is unauthorized, stop and say so; don't fall back to a browser, desktop app or raw API.
 
-**Asking.** While the user is in the session, ask in chat (AskUserQuestion where the client has it). In a cloud run with nobody there, ask through a tracker comment instead; see [step 3](#3-ask-before-guessing).
+**Asking.** While the user is in the session, ask in chat (AskUserQuestion where the client has it). In a **delegated run** (the prompt says `Delegated run`) or any run with nobody in the session, don't ask product or design questions: make the sensible default call and record it; see [step 3](#3-ask-before-guessing). Every other stop in this skill still applies.
 
 ## 1. Read and check
 
@@ -40,13 +40,18 @@ If you can't start after claiming (the repo won't build, access is missing), com
 
 ## 3. Ask before guessing
 
-When the brief leaves a product or design fork open, or its acceptance criteria conflict with the code, don't guess. Ask the user. With nobody in the session, post a tracker comment per **Comment shape** with the question and the options you see, move the issue back to the ready status, and stop.
+When the brief leaves a product or design fork open, or its acceptance criteria conflict with the code, don't guess silently.
+
+- **Someone in the session:** ask the user.
+- **Delegated run, or nobody in the session:** make the sensible default call and carry on. Pick the option closest to the brief, the decisions it links and the repo's existing patterns; between equals, pick the easiest to reverse. Record each call (the question, what you chose, and why) for the **Questions along the way** list in [step 8](#8-open-the-draft-pr).
+
+Default calls cover only these product and design questions. Every other stop in this skill still holds in a delegated run: a failed dispatch gate, the wrong repo, a failed tracker probe or missing permissions (see [Workspace values](#workspace-values)), a missing testing skill, verification that won't pass, three failed fix rounds, and the [Boundaries](#boundaries). When one stops a delegated run, comment on the issue per **Comment shape** with what stopped it and what comes next, if the tracker still answers. If it stops after claiming and before a PR exists, also release the issue as [Claim](#2-claim) says. Then stop.
 
 A small, reversible call inside the brief's requirements is yours to make. Note it in the PR's Summary only if it matters to a reviewer.
 
 ## 4. Build
 
-1. **Branch.** Name it per **Pull requests**; if the doc is silent, use the branch name the tracker gives the issue. If that branch already exists, locally or on `origin`, switch to it. Otherwise, if the current branch is a fresh one the host made for this workspace (no commits beyond the default branch), rename it (`git branch -m <name>`); orchestrators often create their own prefixed branches. Otherwise create the branch from the latest default branch. Never rename the default branch, or a branch holding another issue's commits. A host that must choose its own branch name (for example a Cursor Cloud agent) keeps it. If the repo's PR autopilot needs a label for that branch, per **Pull requests**, apply it when you open the PR.
+1. **Branch.** If the current branch was made by the host for this issue and its name already contains the issue id, in any case (for example a Runner's `<prefix>/abc-123-…`), keep it: don't rename it or switch away. The prefix shows whether a delegated agent or a person did the work. Otherwise name it per **Pull requests**; if the doc is silent, use the branch name the tracker gives the issue. If that branch already exists, locally or on `origin`, switch to it. Otherwise, if the current branch is a fresh one the host made for this workspace (no commits beyond the default branch), rename it (`git branch -m <name>`); orchestrators often create their own prefixed branches. Otherwise create the branch from the latest default branch. Never rename the default branch, or a branch holding another issue's commits. A host that must choose its own branch name (for example a Cursor Cloud agent) keeps it. If the repo's PR autopilot needs a label for that branch, per **Pull requests**, apply it when you open the PR.
 2. **Test first.** Where the change has a testable seam, invoke the advertised `mattpocock-skills:tdd` skill, or bare `tdd` from the skills CLI, and write the failing test before the code. Use the agent's skill mechanism (the Skill tool where available, otherwise read the advertised SKILL.md). If neither is available, stop and ask the user to run `do-factory-setup`.
 3. **Check as you go.** Run the repo's typecheck and the test files you touch, per `AGENTS.md`.
 4. **Stay in scope.** Build only the brief's requirements, and respect its **Out of scope**. File anything else you find as a new issue in the triage status per **Issue statuses**: a short title, what you saw, this issue's project, and a Product label when the product is obvious. Keep it flat (no parent issue, even if a host tool offers one) and link it to this issue as related. In the PR body, list each filed issue on its own line as `Related to <ID>: [<title>](<URL>)`, using the issue URL returned by the tracker; other phrasings move the filed issue's status.
@@ -70,8 +75,9 @@ Make a careful pass by hand over the diff against the default branch. Fix what i
 
 - **Title** per **Pull requests**: a plain imperative subject ending with the issue id in parentheses, like `Fix the login redirect bug (ABC-123)`.
 - **Body:** follow [pr-template.md](pr-template.md), unless the repo has its own PR template; then the repo's wins. Add any doc closeout line `AGENTS.md` asks for. Write the body to a file and send it with `gh pr create --body-file <path>` (or `gh pr edit --body-file <path>`), never inline with shell escapes: escaped backticks reach GitHub as literal backslashes.
+- **Questions along the way:** when you made calls under [step 3](#3-ask-before-guessing), add a `## Questions along the way` section after the Summary, one bullet per call: the question, what you chose, and why. Leave it out when there were none.
 - Open it as a **draft**. Never mark it ready by hand.
-- Post the **PR opened** comment per **Comment shape** on the issue. The issue stays in progress; only the automation named under **Issue statuses** moves it to review. If a host tool offers to change the status when the PR opens, skip that.
+- Post the **PR opened** comment per **Comment shape** on the issue, followed by the same **Questions along the way** list when there is one. The issue stays in progress; only the automation named under **Issue statuses** moves it to review. If a host tool offers to change the status when the PR opens, skip that.
 
 ## 9. Work the hosted checks
 
@@ -97,4 +103,4 @@ To close out, run the sibling [`do-closeout`](../do-closeout/SKILL.md) skill on 
 - Never set the review or done status, or post a completion comment, before the merge.
 - Never set priority beyond what **Priority** says.
 - Never push unverified work without the maintainer's say-so for that push.
-- Stop and ask rather than guess when the brief leaves a product decision open.
+- When the brief leaves a product decision open, stop and ask if someone is in the session; in a delegated run, make the default call and list it ([step 3](#3-ask-before-guessing)).

@@ -12,6 +12,10 @@ _Avoid_: lease id, job id
 Delegator's always-on hosted service, a Cloudflare Worker: it installs each machine's Linear app, alone holds Linear credentials, takes Linear's webhooks and queues jobs for each machine's Runner.
 _Avoid_: relay, proxy, server
 
+**Delegated run**:
+An agent session the Runner launched, with nobody watching it. Its prompt says so on a second line, and `do-implement` then makes default calls instead of stopping to ask, listing them under **Questions along the way**.
+_Avoid_: unattended run
+
 **Delegator**:
 The system that starts work on a machine from a Linear delegation: Cloud Inbox, the Runner, and the code they share. Formerly Dispatch. The generic verb "dispatch" and the Dispatch target labels are separate and keep their names.
 _Avoid_: Dispatch, Factory Dispatch
