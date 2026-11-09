@@ -81,6 +81,7 @@ for credentials, testing, deployment and day-to-day operation.
 | `do-triage`        | Works the Triage queue with you and routes each item                                |
 | `do-refine`        | Charts maps, resolves decision tickets, and slices implementation issues            |
 | `do-implement`     | Takes one implementation issue to a verified draft PR                               |
+| `do-closeout`      | Checks a thread is good to close and finishes the issue's closeout                  |
 | `do-factory-setup` | Writes a repo's tracker doc and scripts rule, runs setup blocks, installs dev ports |
 
 ## Install the skills

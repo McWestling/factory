@@ -1,0 +1,5 @@
+interface:
+  display_name: "Do Closeout"
+  short_description: "Check a thread is good to close and finish the issue's closeout"
+policy:
+  allow_implicit_invocation: false
