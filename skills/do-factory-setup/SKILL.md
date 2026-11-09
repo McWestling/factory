@@ -189,7 +189,7 @@ To open the PR:
 1. **Branch:** if the current branch isn't the default branch, commit there. Otherwise create a branch from it, named per the tracker doc's **Pull requests** heading; when that rule needs an issue (like a Linear branch name), use `factory-setup`. Never commit or push to the default branch.
 2. **Commit only setup's files:** stage them by path. A file the user had already changed before the run (step 1) stays out, with its setup edits: say which, so they can commit it themselves. Leave every other uncommitted change as it was, and say so if there were any. If that leaves nothing to commit, say so and stop. Use a plain imperative subject, like `Set up the factory tracker doc`.
 3. **Verify and push:** run the repo's full check if `AGENTS.md` names one, and push only if it passes.
-4. **Draft PR:** open it as a draft, titled per **Pull requests**; with no issue id, use the commit subject. The body says what setup wrote, in a few lines. Never mark it ready or merge it.
+4. **Draft PR:** open it as a draft, titled per **Pull requests**; with no issue id, use the commit subject. The body follows the short form of do-implement's [pr-template.md](../do-implement/pr-template.md): a paragraph on what setup wrote, a **Why** line when a choice needs one, and a **Checked** line. Never mark it ready or merge it.
 
 End with the PR link.
 
