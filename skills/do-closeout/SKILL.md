@@ -1,6 +1,6 @@
 ---
 name: do-closeout
-description: Check that an agent thread is good to close, and finish what's left. Close out the thread's issue once its PR has merged, report local git state, list loose ends from the session and any doc closeout, and end with a verdict of Good to close or Not yet.
+description: Check that an agent thread is good to close, and finish what's left. Close out the thread's issue once its PR has merged, report local git state, list loose ends from the session and any doc closeout, end with a verdict of Good to close or Not yet, and on Good to close suggest the next ticket to pick up.
 disable-model-invocation: true
 ---
 
@@ -10,7 +10,7 @@ This skill is one of the factory's `do-` skills and expects its siblings to be i
 
 ## Workspace values
 
-This skill holds the procedure. The tracker values (statuses, comment shape, PR rules) live in the repo's **tracker doc**. Find it through `AGENTS.md`; if `AGENTS.md` doesn't name one, use `docs/issue-tracker.md`. Read it before you touch the tracker. Where this file says "per X", X is a heading in that doc.
+This skill holds the procedure. The tracker values (statuses, views, repo routing, comment shape, PR rules) live in the repo's **tracker doc**. Find it through `AGENTS.md`; if `AGENTS.md` doesn't name one, use `docs/issue-tracker.md`. Read it before you touch the tracker. Where this file says "per X", X is a heading in that doc.
 
 Read and write the tracker only through the access the tracker doc's **Tracker** heading allows. If that access is unavailable, say so, skip the tracker check and mark it open in the verdict.
 
@@ -69,14 +69,33 @@ Do whatever the repo's `AGENTS.md` (and the docs it links) asks for after a merg
 
 ## 6. Verdict
 
-End with one verdict line, then two short lists:
+End with a bold verdict line, then two short bullet lists, as plain Markdown. It isn't a code block; don't fence it.
 
-```text
-Verdict: Good to close
-Fixed:
+**Verdict:** Good to close
+
+**Fixed:**
+
 - <what this run changed>
-Still open:
+
+**Still open:**
+
 - <what's left, and who acts on it>
-```
 
 The verdict is **Good to close** only when nothing is left under **Still open**. Anything open (an unmerged PR, uncommitted or unpushed work, a loose end the user wants kept) makes it **Not yet**. A loose end the user dismisses isn't open.
+
+## 7. Suggested next ticket
+
+Only on **Good to close**. On **Not yet**, the next step is finishing this thread, so leave this out.
+
+Pick one ticket, read-only; change nothing in the tracker:
+
+1. The next unblocked issue in the ready status per **Issue statuses** on the closed issue's map, if it sits on one.
+2. Otherwise, the top issue in the `Factory: Ready` view per **Views** with the same Product label.
+3. If neither has one, say so in one line and stop.
+
+Print **Suggested next ticket** with the ticket's name and link, then the prompt to paste into a fresh session, then where to run it:
+
+- **Implementation issue:** the **Kickoff prompt** per **Comment shape**. Under it, the issue's repo (its repo tag, or per **Repo routing**) and its factory-run block's `target` and `model`.
+- **Decision ticket** (a `wayfinder:` label): `/do-refine <map URL>` in a fenced `text` block, using the map URL the tracker returns, with the repo it routes to.
+
+The fenced block holds only the command; any explanation goes outside it. It is the one copyable block in the reply.
