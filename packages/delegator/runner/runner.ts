@@ -3,7 +3,7 @@
 // It holds no Linear credential. Everything Cloud Inbox sends is untrusted input.
 
 import { execFile } from 'node:child_process';
-import { readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -47,6 +47,8 @@ export type Deps = {
   log: (fields: Record<string, string>) => void;
   /** Private file of launch intents and outcomes, keyed by session id. */
   launches: string;
+  watches: string;
+  now?: () => number;
 };
 
 // Flag-like or shell-like values never reach argv, even though there's no shell.
@@ -145,8 +147,30 @@ function inbox(config: RunnerConfig, deps: Deps) {
       if (!isObject(task)) throw new Error('cloud-inbox-task');
       return task as Partial<Task>;
     },
-    update: (claim: Claim, type: 'thought' | 'error', body: string) => call('POST', job(claim, 'updates'), { type, body }),
+    update: (claim: Claim, type: 'thought' | 'error' | 'response', body: string) => call('POST', job(claim, 'updates'), { type, body }),
     finish: (claim: Claim, outcome: 'launched' | 'failed') => call('POST', job(claim, outcome)),
+    watching: async () => {
+      const value: unknown = await (await call('GET', '/jobs/watching')).json();
+      if (!Array.isArray(value) || !value.every((entry) => isObject(entry) && isText(entry.sessionId)
+        && isText(entry.issueId) && isText(entry.claimId) && typeof entry.at === 'number' && Number.isFinite(entry.at))) {
+        throw new Error('cloud-inbox-watching');
+      }
+      return value as (Claim & { at: number })[];
+    },
+    watch: async (claim: Claim) => {
+      const value: unknown = await (await call('GET', job(claim, 'watch'))).json();
+      if (!isObject(value) || !isText(value.sessionStatus) || !Array.isArray(value.pullRequests)
+        || !value.pullRequests.every((url) => typeof url === 'string' && /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+(?:[/?#]|$)/.test(url))) {
+        throw new Error('cloud-inbox-watch');
+      }
+      return value as { sessionStatus: string; pullRequests: string[] };
+    },
+    link: async (claim: Claim) => {
+      const value: unknown = await (await call('POST', job(claim, 'pull-request'))).json();
+      if (!isObject(value) || typeof value.url !== 'string'
+        || !/^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+(?:[/?#]|$)/.test(value.url)) throw new Error('cloud-inbox-pr');
+      return value.url;
+    },
   };
 }
 
@@ -253,7 +277,109 @@ async function hasWorktree(deps: Deps, launch: Launch): Promise<boolean> {
   }
 }
 
-/** Reports a recorded launch, forgetting it once Cloud Inbox has it. */
+type Watching = Claim & { at: number; ready: boolean };
+type Watches = Record<string, Watching>;
+
+function readWatches(deps: Deps): Watches {
+  try {
+    const value: unknown = JSON.parse(readFileSync(deps.watches, 'utf8'));
+    if (!isObject(value) || !Object.entries(value).every(([id, entry]) => isObject(entry)
+      && entry.sessionId === id && isText(entry.issueId) && isText(entry.claimId)
+      && typeof entry.at === 'number' && Number.isFinite(entry.at) && typeof entry.ready === 'boolean')) {
+      throw new Error('invalid watches');
+    }
+    return value as Watches;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    throw new Error('watches-unreadable');
+  }
+}
+
+function changeWatches(deps: Deps, change: (watches: Watches) => void) {
+  const watches = readWatches(deps);
+  change(watches);
+  mkdirSync(dirname(deps.watches), { recursive: true, mode: 0o700 });
+  writeFileSync(`${deps.watches}.tmp`, JSON.stringify(watches), { mode: 0o600 });
+  renameSync(`${deps.watches}.tmp`, deps.watches);
+}
+
+/** Import only this machine's open launches; local timestamps and claims survive restarts. */
+export async function resumeWatches(config: RunnerConfig, deps: Deps): Promise<void> {
+  try {
+    const jobs = await inbox(config, deps).watching();
+    changeWatches(deps, (watches) => {
+      for (const job of jobs) watches[job.sessionId] ??= { ...job, ready: true };
+    });
+  } catch { deps.log({ event: 'watch', outcome: 'watch-resume-failed' }); }
+}
+
+/** One completion check per saved job; transient failures leave it for the next check. */
+export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void> {
+  let watches: Watches;
+  try { watches = readWatches(deps); }
+  catch { deps.log({ event: 'watch', outcome: 'watches-unreadable' }); return; }
+  const api = inbox(config, deps);
+  for (const job of Object.values(watches)) {
+    const log = (outcome: string) => deps.log({ event: 'watch', session: job.sessionId, outcome });
+    const change = (edit: (watches: Watches) => void) => changeWatches(deps, (current) => {
+      // A reclaim may have replaced this claim while a request was in flight.
+      if (current[job.sessionId]?.claimId === job.claimId) edit(current);
+    });
+    try {
+      if (!job.ready) {
+        // A lost launch acknowledgement may already have committed; watch verifies the claim below.
+        await api.finish(job, 'launched').catch((error: Error) => {
+          if (error.message !== 'cloud-inbox-409') throw error;
+        });
+      }
+      const status = await api.watch(job);
+      if (['complete', 'error', 'stopped'].includes(status.sessionStatus)) {
+        change((current) => delete current[job.sessionId]);
+        log('ended');
+        continue;
+      }
+      if (!['pending', 'active', 'awaitingInput', 'stale'].includes(status.sessionStatus)) {
+        throw new Error('unknown session status');
+      }
+      if (!job.ready) change((current) => { current[job.sessionId]!.ready = true; });
+      let body: string;
+      if (status.pullRequests.length) {
+        const url = await api.link(job);
+        // A stop or final reply can land while the link is being added.
+        const latest = await api.watch(job);
+        if (['complete', 'error', 'stopped'].includes(latest.sessionStatus)) {
+          change((current) => delete current[job.sessionId]);
+          continue;
+        }
+        if (!['pending', 'active', 'awaitingInput', 'stale'].includes(latest.sessionStatus)) throw new Error('unknown session status');
+        body = `Opened ${url}.`;
+      } else if ((deps.now ?? Date.now)() - job.at >= 24 * 60 * 60_000) {
+        body = 'No PR after 24 h; check the Orca worktree.';
+      } else continue;
+      await api.update(job, 'response', body);
+      change((current) => delete current[job.sessionId]);
+      log('finished');
+    } catch (error) {
+      if ((error as Error).message === 'cloud-inbox-409') {
+        // 409 can also mean the PR attachment vanished; keep an otherwise active watch.
+        try {
+          const latest = await api.watch(job);
+          if (['complete', 'error', 'stopped'].includes(latest.sessionStatus)) {
+            change((current) => delete current[job.sessionId]);
+          }
+        } catch (retryError) {
+          if ((retryError as Error).message === 'cloud-inbox-409') {
+            try { change((current) => delete current[job.sessionId]); }
+            catch { log('watch-save-failed'); }
+          }
+        }
+        log('watch-conflict');
+      } else log('watch-retry');
+    }
+  }
+}
+
+/** Reports a recorded launch, retaining its claim for completion watching. */
 async function reportLaunch(api: ReturnType<typeof inbox>, deps: Deps, claim: Claim, log: (outcome: string) => void, launch: Launch | number) {
   if (typeof launch !== 'number' && !launch.thoughtPosted) {
     const posted = await api.update(claim, 'thought', `Started ${launch.model} in Orca on \`${launch.branch}\`.`)
@@ -266,7 +392,19 @@ async function reportLaunch(api: ReturnType<typeof inbox>, deps: Deps, claim: Cl
     launch.thoughtPosted = true;
     record(deps, log, (launches) => { launches[claim.sessionId] = launch; });
   }
+  try {
+    changeWatches(deps, (watches) => {
+      if (watches[claim.sessionId]?.claimId !== claim.claimId) {
+        watches[claim.sessionId] = { ...claim, at: typeof launch === 'number' ? launch : launch.at, ready: false };
+      }
+    });
+  } catch {
+    log('watch-save-failed');
+    return 'launched';
+  }
   if (await api.finish(claim, 'launched').then(() => true, () => false)) {
+    try { changeWatches(deps, (watches) => { watches[claim.sessionId]!.ready = true; }); }
+    catch { log('watch-save-failed'); }
     record(deps, log, (launches) => delete launches[claim.sessionId]);
   } else {
     log('launched-report-failed');
@@ -331,7 +469,7 @@ export async function handleJob(config: RunnerConfig, deps: Deps, claim: Claim):
     return reportLaunch(api, deps, claim, log, saved);
   }
 
-  const launch: Launch = { at: Date.now(), repo: config.repos[issue.repo]!, branch: branchName,
+  const launch: Launch = { at: (deps.now ?? Date.now)(), repo: config.repos[issue.repo]!, branch: branchName,
     model: issue.model, launched: false, thoughtPosted: false };
   if (!record(deps, log, (launches) => { launches[claim.sessionId] = launch; })) {
     return refuse('launch-record-failed', `Couldn't save the launch intent. Check the Runner config directory is writable. ${RETRY}`);
@@ -379,8 +517,19 @@ if (import.meta.main) {
     exec: (file, args, timeout) => run(file, args, { timeout, maxBuffer: 4 * 1024 * 1024 }),
     log: (fields) => console.log(JSON.stringify(fields)),
     launches: join(dirname(CONFIG_PATH), 'launches.json'),
+    watches: join(isAbsolute(process.env.XDG_STATE_HOME ?? '') ? process.env.XDG_STATE_HOME!
+      : join(homedir(), '.local', 'state'), 'factory', 'watching.json'),
   };
   deps.log({ event: 'start', outcome: 'ok' });
+  let checking = false;
+  const check = async () => {
+    if (checking) return;
+    checking = true;
+    try { await resumeWatches(config, deps); await watchJobs(config, deps); }
+    finally { checking = false; }
+  };
+  void check();
+  setInterval(check, 45_000);
   for (;;) {
     // Ids and outcomes only: the error itself may carry the URL or a body.
     await poll(config, deps).catch((error: Error) => deps.log({ event: 'claim', outcome: error.message.startsWith('cloud-inbox-') ? error.message : 'unreachable' }));

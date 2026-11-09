@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import type { MachineAuth } from '../cloud-inbox/auth.ts';
 import { MachineQueue } from '../cloud-inbox/queue.ts';
 import { handleRunner } from '../cloud-inbox/routes.ts';
-import { handleJob, launchArgs, loadConfig, NOT_ALLOWED, poll, type Deps, type RunnerConfig, type Task } from './runner.ts';
+import { handleJob, launchArgs, loadConfig, NOT_ALLOWED, poll, resumeWatches, watchJobs, type Deps, type RunnerConfig, type Task } from './runner.ts';
 
 const example = new URL('../config.example.json', import.meta.url);
 const config: RunnerConfig = {
@@ -69,9 +69,131 @@ function fakes(task: Partial<Task> | null = goodTask, orca: (string | Error)[] =
     },
     log() {},
     launches: join(mkdtempSync(join(tmpdir(), 'runner-state-')), 'launches.json'),
+    watches: join(mkdtempSync(join(tmpdir(), 'runner-watch-')), 'watching.json'),
   };
   return { deps, requests, updates, argv };
 }
+
+test('a launched job keeps its claim for completion watching after a restart', async () => {
+  const f = fakes();
+  await handleJob(config, f.deps, claim);
+  const saved = JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1'];
+  assert.equal(saved.claimId, claim.claimId);
+  assert.equal(saved.issueId, claim.issueId);
+  assert.equal(saved.ready, true);
+});
+
+async function watching() {
+  const f = fakes();
+  await handleJob(config, f.deps, claim);
+  f.requests.length = 0;
+  f.updates.length = 0;
+  const status = { sessionStatus: 'active', pullRequests: [] as string[] };
+  const fetch = f.deps.fetch;
+  f.deps.fetch = async (input, init) => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith('/watch') || path.endsWith('/pull-request')) {
+      assert.equal(new URL(String(input)).searchParams.get('claimId'), claim.claimId);
+      f.requests.push(`${init?.method} ${path.replace('/delegator', '')}`);
+      return Response.json(path.endsWith('/watch') ? status : { url: status.pullRequests[0] });
+    }
+    return fetch(input, init);
+  };
+  return { ...f, status };
+}
+
+test('a PR is linked before the final response, and a restart does not repeat it', async () => {
+  const f = await watching();
+  f.status.pullRequests = ['https://github.com/owner/repo/pull/7'];
+  const restarted = { ...f.deps };
+  await watchJobs(config, restarted);
+  await watchJobs(config, { ...restarted });
+  assert.deepEqual(f.requests, ['GET /jobs/session-1/watch', 'POST /jobs/session-1/pull-request',
+    'GET /jobs/session-1/watch', 'POST /jobs/session-1/updates']);
+  assert.deepEqual(f.updates, [['response', 'Opened https://github.com/owner/repo/pull/7.']]);
+  assert.deepEqual(JSON.parse(readFileSync(f.deps.watches, 'utf8')), {});
+});
+
+test('the no-PR timeout starts at launch and replies once at 24 hours', async () => {
+  const f = await watching();
+  const at = JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1'].at;
+  f.deps.now = () => at + 24 * 60 * 60_000 - 1;
+  await watchJobs(config, f.deps);
+  assert.deepEqual(f.updates, []);
+  f.deps.now = () => at + 24 * 60 * 60_000;
+  await watchJobs(config, f.deps);
+  await watchJobs(config, f.deps);
+  assert.deepEqual(f.updates, [['response', 'No PR after 24 h; check the Orca worktree.']]);
+});
+
+for (const sessionStatus of ['complete', 'error', 'stopped']) {
+  test(`a ${sessionStatus} session is dropped without linking or replying`, async () => {
+    const f = await watching();
+    f.status.sessionStatus = sessionStatus;
+    f.status.pullRequests = ['https://github.com/owner/repo/pull/7'];
+    await watchJobs(config, f.deps);
+    assert.deepEqual(f.requests, ['GET /jobs/session-1/watch']);
+    assert.deepEqual(f.updates, []);
+    assert.deepEqual(JSON.parse(readFileSync(f.deps.watches, 'utf8')), {});
+  });
+}
+
+test('a session ending while its PR is linked gets no final response', async () => {
+  const f = await watching();
+  f.status.pullRequests = ['https://github.com/owner/repo/pull/7'];
+  const fetch = f.deps.fetch;
+  f.deps.fetch = async (input, init) => {
+    const response = await fetch(input, init);
+    if (String(input).includes('/pull-request')) f.status.sessionStatus = 'complete';
+    return response;
+  };
+  await watchJobs(config, f.deps);
+  assert.deepEqual(f.updates, []);
+  assert.deepEqual(JSON.parse(readFileSync(f.deps.watches, 'utf8')), {});
+});
+
+test('a failed link is retried after restart before posting a final response', async () => {
+  const f = await watching();
+  f.status.pullRequests = ['https://github.com/owner/repo/pull/7'];
+  const fetch = f.deps.fetch;
+  f.deps.fetch = async (input, init) => String(input).includes('/pull-request')
+    ? new Response(null, { status: 502 }) : fetch(input, init);
+  await watchJobs(config, f.deps);
+  assert.deepEqual(f.updates, []);
+  assert.ok(JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1']);
+  await watchJobs(config, { ...f.deps, fetch });
+  assert.equal(f.updates.length, 1);
+});
+
+test('a PR removed between checking and linking keeps the session watched', async () => {
+  const f = await watching();
+  f.status.pullRequests = ['https://github.com/owner/repo/pull/7'];
+  const fetch = f.deps.fetch;
+  f.deps.fetch = async (input, init) => String(input).includes('/pull-request')
+    ? new Response(null, { status: 409 }) : fetch(input, init);
+  await watchJobs(config, f.deps);
+  assert.deepEqual(f.updates, []);
+  assert.ok(JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1']);
+});
+
+test('unknown status and malformed PR URLs never produce a final response', async () => {
+  const f = await watching();
+  f.status.sessionStatus = 'unexpected';
+  await watchJobs(config, f.deps);
+  f.status.sessionStatus = 'active';
+  f.status.pullRequests = ['https://github.com.evil.example/owner/repo/pull/7'];
+  await watchJobs(config, f.deps);
+  assert.deepEqual(f.updates, []);
+  assert.ok(JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1']);
+});
+
+test('a failed watch-state write keeps the launch reclaimable instead of forgetting it', async () => {
+  const f = fakes();
+  mkdirSync(f.deps.watches);
+  await handleJob(config, f.deps, claim);
+  assert.ok(!f.requests.includes('POST /jobs/session-1/launched'));
+  assert.equal(JSON.parse(readFileSync(f.deps.launches, 'utf8'))['session-1'].launched, true);
+});
 
 test('a launch runs orca open, then the exact worktree create argv', async () => {
   const f = fakes();
@@ -195,12 +317,27 @@ function realInbox() {
   const clock = { now: 1_800_000_000_000 };
   const issueEdits: Record<string, unknown>[] = [];
   const thoughts: string[] = [];
+  const responses: string[] = [];
+  const links: string[] = [];
+  let sessionStatus = 'active';
+  let pullRequests: string[] = [];
   const linear: typeof fetch = async (_, init) => {
     const { query, variables } = JSON.parse(String(init?.body));
     if (query.includes('agentActivityCreate')) {
       if (variables.input.content.type === 'thought') thoughts.push(variables.input.content.body);
+      if (variables.input.content.type === 'response') {
+        responses.push(variables.input.content.body);
+        sessionStatus = 'complete';
+      }
       return Response.json({ data: { agentActivityCreate: { success: true } } });
     }
+    if (query.includes('agentSessionUpdate')) {
+      links.push(variables.url);
+      return Response.json({ data: { agentSessionUpdate: { success: true } } });
+    }
+    if (query.includes('attachments')) return Response.json({ data: {
+      issue: { attachments: { nodes: pullRequests.map((url) => ({ url })) } }, agentSession: { status: sessionStatus },
+    } });
     if (query.includes('issueUpdate')) {
       issueEdits.push(variables.input);
       return Response.json({ data: { issueUpdate: { success: true } } });
@@ -235,8 +372,77 @@ function realInbox() {
     return handleRunner(new Request(url, init), inboxConfig, () => queue);
   };
   const state = () => db.prepare('SELECT state FROM jobs').all().map((row) => row.state);
-  return { queue, clock, issueEdits, thoughts, ops, fetch, state, lose: (n: number) => { loseLaunched = n; },
+  return { queue, clock, issueEdits, thoughts, responses, links, ops, fetch, state,
+    prs: (urls: string[]) => { pullRequests = urls; }, lose: (n: number) => { loseLaunched = n; },
     loseThought: () => { loseThought = 1; } };
+}
+
+test('a final response accepted before a lost acknowledgement is not queued twice', async () => {
+  const inbox = realInbox();
+  await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
+  const f = fakes();
+  f.deps.fetch = inbox.fetch;
+  await poll(config, f.deps);
+  inbox.prs(['https://github.com/owner/repo/pull/7']);
+  f.deps.fetch = async (input, init) => {
+    const response = await inbox.fetch(input, init);
+    if (String(input).includes('/updates')) throw new TypeError('lost acknowledgement');
+    return response;
+  };
+  await watchJobs(config, f.deps);
+  assert.ok(JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1']);
+  await watchJobs(config, { ...f.deps, fetch: inbox.fetch });
+  await inbox.queue.deliver();
+  await watchJobs(config, { ...f.deps, fetch: inbox.fetch });
+  assert.deepEqual(inbox.responses, ['Opened https://github.com/owner/repo/pull/7.']);
+  assert.equal(inbox.links[0], 'https://github.com/owner/repo/pull/7');
+  assert.deepEqual(JSON.parse(readFileSync(f.deps.watches, 'utf8')), {});
+});
+
+test('an upgraded Runner recovers an old launched job and posts its PR once', async () => {
+  const inbox = realInbox();
+  await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
+  const old = await inbox.queue.claim();
+  await inbox.queue.finish(old!.sessionId, old!.claimId, 'launched');
+  inbox.prs(['https://github.com/owner/repo/pull/7']);
+  const f = fakes();
+  f.deps.fetch = inbox.fetch;
+  await resumeWatches(config, f.deps);
+  await watchJobs(config, f.deps);
+  await inbox.queue.deliver();
+  await resumeWatches(config, f.deps);
+  await watchJobs(config, f.deps);
+  await inbox.queue.deliver();
+  assert.deepEqual(inbox.responses, ['Opened https://github.com/owner/repo/pull/7.']);
+  assert.deepEqual(f.argv, []);
+});
+
+for (const afterDelivery of [false, true]) {
+  test(`completion watching resumes after a launch report lost ${afterDelivery ? 'after' : 'before'} delivery`, async () => {
+    const inbox = realInbox();
+    await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
+    const f = fakes();
+    let lost = false;
+    f.deps.fetch = async (input, init) => {
+      if (!lost && String(input).includes('/launched')) {
+        lost = true;
+        if (afterDelivery) await inbox.fetch(input, init);
+        throw new TypeError('lost launch report');
+      }
+      return inbox.fetch(input, init);
+    };
+    await poll(config, f.deps);
+    assert.equal(JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1'].ready, false);
+    const restarted = { ...f.deps, fetch: inbox.fetch };
+    await watchJobs(config, restarted);
+    assert.deepEqual(inbox.state(), ['launched']);
+    assert.equal(JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1'].ready, true);
+    inbox.prs(['https://github.com/owner/repo/pull/7']);
+    await watchJobs(config, restarted);
+    await inbox.queue.deliver();
+    assert.deepEqual(inbox.responses, ['Opened https://github.com/owner/repo/pull/7.']);
+    assert.equal(f.argv.filter((args) => args[1] === 'create').length, 1);
+  });
 }
 
 for (const restart of [false, true]) {

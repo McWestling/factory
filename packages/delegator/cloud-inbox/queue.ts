@@ -233,6 +233,15 @@ export class MachineQueue {
     return true;
   }
 
+  /** Recover completion watches after an upgrade or loss of the machine's local state. */
+  async watching(): Promise<(Claim & { at: number })[]> {
+    return this.#sql.exec(`SELECT id, issue_id, claim_id, updated_at FROM jobs WHERE state = 'launched'
+      AND claim_id IS NOT NULL AND id NOT IN (SELECT session_id FROM ended)
+      AND id NOT IN (SELECT session_id FROM superseded)`).toArray().map((row) => ({
+      sessionId: String(row.id), issueId: String(row.issue_id), claimId: String(row.claim_id), at: Number(row.updated_at),
+    }));
+  }
+
   /** The job's issue id while `claimId` holds it: claimed with a live lease, or launched by that claim. */
   #held(id: string, claimId: string): string | undefined {
     const [row] = this.#sql.exec(

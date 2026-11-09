@@ -170,8 +170,23 @@ per read, without ids, and is treated as empty. Losing that state loses recovery
 A thought accepted just before a crash, lost response or failed flag write may be posted
 again on recovery: the updates API has no deduplication key. A timed-out create still
 fails and can leave a worktree; recovery applies to reclaimed claims, not terminal failures.
-Logs contain ids and outcomes only. Running the Runner in the background and watching
-for the PR are not built yet.
+Logs contain ids and outcomes only. Running the Runner in the background is not built yet.
+
+After launch, the Runner checks for completion every 45 seconds, independently of
+new job pickup. When a GitHub pull request appears on the issue in Linear, it adds
+the PR link to the agent session and posts "Opened <PR URL>." This final response
+ends Linear's "Working…" state; it does not mark the issue Done or merge the PR.
+If there is no PR after 24 hours, it replies "No PR after 24 h; check the Orca worktree."
+Completed, errored and stopped sessions are dropped without another reply.
+
+Open watches are saved in `${XDG_STATE_HOME:-~/.local/state}/factory/watching.json`
+with owner-only permissions and atomic replacement. Keep this file private: it holds
+claim authority, not Linear credentials. The Runner also recovers this machine's
+still-open launched jobs from Cloud Inbox, including launches made before completion
+watching was available. Network failures are retried; an accepted final response is
+not queued twice. Deploy Cloud Inbox before upgrading the Runner so its recovery
+endpoint is available. PR detection requires Linear's GitHub integration to attach
+the PR to the issue; there is no GitHub CLI fallback.
 
 ## Security
 

@@ -835,6 +835,29 @@ async function claimedJob() {
   return { ...h, claimId: claim!.claimId };
 }
 
+test('watch recovery returns only this machine\'s launched, unended, unsuperseded claims', async () => {
+  const h = await claimedJob();
+  assert.equal((await h.runner('GET', '/jobs/watching', '')).status, 401);
+  assert.deepEqual(await (await h.runner('GET', '/jobs/watching')).json(), []);
+  await call(h, 'POST', 'launched', h.claimId);
+  const jobs = await (await h.runner('GET', '/jobs/watching')).json() as Record<string, unknown>[];
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0]!.claimId, h.claimId);
+  assert.equal(jobs[0]!.sessionId, 'session-1');
+  assert.equal(typeof jobs[0]!.at, 'number');
+  const other = setup();
+  const isolated = await handleRunner(new Request('https://cloud-inbox.example/jobs/watching', {
+    headers: { Authorization: `Bearer ${'o'.repeat(32)}` },
+  }), config, (name) => name === 'other-machine' ? other.machines() : h.machines());
+  assert.deepEqual(await isolated.json(), []);
+  await h.send(h.createdPayload('session-2', 'issue-1'));
+  assert.deepEqual(await (await h.runner('GET', '/jobs/watching')).json(), []);
+  const next = await h.claimed();
+  await call(h, 'POST', 'launched', next!.claimId, undefined, 'session-2');
+  await update(h, next!.claimId, 'response', 'Opened.', 'session-2');
+  assert.deepEqual(await (await h.runner('GET', '/jobs/watching')).json(), []);
+});
+
 for (const [method, op, body] of OPERATIONS) {
   test(`${method} ${op} needs the bearer secret, a claim id and a current claim by this machine`, async () => {
     const h = await claimedJob();
