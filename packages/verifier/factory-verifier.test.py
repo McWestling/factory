@@ -1,6 +1,9 @@
 """Run with: python3 packages/verifier/factory-verifier.test.py"""
 
+import fcntl
 import json
+import select
+import time
 import os
 import shutil
 from pathlib import Path
@@ -23,6 +26,7 @@ class FactoryVerifierTests(unittest.TestCase):
         self.env = os.environ.copy()
         self.env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + self.env.get("PATH", "")
         self.env.pop("FACTORY_VERIFIER_OVERRIDE", None)
+        self.env["XDG_STATE_HOME"] = str(Path(directory.name) / "state")
         self.env.update(
             GIT_CONFIG_NOSYSTEM="1",
             GIT_CONFIG_GLOBAL=os.devnull,
@@ -68,6 +72,101 @@ class FactoryVerifierTests(unittest.TestCase):
         self.git("add", "--", path)
         self.git("commit", "-qm", "change")
         return self.git("rev-parse", "HEAD")
+
+    def start_verifier(self, *args, cwd=None):
+        process = subprocess.Popen(
+            [sys.executable, str(SCRIPT), *args], cwd=cwd or self.root,
+            env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        def cleanup():
+            if process.poll() is None:
+                process.kill()
+            process.communicate()
+        self.addCleanup(cleanup)
+        return process
+
+    def wait_line(self, process):
+        self.assertTrue(select.select([process.stdout], [], [], 5)[0], "no WAIT output")
+        return process.stdout.readline().strip()
+
+    def test_run_waits_and_non_running_commands_and_skips_do_not(self):
+        self.save_contract()
+        self.assertEqual(self.verifier("preflight").returncode, 0)
+        lock_path = Path(self.env["XDG_STATE_HOME"]) / "factory/verifier.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("w+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            json.dump({"check": "holder", "worktree": "/other repo", "pid": 123}, lock)
+            lock.flush()
+            for args in [("plan", "--all"), ("pre-push",), ("preflight",)]:
+                result = subprocess.run(
+                    [sys.executable, str(SCRIPT), *args], cwd=self.root, env=self.env,
+                    text=True, capture_output=True, input="", timeout=5,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn("WAIT", result.stdout)
+            process = self.start_verifier("run", "first")
+            self.assertEqual(self.wait_line(process),
+                             "WAIT first: holder running in /other repo (pid 123)")
+            self.assertIsNone(process.poll())
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            output, errors = process.communicate(timeout=5)
+            self.assertEqual(process.returncode, 0, errors)
+            self.assertNotIn("WAIT", output)
+
+    def test_linked_preflights_never_overlap(self):
+        import shlex
+        events = self.root.parent / "events"
+        release = self.root.parent / "release"
+        code = (
+            "import os,pathlib,time; "
+            f"events=pathlib.Path({str(events)!r}); release=pathlib.Path({str(release)!r}); "
+            "f=events.open('a'); f.write(f'start {time.monotonic_ns()}\\n'); f.flush(); "
+            "deadline=time.monotonic()+10; "
+            "exec('while not release.exists() and time.monotonic()<deadline: time.sleep(0.01)'); "
+            "assert release.exists(); f.write(f'end {time.monotonic_ns()}\\n'); f.close()"
+        )
+        self.save_contract(shlex.join([sys.executable, "-c", code]))
+        other = self.root.parent / "linked"
+        self.git("worktree", "add", "-qb", "linked", str(other))
+        first = self.start_verifier("preflight")
+        deadline = time.monotonic() + 5
+        while (not events.exists() or not events.read_text()) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(events.exists())
+        second = self.start_verifier("preflight", cwd=other)
+        self.assertEqual(self.wait_line(second),
+                         f"WAIT first: first running in {self.root.resolve()} (pid {first.pid})")
+        release.touch()
+        for process in (first, second):
+            output, errors = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 0, errors)
+            self.assertIn("PASS first", output)
+        lines = events.read_text().splitlines()
+        self.assertEqual([line.split()[0] for line in lines], ["start", "end", "start", "end"])
+        self.assertLessEqual(int(lines[1].split()[1]), int(lines[2].split()[1]))
+
+    def test_killed_holder_releases_lock_and_unreadable_details_still_wait(self):
+        self.save_contract()
+        lock_path = Path(self.env["XDG_STATE_HOME"]) / "factory/verifier.lock"
+        lock_path.parent.mkdir(parents=True)
+        holder = subprocess.Popen(
+            [sys.executable, "-c",
+             "import fcntl,sys,time; f=open(sys.argv[1], 'w'); "
+             "fcntl.flock(f, fcntl.LOCK_EX); print('ready', flush=True); time.sleep(30)",
+             str(lock_path)], stdout=subprocess.PIPE, text=True,
+        )
+        self.addCleanup(lambda: holder.poll() is None and holder.kill())
+        self.assertEqual(holder.stdout.readline(), "ready\n")
+        waiter = self.start_verifier("run", "--all")
+        self.assertEqual(self.wait_line(waiter), "WAIT first")
+        holder.kill()
+        holder.wait(timeout=5)
+        holder.stdout.close()
+        output, errors = waiter.communicate(timeout=5)
+        self.assertEqual(waiter.returncode, 1, errors)  # hosted check deliberately fails
+        self.assertIn("PASS first", output)
+        self.assertTrue(lock_path.exists())
 
     def test_isolated_skill_delivery_and_repeatable_update(self):
         installed = self.root.parent / "installed-skill"

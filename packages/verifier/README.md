@@ -27,6 +27,7 @@ and `run --all`. With no command, it runs `preflight`: all checks except those w
 `local = false`, regardless of trigger paths. Preflight installs the shared pre-push
 hook and saves passing checks by tree SHA under the common Git directory, only
 while the worktree is clean and HEAD is unchanged. Repeated runs reuse that proof.
+Checks run one at a time on each machine, across every repo and worktree, so each check must fit the machine by itself.
 Failures print a log path and its last 20 lines before continuing.
 
 `install-hook` preserves foreign hooks. The hook requires proof for all local
