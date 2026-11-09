@@ -3,7 +3,7 @@
 // It holds no Linear credential. Everything Cloud Inbox sends is untrusted input.
 
 import { execFile } from 'node:child_process';
-import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -48,8 +48,58 @@ export type Deps = {
   /** Private file of launch intents and outcomes, keyed by session id. */
   launches: string;
   watches: string;
+  status: string;
+  paused: string;
   now?: () => number;
 };
+
+type Outcome = { identifier: string | null; outcome: string; time: string };
+type Status = {
+  version: 1; updatedAt: string; pid: number;
+  inbox: { status: 'ok' | 'unreachable'; lastOkAt: string | null };
+  paused: boolean;
+  current: { identifier: string; sessionId: string } | null;
+  watching: { identifier: string; since: string }[];
+  lastError: Outcome | null;
+  recent: Outcome[];
+};
+const statuses = new WeakMap<Deps, Status>();
+const failedStatusWrites = new WeakSet<Deps>();
+const time = (deps: Deps) => new Date((deps.now ?? Date.now)()).toISOString();
+const safeId = (id: string) => /^[\w-]{1,200}$/.test(id) ? id : null;
+function status(deps: Deps): Status {
+  let value = statuses.get(deps);
+  if (!value) {
+    value = { version: 1, updatedAt: time(deps), pid: process.pid,
+      inbox: { status: 'unreachable', lastOkAt: null }, paused: false,
+      current: null, watching: [], lastError: null, recent: [] };
+    statuses.set(deps, value);
+  }
+  return value;
+}
+
+/** A disposable projection: failure must never affect launch or watch recovery. */
+function writeStatus(deps: Deps) {
+  try {
+    const value = status(deps);
+    value.updatedAt = time(deps);
+    value.paused = existsSync(deps.paused);
+    try {
+      value.watching = Object.values(readWatches(deps)).map((job) => ({
+        identifier: job.identifier ?? safeId(job.issueId) ?? 'unknown', since: new Date(job.at).toISOString(),
+      }));
+    } catch { /* Keep the last readable watch projection. */ }
+    mkdirSync(dirname(deps.status), { recursive: true, mode: 0o700 });
+    rmSync(`${deps.status}.tmp`, { force: true });
+    writeFileSync(`${deps.status}.tmp`, JSON.stringify(value), { mode: 0o600, flag: 'wx' });
+    renameSync(`${deps.status}.tmp`, deps.status);
+  } catch {
+    if (!failedStatusWrites.has(deps)) {
+      failedStatusWrites.add(deps);
+      deps.log({ event: 'status', outcome: 'status-write-failed' });
+    }
+  }
+}
 
 // Flag-like or shell-like values never reach argv, even though there's no shell.
 const ARG = /^[\w.:]+[\w.:-]*$/;
@@ -123,13 +173,20 @@ export function loadConfig(path = CONFIG_PATH): RunnerConfig {
 /** The Runner API from Cloud Inbox. Every operation on a job carries its claim id. */
 function inbox(config: RunnerConfig, deps: Deps) {
   const call = async (method: string, path: string, body?: unknown) => {
-    const response = await deps.fetch(`${config.inboxUrl}${path}`, {
-      method,
-      headers: { Authorization: `Bearer ${config.bearerSecret}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
-      body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!response.ok) throw new Error(`cloud-inbox-${response.status}`);
+    let response: Response;
+    try {
+      response = await deps.fetch(`${config.inboxUrl}${path}`, {
+        method,
+        headers: { Authorization: `Bearer ${config.bearerSecret}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!response.ok) throw new Error(`cloud-inbox-${response.status}`);
+      status(deps).inbox = { status: 'ok', lastOkAt: time(deps) };
+    } catch (error) {
+      status(deps).inbox.status = 'unreachable';
+      throw error;
+    }
     return response;
   };
   const job = (claim: Claim, op: string) =>
@@ -277,7 +334,7 @@ async function hasWorktree(deps: Deps, launch: Launch): Promise<boolean> {
   }
 }
 
-type Watching = Claim & { at: number; ready: boolean };
+type Watching = Claim & { at: number; ready: boolean; identifier?: string };
 type Watches = Record<string, Watching>;
 
 function readWatches(deps: Deps): Watches {
@@ -285,6 +342,7 @@ function readWatches(deps: Deps): Watches {
     const value: unknown = JSON.parse(readFileSync(deps.watches, 'utf8'));
     if (!isObject(value) || !Object.entries(value).every(([id, entry]) => isObject(entry)
       && entry.sessionId === id && isText(entry.issueId) && isText(entry.claimId)
+      && (entry.identifier === undefined || typeof entry.identifier === 'string' && IDENTIFIER.test(entry.identifier))
       && typeof entry.at === 'number' && Number.isFinite(entry.at) && typeof entry.ready === 'boolean')) {
       throw new Error('invalid watches');
     }
@@ -311,13 +369,14 @@ export async function resumeWatches(config: RunnerConfig, deps: Deps): Promise<v
       for (const job of jobs) watches[job.sessionId] ??= { ...job, ready: true };
     });
   } catch { deps.log({ event: 'watch', outcome: 'watch-resume-failed' }); }
+  finally { writeStatus(deps); }
 }
 
 /** One completion check per saved job; transient failures leave it for the next check. */
 export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void> {
   let watches: Watches;
   try { watches = readWatches(deps); }
-  catch { deps.log({ event: 'watch', outcome: 'watches-unreadable' }); return; }
+  catch { deps.log({ event: 'watch', outcome: 'watches-unreadable' }); writeStatus(deps); return; }
   const api = inbox(config, deps);
   for (const job of Object.values(watches)) {
     const log = (outcome: string) => deps.log({ event: 'watch', session: job.sessionId, outcome });
@@ -375,7 +434,7 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
         }
         log('watch-conflict');
       } else log('watch-retry');
-    }
+    } finally { writeStatus(deps); }
   }
 }
 
@@ -395,7 +454,9 @@ async function reportLaunch(api: ReturnType<typeof inbox>, deps: Deps, claim: Cl
   try {
     changeWatches(deps, (watches) => {
       if (watches[claim.sessionId]?.claimId !== claim.claimId) {
-        watches[claim.sessionId] = { ...claim, at: typeof launch === 'number' ? launch : launch.at, ready: false };
+        const identifier = status(deps).current?.identifier;
+        watches[claim.sessionId] = { ...claim, at: typeof launch === 'number' ? launch : launch.at, ready: false,
+          ...(identifier && IDENTIFIER.test(identifier) ? { identifier } : {}) };
       }
     });
   } catch {
@@ -414,6 +475,21 @@ async function reportLaunch(api: ReturnType<typeof inbox>, deps: Deps, claim: Cl
 
 /** Checks one claimed job, launches it if it passes, and reports the outcome. */
 export async function handleJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<string> {
+  const value = status(deps);
+  value.current = { identifier: safeId(claim.issueId) ?? 'unknown', sessionId: safeId(claim.sessionId) ?? 'unknown' };
+  writeStatus(deps);
+  let outcome = 'job-failed';
+  try { return outcome = await runJob(config, deps, claim); }
+  finally {
+    const entry = { identifier: value.current.identifier, outcome, time: time(deps) };
+    value.recent = [...value.recent, entry].slice(-10);
+    if (outcome !== 'launched' && outcome !== 'undelegated') value.lastError = entry;
+    value.current = null;
+    writeStatus(deps);
+  }
+}
+
+async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<string> {
   const api = inbox(config, deps);
   const log = (outcome: string) => deps.log({ event: 'job', session: claim.sessionId, outcome });
   const refuse = async (outcome: string, message: string) => {
@@ -434,6 +510,10 @@ export async function handleJob(config: RunnerConfig, deps: Deps, claim: Claim):
   let task: Partial<Task>;
   try {
     task = await api.task(claim);
+    if (typeof task.identifier === 'string' && IDENTIFIER.test(task.identifier)) {
+      status(deps).current!.identifier = task.identifier;
+      writeStatus(deps);
+    }
   } catch {
     return refuse('task-unreadable', `Couldn't read the issue from Cloud Inbox. Check that Cloud Inbox is connected. ${RETRY}`);
   }
@@ -497,7 +577,19 @@ export async function handleJob(config: RunnerConfig, deps: Deps, claim: Claim):
 
 /** One poll: claims a job and handles it. Returns whether there was one. */
 export async function poll(config: RunnerConfig, deps: Deps): Promise<boolean> {
-  const claim = await inbox(config, deps).claim();
+  writeStatus(deps);
+  const value = status(deps);
+  if (value.paused) return false;
+  let claim: Claim | null;
+  try {
+    claim = await inbox(config, deps).claim();
+    value.inbox = { status: 'ok', lastOkAt: time(deps) };
+  } catch (error) {
+    value.inbox.status = 'unreachable';
+    const message = (error as Error).message;
+    value.lastError = { identifier: null, outcome: /^cloud-inbox-(\d{3}|claim)$/.test(message) ? message : 'unreachable', time: time(deps) };
+    throw error;
+  } finally { writeStatus(deps); }
   if (!claim) return false;
   await handleJob(config, deps, claim);
   return true;
@@ -512,14 +604,18 @@ if (import.meta.main) {
     process.exit(1);
   }
   const run = promisify(execFile);
+  const stateDir = join(isAbsolute(process.env.XDG_STATE_HOME ?? '') ? process.env.XDG_STATE_HOME!
+    : join(homedir(), '.local', 'state'), 'factory');
   const deps: Deps = {
     fetch,
     exec: (file, args, timeout) => run(file, args, { timeout, maxBuffer: 4 * 1024 * 1024 }),
     log: (fields) => console.log(JSON.stringify(fields)),
     launches: join(dirname(CONFIG_PATH), 'launches.json'),
-    watches: join(isAbsolute(process.env.XDG_STATE_HOME ?? '') ? process.env.XDG_STATE_HOME!
-      : join(homedir(), '.local', 'state'), 'factory', 'watching.json'),
+    watches: join(stateDir, 'watching.json'),
+    status: join(stateDir, 'status.json'),
+    paused: join(stateDir, 'paused'),
   };
+  writeStatus(deps);
   deps.log({ event: 'start', outcome: 'ok' });
   let checking = false;
   const check = async () => {

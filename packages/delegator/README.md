@@ -188,6 +188,35 @@ not queued twice. Deploy Cloud Inbox before upgrading the Runner so its recovery
 endpoint is available. PR detection requires Linear's GitHub integration to attach
 the PR to the issue; there is no GitHub CLI fallback.
 
+The menu bar app's contract is `status.json` beside `watching.json`, in
+`${XDG_STATE_HOME:-~/.local/state}/factory/` (a relative `XDG_STATE_HOME` is ignored).
+The Runner replaces it atomically with mode `600` at startup, on each poll, after
+claim attempts, while handling a job, and after each job, recovery or watch check.
+Status is disposable: a failed write logs `status-write-failed` once per process,
+keeps the Runner running, and is retried on the next update.
+
+| Field | Meaning |
+| --- | --- |
+| `version` | `1`; readers should check this before interpreting the file. |
+| `updatedAt`, `pid` | ISO timestamp of this snapshot and the Runner process ID; readers can detect a stopped or stale Runner. |
+| `inbox` | `{status: "ok" \| "unreachable", lastOkAt}`; last request result and last successful HTTP contact's ISO time, or `null` before contact. Startup is `unreachable` until contact succeeds. |
+| `paused` | Whether the `paused` flag file exists. |
+| `current` | `{identifier, sessionId}` while handling a job, otherwise `null`. |
+| `watching` | Open watches as `{identifier, since}`, with an ISO launch time. |
+| `lastError` | Last failed job or claim as `{identifier, outcome, time}`, otherwise `null`; claims have a `null` identifier. |
+| `recent` | Last ten job outcomes as `{identifier, outcome, time}`, oldest first. |
+
+Identifiers are validated issue identifiers such as `ABC-123` when known, falling
+back to the issue ID before task lookup or for recovered launches without a saved
+identifier (`unknown` for an invalid ID). Status contains no URLs, credentials,
+claim authority, issue text or paths. History and the last error reset on restart;
+open watches recover independently. A successful job does not clear the last error.
+
+Create an empty `paused` file in that directory to pause new claims; remove it to
+resume on the next poll. In-flight work continues, as do watch recovery and PR
+checks. Pausing leaves jobs queued in Cloud Inbox. The menu bar app reads status
+and toggles this flag; it needs no Cloud Inbox access.
+
 ## Security
 
 Cloud Inbox is the middleman between Linear and your machines. It requests
