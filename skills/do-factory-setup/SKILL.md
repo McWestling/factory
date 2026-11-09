@@ -4,7 +4,7 @@ description: Set up a repo for the factory skills. Writes the repo's values-only
 disable-model-invocation: true
 ---
 
-The other factory skills (`do-post-its`, `do-triage`, `do-refine`, `do-implement`) hold all of the procedure and none of the workspace values. Each repo keeps those values in one short **tracker doc**. Your job is to write that doc for the repo you are in, so the other skills can run here. If the repo has a dev server, you also install the [dev-port convention](https://github.com/mcwestling/factory/blob/main/tools/orca/README.md), so parallel Orca workspaces each get their own ports.
+The other factory skills (`do-post-its`, `do-triage`, `do-refine`, `do-implement`, `do-closeout`) hold all of the procedure and none of the workspace values. Each repo keeps those values in one short **tracker doc**. Your job is to write that doc for the repo you are in, so the other skills can run here. If the repo has a dev server, you also install the [dev-port convention](https://github.com/mcwestling/factory/blob/main/tools/orca/README.md), so parallel Orca workspaces each get their own ports.
 
 Setup is opinionated and deterministic: the same Linear workspace always gives the same doc. The doc is the [template](#template) below, copied verbatim, with only its `{{…}}` slots filled from Linear. Never reword, reorder or add to the template's text.
 
