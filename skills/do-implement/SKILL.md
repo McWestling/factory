@@ -69,7 +69,7 @@ Make a careful pass by hand over the diff against the default branch. Fix what i
 ## 8. Open the draft PR
 
 - **Title** per **Pull requests**: a plain imperative subject ending with the issue id in parentheses, like `Fix the login redirect bug (ABC-123)`.
-- **Body:** follow [pr-template.md](pr-template.md), unless the repo has its own PR template; then the repo's wins. Add any doc closeout line `AGENTS.md` asks for.
+- **Body:** follow [pr-template.md](pr-template.md), unless the repo has its own PR template; then the repo's wins. Add any doc closeout line `AGENTS.md` asks for. Write the body to a file and send it with `gh pr create --body-file <path>` (or `gh pr edit --body-file <path>`), never inline with shell escapes: escaped backticks reach GitHub as literal backslashes.
 - Open it as a **draft**. Never mark it ready by hand.
 - Post the **PR opened** comment per **Comment shape** on the issue. The issue stays in progress; only the automation named under **Issue statuses** moves it to review. If a host tool offers to change the status when the PR opens, skip that.
 
