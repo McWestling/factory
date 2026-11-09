@@ -20,6 +20,8 @@ from pathlib import Path
 import re
 import subprocess
 import tomllib
+import urllib.request
+import urllib.parse
 
 
 def read_checks(root, commit=None):
@@ -251,6 +253,132 @@ def pre_push(root):
     return int(blocked)
 
 
+def linear_http(url, body, headers):
+    try:
+        request = urllib.request.Request(url, data=body, headers=headers)
+        with urllib.request.urlopen(request, timeout=30) as response:
+            data = json.load(response)
+            if not isinstance(data, dict):
+                raise ValueError("expected object")
+            return data
+    except (OSError, ValueError):
+        # Remote bodies and exception messages can contain credentials.
+        raise ValueError("Linear request failed (HTTP, network or invalid JSON)") from None
+
+
+def report_failures(root, before, after, failed):
+    config = {}
+    for key in ("FACTORY_LINEAR_CLIENT_ID", "FACTORY_LINEAR_CLIENT_SECRET",
+                "FACTORY_VERIFIER_LINEAR_TEAM", "FACTORY_VERIFIER_PRODUCT_LABEL",
+                "FACTORY_VERIFIER_REPO"):
+        config[key] = os.environ.get(key, "")
+        if key == "FACTORY_VERIFIER_REPO":
+            config[key] = config[key] or os.environ.get("GITHUB_REPOSITORY", "")
+        if not config[key]:
+            raise ValueError(f"missing {key}")
+    repo = config["FACTORY_VERIFIER_REPO"]
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        raise ValueError("invalid FACTORY_VERIFIER_REPO: expected owner/name")
+    checks = read_checks(root)
+    names = list(dict.fromkeys(failed.split(",")))
+    for name in names:
+        if name not in checks:
+            raise ValueError(f"unknown check: {name}")
+    git_output(root, "rev-parse", "--verify", f"{after}^{{commit}}")
+    initial = not before or set(before) == {"0"}
+    triggered = list(checks) if initial else plan_checks(root, checks, before, after)["checks"]
+    changed = "" if initial else git_output(root, "diff", "--name-only", f"{before}...{after}")
+    token = linear_http("https://api.linear.app/oauth/token", urllib.parse.urlencode({
+        "client_id": config["FACTORY_LINEAR_CLIENT_ID"],
+        "client_secret": config["FACTORY_LINEAR_CLIENT_SECRET"],
+        "grant_type": "client_credentials", "scope": "read,write",
+    }).encode(), {"Content-Type": "application/x-www-form-urlencoded"}).get("access_token")
+    if not isinstance(token, str) or not token:
+        raise ValueError("Linear token response missing access_token")
+
+    def graphql(query, variables):
+        data = linear_http("https://api.linear.app/graphql",
+                           json.dumps({"query": query, "variables": variables}).encode(),
+                           {"Content-Type": "application/json", "Authorization": f"Bearer {token}"})
+        if data.get("errors") or not isinstance(data.get("data"), dict):
+            raise ValueError("Linear GraphQL request failed")
+        return data["data"]
+
+    def connection(field, filter_type, filters, selection):
+        nodes, cursor = [], None
+        while True:
+            archived = ", includeArchived: true" if field == "issues" else ""
+            data = graphql(
+                f"query($filter: {filter_type}, $after: String) {{ "
+                f"{field}(filter: $filter, first: 100, after: $after{archived}) {{ "
+                f"nodes {{ {selection} }} pageInfo {{ hasNextPage endCursor }} }} }}",
+                {"filter": filters, "after": cursor})[field]
+            nodes.extend(data["nodes"])
+            if not data["pageInfo"]["hasNextPage"]:
+                return nodes
+            cursor = data["pageInfo"]["endCursor"]
+            if not cursor:
+                raise ValueError("Linear returned an invalid pagination cursor")
+
+    def mutate(field, input_type, value, selection=""):
+        result = graphql(f"mutation($input: {input_type}!) {{ {field}(input: $input) "
+                         f"{{ success {selection} }} }}", {"input": value})[field]
+        if not result["success"]:
+            raise ValueError(f"Linear {field} failed")
+        return result
+
+    teams = connection("teams", "TeamFilter", {"key": {"eq": config["FACTORY_VERIFIER_LINEAR_TEAM"]}}, "id")
+    if len(teams) != 1:
+        raise ValueError("FACTORY_VERIFIER_LINEAR_TEAM must identify one accessible team")
+    team = teams[0]["id"]
+    states = connection("workflowStates", "WorkflowStateFilter",
+                        {"team": {"id": {"eq": team}}, "type": {"eq": "triage"}}, "id name type")
+    if len(states) != 1:
+        raise ValueError("Linear team must have one Triage state")
+    labels = connection("issueLabels", "IssueLabelFilter",
+                        {"or": [{"team": {"id": {"eq": team}}}, {"team": {"null": True}}]}, "id name")
+    label_ids = {label["name"]: label["id"] for label in labels}
+    server = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
+    commit_url = f"{server}/{repo}/commit/{after}"
+    run_url = os.environ.get("GITHUB_RUN_URL") or (
+        f"{server}/{repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+        if os.environ.get("GITHUB_RUN_ID") else "unavailable")
+    for name in names:
+        kind = "broken" if name in triggered else "miss"
+        marker = f"factory-verifier: {repo} {name} {kind}"
+        # shortcut: concurrent reports can race to create issues; serialize if duplicates appear.
+        matches = connection("issues", "IssueFilter",
+                             {"team": {"id": {"eq": team}}, "description": {"contains": marker}},
+                             "id description updatedAt state { type }")
+        matches = [issue for issue in matches if marker in (issue.get("description") or "").splitlines()]
+        matches.sort(key=lambda issue: issue["updatedAt"], reverse=True)
+        open_match = next((issue for issue in matches if issue["state"]["type"] not in
+                           ("completed", "canceled")), None)
+        evidence = f"Commit: [{after}]({commit_url})\n\nRun: {run_url}"
+        if open_match:
+            mutate("commentCreate", "CommentCreateInput", {"issueId": open_match["id"], "body": evidence})
+            continue
+        required = ["Factory"] if kind == "miss" else ["Bug", config["FACTORY_VERIFIER_PRODUCT_LABEL"]]
+        for label in required:
+            if label not in label_ids:
+                raise ValueError(f"missing Linear label: {label}")
+        description = (f"## What this is\n\nCheck `{name}` {kind} on main in `{repo}`.\n\n"
+                       "## Status\n\nThe main run failed.\n\n"
+                       "## Next\n\nInvestigate the failure and correct the check or its trigger paths.\n\n"
+                       f"---\n\n## Agent brief\n\n{marker}\n\n{evidence}\n\n"
+                       f"Check: `{name}`\n\nDeclared paths: {json.dumps(checks[name]['paths'])}")
+        if kind == "miss":
+            description += f"\n\nChanged files:\n\n```text\n{changed}\n```"
+        issue = mutate("issueCreate", "IssueCreateInput", {
+            "teamId": team, "stateId": states[0]["id"], "labelIds": [label_ids[label] for label in required],
+            "title": f"{name}: {kind} on main in {repo}", "description": description,
+        }, "issue { id }")["issue"]
+        if matches:
+            mutate("issueRelationCreate", "IssueRelationCreateInput", {
+                "issueId": issue["id"], "relatedIssueId": matches[0]["id"], "type": "related"})
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=False)
@@ -263,6 +391,10 @@ def main():
     plan.add_argument("--base", metavar="SHA")
     plan.add_argument("--head", metavar="SHA")
     plan.add_argument("--all", action="store_true", help="list every check")
+    report = commands.add_parser("report", help="report main-run failures to Linear")
+    report.add_argument("--before")
+    report.add_argument("--after", required=True)
+    report.add_argument("--failed", default="")
     run = commands.add_parser("run", help="run one check or every check")
     target = run.add_mutually_exclusive_group(required=True)
     target.add_argument("check", nargs="?")
@@ -273,11 +405,18 @@ def main():
             plan.error("--all cannot be combined with --base or --head")
         if not args.all and (args.base is None or args.head is None):
             plan.error("provide --all or both --base and --head")
+    if args.command == "report" and not args.failed:
+        return 0
     root = Path(git_output(None, "rev-parse", "--show-toplevel"))
     if args.command == "install-hook":
         return install_hook(root)
     if args.command == "pre-push":
         return pre_push(root)
+    if args.command == "report":
+        try:
+            return report_failures(root, args.before, args.after, args.failed)
+        except (KeyError, TypeError, AttributeError):
+            raise ValueError("invalid Linear response") from None
     checks = read_checks(root)
     if args.command in (None, "preflight"):
         return preflight(root, checks)

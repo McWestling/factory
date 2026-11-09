@@ -1,6 +1,10 @@
 """Run with: python3 packages/verifier/factory-verifier.test.py"""
 
 import fcntl
+import http.server
+import threading
+import socketserver
+import urllib.parse
 import json
 import select
 import signal
@@ -92,6 +96,132 @@ class FactoryVerifierTests(unittest.TestCase):
     def wait_line(self, process):
         self.assertTrue(select.select([process.stdout], [], [], 5)[0], "no WAIT output")
         return process.stdout.readline().strip()
+
+    def test_report_empty_and_missing_config(self):
+        result = self.verifier("report", "--after", self.base)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for key in list(self.env):
+            if key.startswith("FACTORY_LINEAR_") or key.startswith("FACTORY_VERIFIER_"):
+                self.env.pop(key)
+        result = self.verifier("report", "--after", self.base, "--failed", "test")
+        self.assert_fails_cleanly(result, "FACTORY_LINEAR_CLIENT_ID")
+        self.env.pop("GITHUB_REPOSITORY", None)
+        for key in ("FACTORY_LINEAR_CLIENT_ID", "FACTORY_LINEAR_CLIENT_SECRET",
+                    "FACTORY_VERIFIER_LINEAR_TEAM", "FACTORY_VERIFIER_PRODUCT_LABEL",
+                    "FACTORY_VERIFIER_REPO"):
+            result = self.verifier("report", "--after", self.base, "--failed", "test")
+            self.assert_fails_cleanly(result, key)
+            self.env[key] = "private-value"
+            self.assertNotIn("private-value", result.stderr)
+
+    def test_report_classification_and_dedupe(self):
+        self.save_contract()
+        before = self.git("rev-parse", "HEAD")
+        after = self.commit_change("docs/readme.md")
+        self.env.update(FACTORY_LINEAR_CLIENT_ID="client", FACTORY_LINEAR_CLIENT_SECRET="secret",
+                        FACTORY_VERIFIER_LINEAR_TEAM="ABC", FACTORY_VERIFIER_PRODUCT_LABEL="Product",
+                        GITHUB_REPOSITORY="example/repo", GITHUB_RUN_ID="42")
+        calls = []
+        matches = []
+        errors = []
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers["Content-Length"]))
+                if self.path == "/oauth/token":
+                    form = urllib.parse.parse_qs(body.decode())
+                    assert form["grant_type"] == ["client_credentials"]
+                    assert form["scope"] == ["read,write"]
+                    response = {"access_token": "private-token"}
+                else:
+                    assert self.headers["Authorization"] == "Bearer private-token"
+                    payload = json.loads(body)
+                    calls.append(payload)
+                    query = payload["query"]
+                    field = query.split("{", 1)[1].strip().split("(")[0].split()[0]
+                    nodes = {"teams": [{"id": "team"}],
+                             "workflowStates": [{"id": "triage", "name": "Triage", "type": "triage"}],
+                             "issueLabels": [{"id": name, "name": name} for name in ["Factory", "Bug", "Product"]],
+                             "issues": matches}
+                    if field in nodes:
+                        response = {"data": {field: {"nodes": nodes[field],
+                                    "pageInfo": {"hasNextPage": False, "endCursor": None}}}}
+                        if field == "issues" and matches and payload["variables"]["after"] is None:
+                            response["data"][field] = {"nodes": [], "pageInfo": {
+                                "hasNextPage": True, "endCursor": "next"}}
+                    else:
+                        response = {"data": {field: {"success": True, "issue": {"id": "new"}}}}
+                if errors:
+                    response = {"errors": [{"message": "secret private-token"}]}
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode())
+
+        class Server(http.server.ThreadingHTTPServer):
+            def server_bind(self):
+                socketserver.TCPServer.server_bind(self)
+                self.server_name, self.server_port = self.server_address
+
+        server = Server(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        # Redirect only in the test process; production endpoints remain fixed.
+        runner = ("import runpy, urllib.request; original = urllib.request.urlopen; "
+                  "\n"
+                  "def local(request, **kwargs):\n"
+                  f" request.full_url = 'http://127.0.0.1:{server.server_port}' + urllib.parse.urlsplit(request.full_url).path\n"
+                  " return original(request, **kwargs)\n"
+                  "urllib.request.urlopen = local\n"
+                  f"runpy.run_path({str(SCRIPT)!r}, run_name='__main__')")
+
+        def report(*extra):
+            calls.clear()
+            result = subprocess.run([sys.executable, "-c", runner, "report", "--after", after,
+                                     "--failed", "first,hosted", *extra], cwd=self.root,
+                                    env=self.env, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("secret", result.stdout + result.stderr)
+            self.assertNotIn("private-token", result.stdout + result.stderr)
+            return [call["variables"]["input"] for call in calls if "issueCreate" in call["query"]]
+
+        created = report("--before", before)
+        self.assertEqual([item["labelIds"] for item in created], [["Factory"], ["Bug", "Product"]])
+        self.assertEqual(created[0]["stateId"], "triage")
+        self.assertIn("factory-verifier: example/repo first miss", created[0]["description"])
+        self.assertIn("docs/readme.md", created[0]["description"])
+        self.assertIn("src/**", created[0]["description"])
+        self.assertIn(after, created[0]["description"])
+        self.assertEqual([item["labelIds"] for item in report("--before", "0" * 40)],
+                         [["Bug", "Product"], ["Bug", "Product"]])
+        self.assertEqual([item["labelIds"] for item in report()],
+                         [["Bug", "Product"], ["Bug", "Product"]])
+        marker = "factory-verifier: example/repo first miss"
+        matches[:] = [{"id": "open", "description": marker, "updatedAt": "2026-01-01",
+                       "state": {"type": "started"}}]
+        self.assertEqual(len(report("--before", before)), 1)
+        comment = next(c["variables"]["input"] for c in calls if "commentCreate" in c["query"])
+        self.assertEqual(comment["issueId"], "open")
+        self.assertIn(after, comment["body"])
+        self.assertIn("/actions/runs/42", comment["body"])
+        matches[:] = [{"id": name, "description": marker, "updatedAt": date,
+                       "state": {"type": "completed"}} for name, date in
+                      [("old", "2025-01-01"), ("latest", "2026-01-01")]]
+        self.assertEqual(len(report("--before", before)), 2)
+        relation = next(c["variables"]["input"] for c in calls if "issueRelationCreate" in c["query"])
+        self.assertEqual(relation, {"issueId": "new", "relatedIssueId": "latest", "type": "related"})
+        errors.append(True)
+        result = subprocess.run([sys.executable, "-c", runner, "report", "--after", after,
+                                 "--failed", "first"], cwd=self.root,
+                                env=self.env, text=True, capture_output=True)
+        self.assert_fails_cleanly(result, "access_token")
+        self.assertNotIn("private-token", result.stderr)
+        self.assertNotIn("secret", result.stderr)
+
 
     def test_run_waits_and_non_running_commands_and_skips_do_not(self):
         self.save_contract()
