@@ -21,6 +21,8 @@ class FactoryVerifierTests(unittest.TestCase):
         self.root = Path(directory.name) / "repo with spaces"
         self.root.mkdir()
         self.env = os.environ.copy()
+        self.env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + self.env.get("PATH", "")
+        self.env.pop("FACTORY_VERIFIER_OVERRIDE", None)
         self.env.update(
             GIT_CONFIG_NOSYSTEM="1",
             GIT_CONFIG_GLOBAL=os.devnull,
@@ -91,8 +93,161 @@ paths = ["**"]
         shutil.copy2(bundled, delivered)
         self.assertEqual(delivered.read_bytes(), SCRIPT.read_bytes())
 
+    def test_local_field_keeps_hosted_plan_and_run(self):
+        self.write_contract('version = 1\n[checks.hosted]\nrun = "printf hosted"\npaths = ["**"]\nlocal = false\n')
+        self.assertEqual(json.loads(self.verifier("plan", "--all").stdout)["checks"], ["hosted"])
+        self.assertEqual(self.verifier("run", "hosted").stdout, "hosted")
+        for value in ['"false"', '0', '[]']:
+            self.write_contract('version = 1\n[checks.bad]\nrun = "true"\npaths = ["**"]\nlocal = ' + value)
+            self.assert_fails_cleanly(self.verifier("plan", "--all"), "local")
+
+    def save_contract(self, command="true"):
+        self.write_contract('version = 1\n[checks.first]\nrun = ' + json.dumps(command) + '\npaths = ["src/**"]\n[checks.hosted]\nrun = "exit 9"\npaths = ["**"]\nlocal = false\n')
+        self.git("add", ".")
+        self.git("commit", "-qm", "contract")
+
+    def state(self):
+        return self.root / ".git/factory-verifier"
+
+    def test_preflight_saves_and_reuses_full_local_evidence(self):
+        self.save_contract()
+        result = self.verifier()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("PASS first", result.stdout)
+        self.assertIn("SKIP hosted (hosted only)", result.stdout)
+        tree = self.git("rev-parse", "HEAD^{tree}")
+        self.assertEqual(json.loads((self.state() / (tree + ".json")).read_text())["passed"], ["first"])
+        self.assertIn("SKIP first", self.verifier("preflight").stdout)
+        self.git("commit", "--amend", "-qm", "new message")
+        self.assertIn("SKIP first", self.verifier("preflight").stdout)
+        self.commit_change("outside.txt")
+        self.assertIn("PASS first", self.verifier("preflight").stdout)
+
+    def test_real_push_requires_evidence_and_reads_each_committed_contract(self):
+        delivered = self.root / "scripts/factory-verifier"
+        delivered.parent.mkdir()
+        shutil.copy2(SCRIPT, delivered)
+        self.save_contract()
+        remote = self.root.parent / "remote.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True, env=self.env)
+        self.git("remote", "add", "origin", str(remote))
+        self.assertEqual(self.verifier("install-hook").returncode, 0)
+
+        def push(*refs):
+            return subprocess.run(["git", "push", "origin", *refs], cwd=self.root,
+                                  env=self.env, text=True, capture_output=True)
+
+        blocked = push("HEAD:refs/heads/main")
+        self.assertNotEqual(blocked.returncode, 0)
+        self.assertIn("first", blocked.stderr)
+        self.assertIn("scripts/factory-verifier preflight", blocked.stderr)
+        self.assertEqual(self.verifier("preflight").returncode, 0)
+        self.git("commit", "--amend", "-qm", "message only")
+        self.assertEqual(push("HEAD:refs/heads/main").returncode, 0)
+        old = self.git("rev-parse", "HEAD")
+        self.commit_change("uncovered.txt")
+        self.assertNotEqual(push("HEAD:refs/heads/main").returncode, 0)
+        self.assertEqual(push(old + ":refs/tags/proof").returncode, 0)
+        self.assertEqual(push(":refs/heads/main").returncode, 0)
+        missing = self.git("rev-parse", "HEAD")
+        self.write_contract('version = 1\n[checks.hosted]\nrun = "false"\npaths = ["**"]\nlocal = false\n')
+        self.git("add", ".")
+        self.git("commit", "-qm", "hosted only")
+        self.assertEqual(push("HEAD:refs/heads/hosted").returncode, 0)
+        self.assertNotEqual(push("HEAD:refs/heads/other", missing + ":refs/heads/missing").returncode, 0)
+        self.write_contract("version = 1\n")
+        self.git("add", ".")
+        self.git("commit", "-qm", "no checks")
+        self.assertEqual(push("HEAD:refs/heads/empty").returncode, 0)
+        self.env["FACTORY_VERIFIER_OVERRIDE"] = "  "
+        self.assertNotEqual(push(missing + ":refs/heads/missing").returncode, 0)
+        self.env["FACTORY_VERIFIER_OVERRIDE"] = "approved test reason"
+        result = push(missing + ":refs/heads/missing")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("UNVERIFIED PUSH: approved test reason", result.stderr)
+        entry = json.loads((self.state() / "overrides.jsonl").read_text())
+        self.assertEqual(entry["reason"], "approved test reason")
+        self.assertIn("refs/heads/missing", str(entry["refs"]))
+
+    def test_dirty_runs_and_checks_that_dirty_or_change_head_save_no_evidence(self):
+        for command in ["true", "touch created", "git commit --allow-empty -qm changed"]:
+            with self.subTest(command=command):
+                self.git("reset", "--hard", self.base)
+                self.git("clean", "-fd")
+                self.save_contract(command)
+                if command == "true":
+                    (self.root / "untracked").touch()
+                tree = self.git("rev-parse", "HEAD^{tree}")
+                result = self.verifier("preflight")
+                self.assertIn("PASS first", result.stdout)
+                self.assertIn("No evidence saved", result.stdout)
+                self.assertFalse((self.state() / (tree + ".json")).exists())
+
+    def test_failure_reports_tail_before_later_checks_and_saves_partial_evidence(self):
+        self.write_contract('''version = 1
+[checks.fail]
+run = "seq 1 25; exit 7"
+paths = ["**"]
+[checks.later]
+run = "true"
+paths = ["**"]
+''')
+        self.git("add", ".")
+        self.git("commit", "-qm", "checks")
+        result = self.verifier("preflight")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertLess(result.stdout.index("FAIL fail"), result.stdout.index("PASS later"))
+        self.assertIn("6\n7\n", result.stdout)
+        self.assertNotIn("\n5\n", result.stdout)
+        self.assertIn("fail.log", result.stdout)
+        tree = self.git("rev-parse", "HEAD^{tree}")
+        self.assertEqual(json.loads((self.state() / (tree + ".json")).read_text())["passed"], ["later"])
+
+    def test_failure_is_visible_while_next_check_waits(self):
+        signal = self.root.parent / "continue"
+        wait = ("import pathlib,time; p=pathlib.Path(" + repr(str(signal)) + "); "
+                "deadline=time.monotonic()+5; "
+                "exec('while not p.exists() and time.monotonic()<deadline: time.sleep(0.01)'); "
+                "assert p.exists()")
+        import shlex
+        self.write_contract('version = 1\n[checks.fail]\nrun = "echo failure-tail; exit 1"\npaths = ["**"]\n'
+                            '[checks.wait]\nrun = ' + json.dumps(shlex.join([sys.executable, "-c", wait])) + '\npaths = ["**"]\n')
+        self.git("add", ".")
+        self.git("commit", "-qm", "checks")
+        process = subprocess.Popen([sys.executable, str(SCRIPT), "preflight"], cwd=self.root,
+                                   env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            self.assertEqual(process.stdout.readline(), "FAIL fail\n")
+            self.assertIn("fail.log", process.stdout.readline())
+            self.assertEqual(process.stdout.readline(), "failure-tail\n")
+            signal.touch()
+            output, errors = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 1, errors)
+            self.assertIn("PASS wait", output)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+
+    def test_install_hook_shared_idempotent_and_preserves_foreign_hook(self):
+        self.save_contract()
+        self.assertEqual(self.verifier("preflight").returncode, 0)
+        self.assertEqual(self.verifier("install-hook").returncode, 0)
+        hook = self.root / ".git/hooks/pre-push"
+        content = hook.read_bytes()
+        other = self.root.parent / "linked"
+        self.git("worktree", "add", "-qb", "linked", str(other))
+        self.assertEqual(self.verifier("install-hook", cwd=other).returncode, 0)
+        self.assertEqual(hook.read_bytes(), content)
+        self.assertIn("SKIP first", self.verifier("preflight", cwd=other).stdout)
+        hook.write_text("#!/bin/sh\nexit 42\n")
+        result = self.verifier("install-hook", cwd=other)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("WARNING", result.stderr)
+        self.assertEqual(hook.read_text(), "#!/bin/sh\nexit 42\n")
+
     def test_usage_errors_exit_2(self):
-        for args in [(), ("unknown",), ("plan",), ("plan", "--base", "HEAD"), ("plan", "--head", "HEAD"),
+        for args in [("unknown",), ("plan",), ("plan", "--base", "HEAD"), ("plan", "--head", "HEAD"),
                      ("plan", "--all", "--base", "HEAD"),
                      ("plan", "--all", "--head", "HEAD"), ("run",), ("run", "--all", "extra")]:
             with self.subTest(args=args):

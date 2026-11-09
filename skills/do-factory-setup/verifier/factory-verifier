@@ -11,16 +11,21 @@ if sys.version_info < (3, 11):
 
 import argparse
 import json
+import os
+import tempfile
+from datetime import datetime, timezone
+from collections import deque
 from pathlib import Path
 import re
 import subprocess
 import tomllib
 
 
-def read_checks(root):
+def read_checks(root, commit=None):
     path = Path(".factory/verifier.toml")
     try:
-        data = tomllib.loads((root / path).read_text(encoding="utf-8"))
+        text = git_output(root, "show", f"{commit}:{path}") if commit else (root / path).read_text(encoding="utf-8")
+        data = tomllib.loads(text)
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
         raise ValueError(f"{path}: {error}") from error
 
@@ -40,9 +45,11 @@ def read_checks(root):
             invalid(f"invalid check name: {name}")
         if not isinstance(fields, dict):
             invalid(f"checks.{name} must be a table")
-        unknown = fields.keys() - {"run", "paths"}
+        unknown = fields.keys() - {"run", "paths", "local"}
         if unknown:
             invalid(f"checks.{name}: unknown keys: {', '.join(sorted(unknown))}")
+        if type(fields.get("local", True)) is not bool:
+            invalid(f"checks.{name}.local must be a boolean")
         command = fields.get("run")
         if not isinstance(command, str) or "\0" in command:
             invalid(f"checks.{name}.run must be a string without NUL characters")
@@ -84,9 +91,149 @@ def plan_checks(root, checks, base, head):
     return {"base": base, "head": head, "checks": selected}
 
 
+HOOK_MARKER = "# Factory Verifier pre-push hook"
+
+
+def common_dir(root):
+    return (root / git_output(root, "rev-parse", "--git-common-dir")).resolve()
+
+
+def install_hook(root):
+    hook = common_dir(root) / "hooks/pre-push"
+    if hook.exists() and HOOK_MARKER not in hook.read_text(encoding="utf-8"):
+        print(f"WARNING: leaving foreign hook alone: {hook}", file=sys.stderr)
+        return 0
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text('#!/bin/sh\n' + HOOK_MARKER + '\n'
+                    'cd "$(git rev-parse --show-toplevel)" || exit 1\n'
+                    'if [ -x scripts/factory-verifier ]; then\n'
+                    '  exec scripts/factory-verifier pre-push "$@"\n'
+                    'fi\n'
+                    'exec packages/verifier/factory-verifier pre-push "$@"\n', encoding="utf-8")
+    hook.chmod(0o755)
+    return 0
+
+
+def read_evidence(path):
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
+    if not isinstance(data, dict) or not isinstance(data.get("passed"), list) or any(
+        not isinstance(name, str) for name in data["passed"]
+    ):
+        raise ValueError(f"invalid evidence: {path}")
+    return data["passed"]
+
+
+def write_evidence(path, passed):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         delete=False) as output:
+            temporary = output.name
+            json.dump({"passed": passed}, output)
+        os.replace(temporary, path)
+    finally:
+        if temporary and os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def preflight(root, checks):
+    install_hook(root)
+    head = git_output(root, "rev-parse", "HEAD")
+    tree = git_output(root, "rev-parse", "HEAD^{tree}")
+    record = common_dir(root) / "factory-verifier" / f"{tree}.json"
+
+    def unchanged():
+        return (not git_output(root, "status", "--porcelain", "--untracked-files=all")
+                and git_output(root, "rev-parse", "HEAD") == head)
+
+    clean = unchanged()
+    wrote = False
+    passed = read_evidence(record) if clean else []
+    failed = False
+    for name, check in checks.items():
+        if not check.get("local", True):
+            print(f"SKIP {name} (hosted only)", flush=True)
+            continue
+        if name in passed:
+            print(f"SKIP {name} (already passed)", flush=True)
+            continue
+        log = record.parent / "logs" / tree / f"{name}.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("w", encoding="utf-8") as output:
+            status = subprocess.run(["sh", "-c", check["run"]], cwd=root,
+                                    stdout=output, stderr=subprocess.STDOUT).returncode
+        failed |= status != 0
+        print(f"{'FAIL' if status else 'PASS'} {name}", flush=True)
+        if status:
+            print(log, flush=True)
+            with log.open(encoding="utf-8", errors="replace") as output:
+                print("".join(deque(output, maxlen=20)), end="", flush=True)
+        else:
+            passed.append(name)
+        clean = clean and unchanged()
+        if clean:
+            write_evidence(record, passed)
+            wrote = True
+    if not (clean and unchanged()):
+        # Earlier checks may have saved partial proof before a later check dirtied HEAD.
+        if wrote:
+            record.unlink(missing_ok=True)
+        print("No evidence saved: worktree was dirty or HEAD changed.", flush=True)
+    return int(failed)
+
+
+def pre_push(root):
+    refs = []
+    for line in sys.stdin:
+        fields = line.split()
+        if len(fields) != 4:
+            raise ValueError("invalid pre-push ref update")
+        ref, sha, remote_ref, remote_sha = fields
+        if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", sha):
+            raise ValueError("invalid pre-push SHA")
+        if remote_ref.startswith("refs/heads/") and set(sha) != {"0"}:
+            refs.append({"ref": ref, "sha": sha, "remote_ref": remote_ref})
+    state = common_dir(root) / "factory-verifier"
+    if "FACTORY_VERIFIER_OVERRIDE" in os.environ:
+        reason = os.environ["FACTORY_VERIFIER_OVERRIDE"].strip()
+        if not reason:
+            raise ValueError("FACTORY_VERIFIER_OVERRIDE must contain a non-empty reason")
+        state.mkdir(parents=True, exist_ok=True)
+        with (state / "overrides.jsonl").open("a", encoding="utf-8") as output:
+            output.write(json.dumps({"time": datetime.now(timezone.utc).isoformat(),
+                                     "reason": reason, "refs": refs}) + "\n")
+        print(f"UNVERIFIED PUSH: {reason}", file=sys.stderr, flush=True)
+        return 0
+    blocked = False
+    for update in refs:
+        checks = read_checks(root, update["sha"])
+        local = [name for name, check in checks.items() if check.get("local", True)]
+        if not local:
+            continue
+        tree = git_output(root, "rev-parse", f"{update['sha']}^{{tree}}")
+        passed = read_evidence(state / f"{tree}.json")
+        missing = [name for name in local if name not in passed]
+        if missing:
+            blocked = True
+            print(f"BLOCK {update['remote_ref']}: missing checks: {', '.join(missing)}. "
+                  "Run scripts/factory-verifier preflight. "
+                  "Agents need explicit user authorization to use FACTORY_VERIFIER_OVERRIDE.",
+                  file=sys.stderr, flush=True)
+    return int(blocked)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    commands = parser.add_subparsers(dest="command", required=True)
+    commands = parser.add_subparsers(dest="command", required=False)
+    commands.add_parser("preflight", help="run all local checks and save clean-tree evidence")
+    commands.add_parser("install-hook", help="install the shared pre-push hook")
+    hook = commands.add_parser("pre-push", help="validate pushed branch evidence")
+    hook.add_argument("remote", nargs="?")
+    hook.add_argument("url", nargs="?")
     plan = commands.add_parser("plan", help="list checks triggered by a code change")
     plan.add_argument("--base", metavar="SHA")
     plan.add_argument("--head", metavar="SHA")
@@ -102,7 +249,13 @@ def main():
         if not args.all and (args.base is None or args.head is None):
             plan.error("provide --all or both --base and --head")
     root = Path(git_output(None, "rev-parse", "--show-toplevel"))
+    if args.command == "install-hook":
+        return install_hook(root)
+    if args.command == "pre-push":
+        return pre_push(root)
     checks = read_checks(root)
+    if args.command in (None, "preflight"):
+        return preflight(root, checks)
     if args.command == "run":
         if args.all:
             failed = False
