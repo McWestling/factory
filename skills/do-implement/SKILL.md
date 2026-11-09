@@ -18,7 +18,7 @@ If a value or command you need is missing, ask the user, use their answer, then 
 
 Read and write the tracker only through the access the tracker doc's **Tracker** heading allows. Probe it once before you touch the tracker: call `whoami`, or the tracker's equivalent. The access is unavailable only if that call fails; a tool list that seems to lack the tracker doesn't count, since hosts truncate and defer their tool lists. If the probe fails or the access is unauthorized, stop and say so; don't fall back to a browser, desktop app or raw API.
 
-**Asking.** While the user is in the session, ask in chat (AskUserQuestion where the client has it). In a **delegated run** (the prompt says `Delegated run`) or any run with nobody in the session, don't ask: make the sensible default call and record it; see [step 3](#3-ask-before-guessing).
+**Asking.** While the user is in the session, ask in chat (AskUserQuestion where the client has it). In a **delegated run** (the prompt says `Delegated run`) or any run with nobody in the session, don't ask product or design questions: make the sensible default call and record it; see [step 3](#3-ask-before-guessing). Every other stop in this skill still applies.
 
 ## 1. Read and check
 
@@ -45,7 +45,7 @@ When the brief leaves a product or design fork open, or its acceptance criteria 
 - **Someone in the session:** ask the user.
 - **Delegated run, or nobody in the session:** make the sensible default call and carry on. Pick the option closest to the brief, the decisions it links and the repo's existing patterns; between equals, pick the easiest to reverse. Record each call (the question, what you chose, and why) for the **Questions along the way** list in [step 8](#8-open-the-draft-pr).
 
-A delegated run still stops for a failed dispatch gate and for only three other things: the wrong repo, missing permissions, or a failed tracker probe (see [Workspace values](#workspace-values)). Comment on the issue per **Comment shape** with what stopped it and what comes next, if the tracker still answers. Once claimed, also release the issue as [Claim](#2-claim) says. Then stop.
+Default calls cover only these product and design questions. Every other stop in this skill still holds in a delegated run: a failed dispatch gate, the wrong repo, a failed tracker probe or missing permissions (see [Workspace values](#workspace-values)), a missing testing skill, verification that won't pass, three failed fix rounds, and the [Boundaries](#boundaries). When one stops a delegated run, comment on the issue per **Comment shape** with what stopped it and what comes next, if the tracker still answers. If it stops after claiming and before a PR exists, also release the issue as [Claim](#2-claim) says. Then stop.
 
 A small, reversible call inside the brief's requirements is yours to make. Note it in the PR's Summary only if it matters to a reviewer.
 
