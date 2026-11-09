@@ -1,0 +1,216 @@
+<title>Runner Menu Bar</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<!-- PROTOTYPE, throwaway (DO-1533). Three structurally different menu bar designs for the Delegator Runner,
+     switchable with the bottom bar or ← →. The state chips push each design through the Runner's real states. -->
+<style>
+/* Layout: a strip of desktop with a macOS menu bar; the open menu hangs under the Runner's icon. */
+:root {
+  --desk: #c9d3dc; --desk2: #aebccb;
+  --bar: rgba(246,247,249,.82); --menu: rgba(244,245,247,.94); --fg: #1d2127; --muted: #6a727d;
+  --line: rgba(20,30,40,.12); --hi: #2f6fe0; --hi-fg: #fff;
+  --ok: #23a55a; --warn: #d98a0b; --bad: #d64545; --off: #9aa1aa;
+  --chrome: #1f2a37; --chrome-fg: #f3f5f8;
+  --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  --mono: "SF Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --desk: #27303b; --desk2: #1b222b; --bar: rgba(30,33,38,.82); --menu: rgba(40,43,49,.95); --fg: #eceff3; --muted: #9aa3ae;
+  --line: rgba(255,255,255,.12); --chrome: #e8edf3; --chrome-fg: #17202b; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --desk: #27303b; --desk2: #1b222b; --bar: rgba(30,33,38,.82); --menu: rgba(40,43,49,.95); --fg: #eceff3; --muted: #9aa3ae;
+  --line: rgba(255,255,255,.12); --chrome: #e8edf3; --chrome-fg: #17202b; color-scheme: dark }
+html, body { min-height: 100%; }
+body { background: linear-gradient(160deg, var(--desk), var(--desk2)); color: var(--fg); font: 13px/1.35 var(--ui);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 0 120px; }
+.wrap { max-width: 760px; margin: 0 auto; display: grid; gap: 14px; padding-top: 16px; }
+.intro { color: var(--fg); max-width: 62ch; }
+.intro h1 { font-size: 17px; margin: 0 0 4px; text-wrap: balance; }
+.intro p { margin: 0; color: var(--muted); }
+.states { display: flex; flex-wrap: wrap; gap: 6px; }
+.states button { font: 12px var(--ui); border: 1px solid var(--line); background: var(--menu); color: var(--fg); padding: 5px 10px; border-radius: 999px; cursor: pointer; }
+.states button[aria-pressed="true"] { background: var(--hi); color: var(--hi-fg); border-color: var(--hi); }
+.states button:focus-visible, .sw button:focus-visible, .item:focus-visible { outline: 2px solid var(--hi); outline-offset: 2px; }
+.screen { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); min-height: 470px; }
+.menubar { height: 26px; background: var(--bar); backdrop-filter: blur(12px); display: flex; align-items: center; justify-content: flex-end; gap: 14px; padding: 0 12px; font-size: 13px; }
+.menubar .ghost { color: var(--muted); }
+.tray { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 5px; background: rgba(127,127,127,.22); }
+.tray svg { width: 16px; height: 16px; display: block; }
+.menu { position: absolute; top: 30px; right: 70px; width: 300px; max-width: calc(100% - 20px); background: var(--menu); backdrop-filter: blur(20px);
+  border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 10px 30px rgba(0,0,0,.25); padding: 5px; }
+@media (max-width: 480px) { .menu { right: 10px; } }
+.item { display: flex; align-items: center; gap: 8px; padding: 4px 9px; border-radius: 5px; cursor: default; min-width: 0; }
+.item:hover { background: var(--hi); color: var(--hi-fg); }
+.item:hover .sub, .item:hover .key { color: inherit; opacity: .85; }
+.item .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .key { color: var(--muted); font-size: 12px; }
+.item.dis { color: var(--muted); }
+.item.dis:hover { background: none; color: var(--muted); }
+.head { padding: 6px 9px 4px; }
+.head b { display: block; font-size: 13px; }
+.sub { color: var(--muted); font-size: 12px; }
+.sep { height: 1px; background: var(--line); margin: 5px 9px; }
+.label { padding: 5px 9px 2px; font-size: 11px; font-weight: 600; color: var(--muted); }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; }
+.mono { font-family: var(--mono); font-size: 11.5px; }
+.check { width: 12px; flex: none; text-align: center; }
+/* B: panel */
+.panel { width: 340px; padding: 12px; display: grid; gap: 10px; }
+.hero { display: flex; gap: 10px; align-items: center; }
+.hero .big { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; color: #fff; font-weight: 700; flex: none; }
+.hero b { font-size: 15px; display: block; }
+.rows { display: grid; gap: 1px; background: var(--line); border-radius: 7px; overflow: hidden; }
+.row { background: var(--menu); display: flex; gap: 8px; align-items: center; padding: 6px 9px; min-width: 0; }
+.row .grow { flex: 1; min-width: 0; }
+.now { border: 1px solid var(--line); border-radius: 7px; padding: 8px 9px; display: grid; gap: 3px; }
+.now a { color: var(--hi); text-decoration: none; }
+.log { display: grid; gap: 4px; max-height: 120px; overflow: auto; }
+.log div { display: flex; gap: 8px; font-size: 12px; min-width: 0; }
+.log time { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; width: 38px; }
+.log span { min-width: 0; }
+.btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.btns button { font: 12px var(--ui); padding: 4px 10px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--fg); cursor: pointer; }
+.btns button.primary { background: var(--hi); color: var(--hi-fg); border-color: var(--hi); }
+/* C: icon-first */
+.c-menu { width: 260px; }
+.legend { position: absolute; left: 12px; bottom: 12px; right: 12px; display: flex; flex-wrap: wrap; gap: 10px 16px; font-size: 12px; color: var(--fg);
+  background: var(--menu); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.legend span { display: inline-flex; gap: 5px; align-items: center; }
+.legend svg { width: 15px; height: 15px; }
+.note { font-size: 12px; color: var(--muted); max-width: 62ch; }
+/* switcher */
+.sw { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; gap: 4px;
+  background: var(--chrome); color: var(--chrome-fg); border-radius: 999px; padding: 5px; box-shadow: 0 6px 20px rgba(0,0,0,.3); max-width: calc(100% - 32px); }
+.sw button { background: transparent; border: 0; color: inherit; font: 16px var(--ui); width: 32px; height: 32px; border-radius: 50%; cursor: pointer; }
+.sw button:hover { background: rgba(127,127,127,.3); }
+.sw .lbl { font-size: 13px; padding: 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (prefers-reduced-motion: no-preference) { .spin { animation: spin 1.2s linear infinite; transform-origin: 50% 50%; } @keyframes spin { to { transform: rotate(360deg); } } }
+</style>
+
+<div class="wrap">
+  <div class="intro">
+    <h1>Runner menu bar, three takes</h1>
+    <p>Throwaway prototype for DO-1533. Flip designs with the bottom bar or ← →. Pick a state to see how each design shows it. Ids and titles are examples.</p>
+  </div>
+  <div class="states" id="states" role="group" aria-label="Runner state"></div>
+  <div class="screen" id="screen"></div>
+  <p class="note" id="note"></p>
+</div>
+<div class="sw" role="group" aria-label="Design">
+  <button id="prev" aria-label="Previous design">←</button>
+  <span class="lbl" id="lbl"></span>
+  <button id="next" aria-label="Next design">→</button>
+</div>
+
+<script>
+const STATES = {
+  unpaired: { name: 'Not paired', color: 'off', headline: 'Not paired', detail: 'Pair this Mac with your Cloud Inbox to take work.' },
+  idle:     { name: 'Ready', color: 'ok', headline: 'Ready', detail: 'Connected to Cloud Inbox · checked 6 s ago' },
+  working:  { name: 'Working', color: 'ok', headline: 'Working on ABC-123', detail: 'Connected · started 12 min ago', job: true },
+  watching: { name: 'Waiting for PR', color: 'ok', headline: 'Ready', detail: 'Connected · 2 waiting for a PR', watch: true },
+  paused:   { name: 'Paused', color: 'warn', headline: 'Paused', detail: 'Not taking new work. Jobs stay queued in Cloud Inbox.', watch: true },
+  offline:  { name: 'Can’t reach Cloud Inbox', color: 'warn', headline: 'Can’t reach Cloud Inbox', detail: 'Retrying every 15 s · last success 4 min ago' },
+  error:    { name: 'Last job failed', color: 'bad', headline: 'Last job failed', detail: 'ABC-131: repo not in this Mac’s config', err: true },
+  stopped:  { name: 'Runner stopped', color: 'bad', headline: 'Runner isn’t running', detail: 'The background Runner exited. launchd restarts it unless it was stopped.' },
+};
+const ORDER = Object.keys(STATES);
+const VARIANTS = [
+  { key: 'native', name: 'A · Native menu (Tailscale-style)' },
+  { key: 'panel', name: 'B · Status panel' },
+  { key: 'icon', name: 'C · Icon first, tiny menu' },
+];
+const NOTES = {
+  native: 'A plain macOS menu: status at the top, the current job, recent outcomes in a submenu, then controls. Cheapest to build (SwiftUI MenuBarExtra, menu style). Everything is one click away and reads like Tailscale.',
+  panel: 'A popover window with sections: connection checks, the job in progress with links, PRs being watched and a short activity log. Most information, most to build and keep accurate.',
+  icon: 'The icon carries the state so you rarely open it. The menu says one sentence and holds three actions; diagnostics hide under More. Smallest surface, relies on the glyph legend.',
+};
+const RECENT = [
+  ['09:41', 'ABC-128', 'Opened PR #42'],
+  ['09:12', 'ABC-127', 'Launched in Orca'],
+  ['08:55', 'ABC-131', 'Failed: repo not in config'],
+  ['Yesterday', 'ABC-120', 'No PR after 24 h'],
+];
+let state = 'working', vi = 0;
+try { const h = location.hash.slice(1); const i = VARIANTS.findIndex(v => v.key === h); if (i >= 0) vi = i; } catch {}
+
+const color = c => `var(--${c})`;
+function glyph(s, size = 16) {
+  const c = color(STATES[s].color);
+  const fill = 'currentColor';
+  // ring = connection; inner mark = what it's doing
+  const inner = {
+    unpaired: `<circle cx="8" cy="8" r="5.5" fill="none" stroke="${fill}" stroke-width="1.4" stroke-dasharray="2 2"/>`,
+    idle: `<circle cx="8" cy="8" r="5.5" fill="none" stroke="${fill}" stroke-width="1.6"/><circle cx="8" cy="8" r="2" fill="${fill}"/>`,
+    working: `<circle cx="8" cy="8" r="5.5" fill="none" stroke="${fill}" stroke-width="1.6" opacity=".35"/><path class="spin" d="M8 2.5a5.5 5.5 0 0 1 5.5 5.5" fill="none" stroke="${fill}" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="8" r="2" fill="${fill}"/>`,
+    watching: `<circle cx="8" cy="8" r="5.5" fill="none" stroke="${fill}" stroke-width="1.6"/><circle cx="8" cy="8" r="2" fill="${fill}"/>`,
+    paused: `<circle cx="8" cy="8" r="5.5" fill="none" stroke="${fill}" stroke-width="1.6"/><rect x="5.8" y="5.3" width="1.5" height="5.4" fill="${fill}"/><rect x="8.7" y="5.3" width="1.5" height="5.4" fill="${fill}"/>`,
+    offline: `<circle cx="8" cy="8" r="5.5" fill="none" stroke="${fill}" stroke-width="1.6" opacity=".45"/><path d="M3.5 12.5l9-9" stroke="${fill}" stroke-width="1.6"/>`,
+    error: `<circle cx="8" cy="8" r="5.5" fill="none" stroke="${fill}" stroke-width="1.6"/><rect x="7.25" y="4.6" width="1.5" height="4.4" fill="${fill}"/><rect x="7.25" y="10.1" width="1.5" height="1.5" fill="${fill}"/>`,
+    stopped: `<rect x="2.5" y="2.5" width="11" height="11" rx="3" fill="none" stroke="${fill}" stroke-width="1.6" opacity=".5"/>`,
+  }[s];
+  return `<svg viewBox="0 0 16 16" width="${size}" height="${size}" aria-hidden="true">${inner}</svg>`;
+}
+const dot = s => `<span class="dot" style="background:${color(STATES[s].color)}"></span>`;
+const item = (txt, key = '', cls = '') => `<div class="item ${cls}" tabindex="0"><span class="grow">${txt}</span>${key ? `<span class="key">${key}</span>` : ''}</div>`;
+const check = (on, txt) => `<div class="item" tabindex="0"><span class="check">${on ? '✓' : ''}</span><span class="grow">${txt}</span></div>`;
+
+function native(s) {
+  const st = STATES[s]; let h = `<div class="menu">`;
+  h += `<div class="head"><b>${dot(s)} ${st.headline}</b><span class="sub">${st.detail}</span></div><div class="sep"></div>`;
+  if (s === 'unpaired') return h + item('Pair with Cloud Inbox…') + `<div class="sep"></div>` + item('Open logs') + item('Quit Runner', '⌘Q') + `</div>`;
+  if (s === 'stopped') return h + item('Start Runner') + item('Open logs') + `<div class="sep"></div>` + item('Quit menu bar app', '⌘Q') + `</div>`;
+  if (st.job) h += `<div class="label">Working on</div>` + item('ABC-123 · Add retry to sync', 'GPT-6.1 Sol') + item('Open worktree in Orca') + item('Open issue in Linear') + `<div class="sep"></div>`;
+  if (st.watch || st.job) h += `<div class="label">Waiting for a PR</div>` + item('ABC-121 · Fix export header', '3 h') + item('ABC-118 · Rename settings key', '20 h') + `<div class="sep"></div>`;
+  if (st.err) h += `<div class="label">Last error</div>` + item('ABC-131 · repo not in config') + item('Open issue in Linear') + `<div class="sep"></div>`;
+  h += item('Recent', '▸');
+  h += `<div class="sep"></div>` + check(s === 'paused', 'Pause new work') + item('Open logs') + item('Open config') + `<div class="sep"></div>`;
+  h += check(true, 'Start at login') + item('Stop Runner') + item('Quit menu bar app', '⌘Q');
+  return h + `</div>`;
+}
+
+function panel(s) {
+  const st = STATES[s]; let h = `<div class="menu panel">`;
+  h += `<div class="hero"><div class="big" style="background:${color(st.color)}">${glyph(s, 20)}</div><div><b>${st.headline}</b><span class="sub">${st.detail}</span></div></div>`;
+  const chk = (name, okState, bad) => `<div class="row">${dot(okState)}<span class="grow">${name}</span><span class="sub">${bad}</span></div>`;
+  const inboxOk = !['offline', 'unpaired', 'stopped'].includes(s);
+  h += `<div class="rows">` +
+    chk('Runner', s === 'stopped' ? 'stopped' : 'idle', s === 'stopped' ? 'not running' : 'running · pid 4312') +
+    chk('Cloud Inbox', inboxOk ? 'idle' : (s === 'unpaired' ? 'unpaired' : 'offline'), inboxOk ? 'reachable' : (s === 'unpaired' ? 'not paired' : 'unreachable')) +
+    chk('Orca', s === 'stopped' ? 'unpaired' : 'idle', s === 'stopped' ? 'unknown' : 'running') + `</div>`;
+  if (st.job) h += `<div class="now"><span class="sub">Now</span><b>ABC-123 · Add retry to sync</b><span class="sub">GPT-6.1 Sol in Orca · 12 min</span><span><a href="#" onclick="return false">Orca worktree</a> · <a href="#" onclick="return false">Linear</a></span></div>`;
+  if (st.watch || st.job) h += `<div class="now"><span class="sub">Waiting for a PR (2)</span><span>ABC-121 · 3 h</span><span>ABC-118 · 20 h, gives up at 24 h</span></div>`;
+  h += `<div><span class="sub">Activity</span><div class="log">${RECENT.map(r => `<div><time>${r[0]}</time><span><b class="mono">${r[1]}</b> ${r[2]}</span></div>`).join('')}</div></div>`;
+  const btn = (t, p) => `<button class="${p ? 'primary' : ''}">${t}</button>`;
+  h += `<div class="btns">` + (s === 'unpaired' ? btn('Pair…', 1) : s === 'stopped' ? btn('Start Runner', 1) : btn(s === 'paused' ? 'Resume' : 'Pause', 0)) + btn('Logs') + btn('Config') + btn('Quit') + `</div>`;
+  return h + `</div>`;
+}
+
+function icon(s) {
+  const st = STATES[s];
+  const line = { unpaired: 'Not paired yet.', idle: 'Ready. Nothing to do.', working: 'Working on ABC-123 for 12 min.', watching: 'Ready. 2 waiting for a PR.',
+    paused: 'Paused. Work waits in Cloud Inbox.', offline: 'Offline. Retrying.', error: 'ABC-131 failed: repo not in config.', stopped: 'Runner isn’t running.' }[s];
+  const main = s === 'unpaired' ? 'Pair with Cloud Inbox…' : s === 'stopped' ? 'Start Runner' : s === 'paused' ? 'Resume' : s === 'error' ? 'Open ABC-131 in Linear' : s === 'working' ? 'Open in Orca' : 'Pause';
+  let h = `<div class="menu c-menu"><div class="head"><b>${line}</b></div><div class="sep"></div>`;
+  h += item(main) + (s !== 'paused' && !['unpaired','stopped'].includes(s) ? '' : '') + item('More', '▸') + `<div class="sep"></div>` + item('Quit', '⌘Q') + `</div>`;
+  h += `<div class="legend" aria-label="Icon legend">${ORDER.map(k => `<span>${glyph(k, 15)} ${STATES[k].name}</span>`).join('')}</div>`;
+  return h;
+}
+
+function render() {
+  const v = VARIANTS[vi];
+  document.getElementById('states').innerHTML = ORDER.map(k => `<button id="st-${k}" aria-pressed="${k === state}" data-k="${k}">${STATES[k].name}</button>`).join('');
+  const trayColor = v.key === 'icon' ? 'var(--fg)' : 'var(--fg)';
+  const badge = v.key === 'native' ? dot(state) : '';
+  document.getElementById('screen').innerHTML =
+    `<div class="menubar"><span class="ghost">Wi-Fi</span><span class="tray" style="color:${trayColor}">${glyph(state)}${badge}</span><span class="ghost">Mon 9:48</span></div>` +
+    ({ native, panel, icon })[v.key](state);
+  document.getElementById('lbl').textContent = v.name;
+  document.getElementById('note').textContent = NOTES[v.key];
+}
+document.getElementById('states').addEventListener('click', e => { const k = e.target.dataset?.k; if (k) { state = k; render(); } });
+function go(d) { vi = (vi + d + VARIANTS.length) % VARIANTS.length; try { history.replaceState(null, '', '#' + VARIANTS[vi].key); } catch {} render(); }
+document.getElementById('prev').onclick = () => go(-1);
+document.getElementById('next').onclick = () => go(1);
+addEventListener('keydown', e => { if (e.target.closest('input,textarea,[contenteditable]')) return; if (e.key === 'ArrowLeft') go(-1); if (e.key === 'ArrowRight') go(1); });
+addEventListener('hashchange', () => { const i = VARIANTS.findIndex(v => v.key === location.hash.slice(1)); if (i >= 0) { vi = i; render(); } });
+render();
+</script>
