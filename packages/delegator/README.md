@@ -206,7 +206,9 @@ sh packages/delegator/runner/launchd/install.sh --uninstall-runner
 ```
 
 Add `--uninstall` to remove both the app and Runner. The Runner installer requires
-the config to have mode `600`.
+the config to have mode `600`. Both installation paths run the copy bundled in
+`~/Applications/Factory Runner.app`; `--install-runner` requires the app to be installed first.
+The default command builds the app before updating the Runner LaunchAgent.
 
 After launch, the Runner checks for completion every 45 seconds, independently of
 new job pickup. When a GitHub pull request appears on the issue in Linear, it adds
@@ -228,6 +230,8 @@ The menu bar app's contract is `status.json` beside `watching.json`, in
 `${XDG_STATE_HOME:-~/.local/state}/factory/` (a relative `XDG_STATE_HOME` is ignored).
 The Runner replaces it atomically with mode `600` at startup, on each poll, after
 claim attempts, while handling a job, and after each job, recovery or watch check.
+An independent 10-second heartbeat keeps status fresh during pending operations;
+the menu discards status older than 30 seconds when the Runner stops.
 Status is disposable: a failed write logs `status-write-failed` once per process,
 keeps the Runner running, and is retried on the next update.
 

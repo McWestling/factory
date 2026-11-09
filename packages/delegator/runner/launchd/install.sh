@@ -12,12 +12,13 @@ app="$HOME/Applications/Factory Runner.app"
 log_dir="$HOME/Library/Logs/factory-delegator"
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 package_dir=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
-runner=$(CDPATH='' cd -- "$script_dir/.." && pwd)/runner.ts
+runner="$app/Contents/Resources/runner/runner.ts"
 template="$script_dir/runner.plist"
 menu_template="$package_dir/menubar/menubar.plist"
 menubar_dir="$package_dir/menubar"
 
 render_runner() {
+	[ -f "$runner" ] || { echo "install the app first with --app-only" >&2; exit 1; }
 	[ -f "$config" ] || { echo "missing $config" >&2; exit 1; }
 	mode=$(stat -f '%Lp' "$config")
 	[ "$mode" = 600 ] || { echo "$config must have mode 600" >&2; exit 1; }
@@ -108,10 +109,10 @@ case "${1:-}" in
 	*) echo "usage: install.sh [--app-only|--install-runner|--uninstall-runner|--start-runner|--stop-runner|--uninstall]" >&2; exit 2 ;;
 esac
 
+build_app
 render_runner
 render_menu
 [ "${FACTORY_LAUNCHD_RENDER_ONLY:-}" = 1 ] && exit 0
-build_app
 launchctl enable "$domain/$label"
 launchctl enable "$domain/$menu_label"
 launchctl bootout "$domain/$label" 2>/dev/null || true
