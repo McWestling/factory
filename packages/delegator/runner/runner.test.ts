@@ -209,10 +209,15 @@ test('a launch runs orca open, then the exact worktree create argv', async () =>
   ]);
 });
 
+test('Codex uses a dollar prefix for do-implement', () => {
+  const args = launchArgs(config, 'owner/repo', 'GPT-6 Luna', goodTask);
+  assert.ok(args.includes('--prompt=$do-implement ABC-123'));
+});
+
 test('a skill other than do-implement skips setup, and a model without effort omits it', () => {
   const args = launchArgs({ ...config, skill: 'do-refine' }, 'owner/repo', 'GPT-6 Luna', goodTask);
   assert.deepEqual(args, ['worktree', 'create', '--name', 'abc-123-do-the-thing', '--repo', 'path:/repos/repo',
-    '--branch', 'someone/abc-123-do-the-thing', '--agent', 'codex', '--model', 'gpt-6-luna', '--prompt=/do-refine ABC-123',
+    '--branch', 'someone/abc-123-do-the-thing', '--agent', 'codex', '--model', 'gpt-6-luna', '--prompt=$do-refine ABC-123',
     '--setup', 'skip', '--linear-issue', 'ABC-123', '--json']);
 });
 
