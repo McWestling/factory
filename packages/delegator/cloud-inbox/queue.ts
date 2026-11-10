@@ -10,6 +10,8 @@ const GRAPHQL_URL = 'https://api.linear.app/graphql';
 const LEASE_MS = 10 * 60_000;
 const HISTORY_MS = 30 * 24 * 60 * 60_000;
 const POST_TIMEOUT_MS = 10_000;
+// Leave room for Linear reads and linking within the Runner's 30-second deadline.
+const METADATA_TIMEOUT_MS = 5_000;
 const RETRY_MAX_MS = 60 * 60_000;
 /** The longest status update a machine may post, in characters. */
 export const MAX_UPDATE_CHARS = 2000;
@@ -303,22 +305,30 @@ export class MachineQueue {
     if (!issueId) return 'not-claimed';
     const data = await this.#read<WatchData>(WATCH, { issue: issueId, session: id });
     const status = data?.agentSession?.status;
-    if (!status || !data?.issue) return 'linear';
+    if (!status) return 'linear';
+    if (['complete', 'error', 'stopped'].includes(status)) {
+      if (this.#held(id, claimId) !== issueId) return 'not-claimed';
+      return { sessionStatus: status, pullRequests: [] };
+    }
+    if (!data?.issue) return 'linear';
     const urls = (data.issue.attachments?.nodes ?? []).map((a) => a.url ?? '');
     const [launch] = this.#sql.exec('SELECT launch_repo, launch_branch FROM jobs WHERE id = ? AND claim_id = ?', id, claimId).toArray();
     const pullRequests: string[] = [];
     if (launch?.launch_repo && launch.launch_branch) {
+      const metadataSignal = AbortSignal.timeout(METADATA_TIMEOUT_MS);
       for (const url of urls.filter((url) => PULL_REQUEST.test(url))) {
+        if (metadataSignal.aborted) break;
         const path = new URL(url).pathname.split('/');
         if (`${path[1]}/${path[2]}`.toLowerCase() !== String(launch.launch_repo).toLowerCase()) continue;
         try {
           // shortcut: public metadata only, add GitHub credentials when private PR detection is required.
           const response = await this.#fetch(`https://api.github.com/repos/${path[1]}/${path[2]}/pulls/${path[4]}`, {
             headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'factory-delegator' },
-            signal: AbortSignal.timeout(POST_TIMEOUT_MS), redirect: 'error',
+            signal: metadataSignal, redirect: 'error',
           });
           if (!response.ok) continue;
           const pr = await response.json() as { base?: { repo?: { full_name?: string } }; head?: { ref?: string; repo?: { full_name?: string } } };
+          metadataSignal.throwIfAborted();
           const repo = String(launch.launch_repo).toLowerCase();
           if (pr.base?.repo?.full_name?.toLowerCase() === repo && pr.head?.repo?.full_name?.toLowerCase() === repo
             && pr.head?.ref === launch.launch_branch) pullRequests.push(url);
