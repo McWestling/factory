@@ -172,6 +172,23 @@ again on recovery: the updates API has no deduplication key. A timed-out create 
 fails and can leave a worktree; recovery applies to reclaimed claims, not terminal failures.
 Logs contain ids and outcomes only.
 
+### Register another repo before delegating
+
+On each machine that should accept the repo:
+
+1. Clone the repo and add its checkout in Orca.
+2. Open `~/.config/factory-delegator/config.json` (or **Open config** in the
+   menu bar app) and add `"owner/name": "/absolute/path/to/checkout"` to `repos`,
+   preserving the existing entries and mode `600`.
+3. Stop and start the Runner from the menu bar app. It reads config at startup;
+   editing the file alone does not update the running process.
+4. Check that the issue's `[repo=owner/name]` tag exactly matches that key, then
+   delegate to that machine.
+
+An allowlist refusal happens before an agent launches. After fixing registration,
+delegate again to retry; a failed job does not retry itself. Keep the allowlist
+explicit: an issue's repo tag must never authorize a new checkout by itself.
+
 ### Install and control the Runner
 
 On macOS, the menu bar app can be installed before the Runner. To install just the

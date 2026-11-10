@@ -248,7 +248,7 @@ const refusals: [string, Partial<Task>, string][] = [
   ['a malformed repo tag', { description: description('Claude Opus 5.5', 'not a repo') },
     'Refused `repo`: expected a [repo=owner/name] tag matching ^[\\w.-]+/[\\w.-]+$. Fix it and delegate again to retry.'],
   ['a repo not on the allowlist', { description: description('Claude Opus 5.5', 'owner/other') },
-    'Refused `repo`: expected a repo on the machine allowlist. Fix it and delegate again to retry.'],
+    "Refused `repo`: expected a repo on Example Mac's allowlist. Add `owner/other` to `repos` in `~/.config/factory-delegator/config.json`, register its checkout in Orca, and restart the Runner. Fix it and delegate again to retry."],
   ['a flag-like branch name', { branchName: '--upload-pack=evil' },
     "The issue's Linear branch name isn't a plain git branch name. Fix it and delegate again to retry."],
   ['a branch segment that starts with a dash', { branchName: 'someone/-x' },

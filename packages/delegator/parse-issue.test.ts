@@ -69,7 +69,7 @@ test('refuses a model absent from the machine config', () => {
 
 test('refuses a repo absent from the machine allowlist', () => {
   assert.deepEqual(parseIssue(`${block}\n${repo}`, { ...config, repos: [] }), {
-    field: 'repo', expected: 'a repo on the machine allowlist',
+    field: 'repo', expected: "a repo on this machine's allowlist. Add `example/project` to `repos` in `~/.config/factory-delegator/config.json`, register its checkout in Orca, and restart the Runner",
   });
 });
 

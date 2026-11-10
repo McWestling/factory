@@ -43,7 +43,10 @@ export function parseIssue(description: string, config?: DelegatorConfig): Deleg
     };
   }
   if (config && !config.repos.includes(repo)) {
-    return { field: 'repo', expected: 'a repo on the machine allowlist' };
+    return {
+      field: 'repo',
+      expected: `a repo on ${config.machine ?? 'this machine'}'s allowlist. Add \`${repo}\` to \`repos\` in \`~/.config/factory-delegator/config.json\`, register its checkout in Orca, and restart the Runner`,
+    };
   }
   return { repo, model };
 }
