@@ -52,7 +52,9 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void) {
   // Every other request goes to `answer`, which reads and edits `world`, and is kept in `requests`.
   const world = fakeWorld();
   const requests: { query: string; variables: Record<string, any> }[] = [];
-  const linear = { failNext: 0, refreshFails: false, attempts: 0, hold, world, requests, answer: (q: string, v: Record<string, any>) => answer(world, q, v) };
+  const linear = { github: (_url: string): Response | Promise<Response> => Response.json({
+    base: { repo: { full_name: 'owner/repo' } }, head: { ref: 'launch-branch', repo: { full_name: 'owner/repo' } },
+  }), failNext: 0, refreshFails: false, attempts: 0, hold, world, requests, answer: (q: string, v: Record<string, any>) => answer(world, q, v) };
   let held: { reached: () => void; released: Promise<void> } | undefined;
   function hold() {
     let release!: () => void;
@@ -72,6 +74,10 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void) {
     if (String(input) === 'https://api.linear.app/oauth/token') {
       if (linear.refreshFails) return new Response(null, { status: 500 });
       return Response.json({ access_token: 'access-refreshed', refresh_token: 'refresh-2', expires_in: 86400, scope: 'read write app:assignable' });
+    }
+    if (String(input).startsWith('https://api.github.com/')) {
+      assert.equal(new Headers(init?.headers).get('Authorization'), null);
+      return linear.github(String(input));
     }
     assert.equal(String(input), 'https://api.linear.app/graphql');
     linear.attempts++;
@@ -1182,29 +1188,41 @@ test('a row cancelled in flight neither deletes nor blocks newer activity', asyn
   assert.deepEqual(h.rows().outbox, []);
 });
 
-test('watch returns the session status and only GitHub pull request links', async () => {
+test('watch returns the session status and only verified GitHub pull request links', async () => {
   const h = await claimedJob();
+  await call(h, 'POST', 'launched', h.claimId, { repo: 'owner/repo', branch: 'launch-branch' });
   h.linear.world.issues['issue-1']!.attachments = [
     'https://example.com/doc', 'https://github.com/owner/repo/issues/3', 'https://github.com/owner/repo/pull/7',
     'https://github.com/owner/repo/pull/8/files', 'https://github.com.evil.example/owner/repo/pull/9',
   ];
-  h.linear.world.sessions['session-1'] = { creatorId: 'user-creator', status: 'complete', links: [] };
+  h.linear.world.sessions['session-1'] = { creatorId: 'user-creator', status: 'active', links: [] };
   const res = await h.runner('GET', `/jobs/session-1/watch?claimId=${h.claimId}&issueId=issue-2`);
   assert.deepEqual(await res.json(), {
-    sessionStatus: 'complete',
+    sessionStatus: 'active',
     pullRequests: ['https://github.com/owner/repo/pull/7', 'https://github.com/owner/repo/pull/8/files'],
   });
   assert.deepEqual(h.linear.requests.map((r) => r.variables), [{ issue: 'issue-1', session: 'session-1' }]);
 });
 
-test("pull-request links the issue's first pull request on the job session, and 409 without one", async () => {
+test("pull-request links the first verified pull request on the job session, and 409 without one", async () => {
   const h = await claimedJob();
   assert.equal((await call(h, 'POST', 'pull-request', h.claimId)).status, 409);
+  await call(h, 'POST', 'launched', h.claimId, { repo: 'owner/repo', branch: 'launch-branch' });
   h.linear.world.issues['issue-1']!.attachments = ['https://github.com/owner/repo/pull/7', 'https://github.com/owner/repo/pull/8'];
   const res = await call(h, 'POST', 'pull-request', h.claimId, { url: 'https://evil.example', session: 'session-2' });
   assert.deepEqual(await res.json(), { url: 'https://github.com/owner/repo/pull/7' });
   assert.deepEqual(h.linear.world.sessions['session-1']!.links, ['https://github.com/owner/repo/pull/7']);
   assert.deepEqual(h.linear.requests.at(-1)!.variables, { session: 'session-1', url: 'https://github.com/owner/repo/pull/7' });
+});
+
+test('legacy launch evidence cannot turn an attached contextual PR into success', async () => {
+  const h = await claimedJob();
+  await call(h, 'POST', 'launched', h.claimId);
+  h.linear.world.issues['issue-1']!.attachments = ['https://github.com/owner/repo/pull/7'];
+  const watched = await call(h, 'GET', 'watch', h.claimId);
+  assert.deepEqual((await watched.json() as { pullRequests: string[] }).pullRequests, []);
+  assert.equal((await call(h, 'POST', 'pull-request', h.claimId)).status, 409);
+  assert.deepEqual(h.linear.world.sessions['session-1']!.links, []);
 });
 
 test('Runner operations never log task content, activity bodies or tokens', async (t) => {
@@ -1218,3 +1236,76 @@ test('Runner operations never log task content, activity bodies or tokens', asyn
   assert.doesNotMatch(output, /Task for|secret-body|access-example|bbbbbbbb/);
   assert.match(output, /"event":"task"/);
 });
+
+test('ownership survives restart and ignores contextual attachments before a matching pre-existing PR', async () => {
+  const h = await claimedJob();
+  await call(h, 'POST', 'launched', h.claimId, { repo: 'Owner/Repo', branch: 'launch-branch' });
+  h.rebuild();
+  h.linear.world.issues['issue-1']!.attachments = [
+    'https://github.com/other/repo/pull/1', 'https://github.com/owner/repo/pull/2', 'https://github.com/owner/repo/pull/7',
+  ];
+  h.linear.github = (url) => Response.json({ base: { repo: { full_name: 'owner/repo' } },
+    head: { ref: url.endsWith('/2') ? 'context-branch' : 'launch-branch', repo: { full_name: 'owner/repo' } } });
+  const recovery = await (await h.runner('GET', '/jobs/watching')).json() as { launch: unknown }[];
+  assert.deepEqual(recovery[0]!.launch, { repo: 'Owner/Repo', branch: 'launch-branch' });
+  assert.deepEqual(await (await call(h, 'POST', 'pull-request', h.claimId)).json(), { url: 'https://github.com/owner/repo/pull/7' });
+});
+
+for (const failure of ['missing', 'failed', 'network', 'wrong-repo', 'wrong-branch', 'fork']) {
+  test(`unverifiable ownership (${failure}) is retryable and rechecked before completion`, async () => {
+    const h = await claimedJob();
+    await call(h, 'POST', 'launched', h.claimId, { repo: 'owner/repo', branch: 'launch-branch' });
+    h.linear.world.issues['issue-1']!.attachments = ['https://github.com/owner/repo/pull/7'];
+    const good = h.linear.github;
+    // Verify once, then change the authoritative evidence before linking/completing.
+    assert.equal((await call(h, 'GET', 'watch', h.claimId)).status, 200);
+    h.linear.github = () => {
+      if (failure === 'network') throw new TypeError('unreachable');
+      return failure === 'failed' ? new Response(null, { status: 503 }) : Response.json(
+      failure === 'missing' ? {} : { base: { repo: { full_name: failure === 'wrong-repo' ? 'other/repo' : 'owner/repo' } },
+        head: { ref: failure === 'wrong-branch' ? 'context' : 'launch-branch', repo: { full_name: failure === 'fork' ? 'other/repo' : 'owner/repo' } } });
+    };
+    assert.equal((await call(h, 'POST', 'pull-request', h.claimId)).status, 409);
+    assert.equal((await update(h, h.claimId, 'response', 'Opened https://github.com/owner/repo/pull/7.')).status, 409);
+    assert.equal((await (await h.runner('GET', '/jobs/watching')).json() as unknown[]).length, 1);
+    h.linear.github = good;
+    assert.equal((await call(h, 'POST', 'pull-request', h.claimId)).status, 200);
+  });
+}
+
+for (const interrupt of ['stop', 'replace']) {
+  test(`a ${interrupt} during GitHub verification cannot link or complete the old claim`, async () => {
+    const h = await claimedJob();
+    await call(h, 'POST', 'launched', h.claimId, { repo: 'owner/repo', branch: 'launch-branch' });
+    h.linear.world.issues['issue-1']!.attachments = ['https://github.com/owner/repo/pull/7'];
+    const good = h.linear.github;
+    let release!: () => void;
+    let reached!: () => void;
+    const waiting = new Promise<void>((resolve) => { reached = resolve; });
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    h.linear.github = async (url) => { reached(); await blocked; return good(url); };
+    const linking = call(h, 'POST', 'pull-request', h.claimId);
+    await waiting;
+    if (interrupt === 'stop') await h.send(h.stoppedPayload('session-1'));
+    else await h.created('session-2');
+    release();
+    assert.equal((await linking).status, 409);
+    assert.deepEqual(h.linear.world.sessions['session-1']!.links, []);
+  });
+}
+
+test('terminal sessions reject PR success responses even with matching ownership', async () => {
+  const h = await claimedJob();
+  await call(h, 'POST', 'launched', h.claimId, { repo: 'owner/repo', branch: 'launch-branch' });
+  h.linear.world.issues['issue-1']!.attachments = ['https://github.com/owner/repo/pull/7'];
+  h.linear.world.sessions['session-1'] = { creatorId: 'user-creator', status: 'complete', links: [] };
+  assert.equal((await update(h, h.claimId, 'response', 'Opened https://github.com/owner/repo/pull/7.')).status, 409);
+});
+
+for (const launch of [{ repo: 'owner/repo' }, { repo: 'https://example.com/repo', branch: 'launch' }, { repo: 'owner/repo', branch: '../context' }]) {
+  test(`malformed launch evidence is refused: ${JSON.stringify(launch)}`, async () => {
+    const h = await claimedJob();
+    assert.equal((await call(h, 'POST', 'launched', h.claimId, launch)).status, 400);
+    assert.equal((await call(h, 'POST', 'launched', h.claimId, { repo: 'owner/repo', branch: 'launch-branch' })).status, 204);
+  });
+}

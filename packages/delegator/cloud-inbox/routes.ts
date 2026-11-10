@@ -1,6 +1,7 @@
 // Cloud Inbox's webhook route and Runner API. The Worker hands each request here with
 // a way to reach a machine's queue, so `node:test` can drive the whole route.
 
+import { isLaunchEvidence } from '../job.ts';
 import { hex, timingSafeEqual, type Config } from './auth.ts';
 import { MAX_UPDATE_CHARS, type AgentEvent, type MachineQueue, type Refusal, type UpdateType } from './queue.ts';
 
@@ -188,7 +189,15 @@ export async function handleRunner(request: Request, config: Config, machines: M
   };
 
   if (op === 'launched' || op === 'failed') {
-    const recorded = await queue.finish(id, claimId, op);
+    let launch;
+    if (op === 'launched') {
+      const body = await request.text();
+      if (body) {
+        try { launch = JSON.parse(body); } catch { return text(400, 'Invalid launch evidence'); }
+        if (!isLaunchEvidence(launch)) return text(400, 'Invalid launch evidence');
+      }
+    }
+    const recorded = await queue.finish(id, claimId, op, launch);
     if (!recorded) return refused('not-claimed');
     done('recorded');
     return new Response(null, { status: 204 });
