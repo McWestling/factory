@@ -96,6 +96,12 @@ case "${1:-}" in
 		launchctl disable "$domain/$menu_label"
 		launchctl bootout "$domain/$menu_label" 2>/dev/null || true
 		exit 0 ;;
+	--build-app)
+		# Builds the complete bundle into a staging directory; touches nothing installed.
+		[ "$#" -eq 2 ] || { echo "usage: install.sh --build-app <staging dir>" >&2; exit 2; }
+		app=$2
+		build_app
+		exit 0 ;;
 	--app-only)
 		[ "$#" -eq 1 ] || { echo "usage: install.sh --app-only" >&2; exit 2; }
 		build_app

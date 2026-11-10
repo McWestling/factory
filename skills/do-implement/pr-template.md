@@ -105,10 +105,6 @@ Keep only the checkbox groups that have steps. Write each step so the maintainer
 
 - **Something to paste:** under the checkbox, a fenced block with the exact command or prompt, then one line on what a pass looks like.
 - **Existing state:** point the step at an issue, branch or file that already exists. Never ask the maintainer to make a scratch one.
-- **Reinstall first:** when the PR changes installed skills, the first **After merge** step is the reinstall command from the README:
-
-  ```sh
-  npx skills add mcwestling/factory --skill '*' -g
-  ```
+- **Refresh first:** when the PR changes installed skills or a locally installed service, the first **After pulling** step is the repo's upkeep or reinstall command from its README, if it has one, with its pass line.
 
 Put the issue id in the body in either form, so the tracker links the PR.
