@@ -532,11 +532,12 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
     return refuse('creator-refused', NOT_ALLOWED);
   }
   const issue = parseIssue(typeof task.description === 'string' ? task.description : '', {
+    machine: config.machine,
     models: config.models,
     repos: Object.keys(config.repos),
   });
   if ('field' in issue) {
-    return refuse(`refused-${issue.field}`, `Refused \`${issue.field}\`: expected ${issue.expected}. ${RETRY}`);
+    return refuse(`refused-${issue.field}`, `Refused \`${issue.field}\`: ${issue.field === 'model' ? '' : 'expected '}${issue.expected}. ${RETRY}`);
   }
   const { identifier, branchName } = task;
   if (typeof identifier !== 'string' || !IDENTIFIER.test(identifier)) {

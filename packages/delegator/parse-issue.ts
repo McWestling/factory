@@ -1,6 +1,7 @@
 export type DelegatorIssue = { repo: string; model: string };
 export type Refusal = { field: 'factory-run' | 'model' | 'repo'; expected: string };
 export type DelegatorConfig = {
+  machine?: string;
   models: Readonly<Record<string, unknown>>;
   repos: readonly string[];
 };
@@ -36,7 +37,10 @@ export function parseIssue(description: string, config?: DelegatorConfig): Deleg
     return { field: 'repo', expected: 'a [repo=owner/name] tag matching ^[\\w.-]+/[\\w.-]+$' };
   }
   if (config && !Object.hasOwn(config.models, model)) {
-    return { field: 'model', expected: 'an exact model name in the machine config' };
+    return {
+      field: 'model',
+      expected: `\`${model}\` isn't configured on ${config.machine ?? 'this machine'}. Supported: ${Object.keys(config.models).map(name => `\`${name}\``).join(', ') || 'none'}`,
+    };
   }
   if (config && !config.repos.includes(repo)) {
     return { field: 'repo', expected: 'a repo on the machine allowlist' };
