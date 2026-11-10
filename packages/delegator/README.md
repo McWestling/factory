@@ -135,8 +135,7 @@ refuses to start without it, with a looser mode, or with any key missing or empt
 nothing has a default except `skill` (`do-implement`). `machine` is the Linear app's
 name, used in messages. Each `repos` path is a local checkout Orca knows, and each
 `models` key is a Preferred models name. The required `levels` map names a
-configured model for each of `light`, `standard` and `deep`; add it to existing
-configs before starting the updated Runner.
+configured model for each of `light`, `standard` and `deep`.
 
 ```sh
 npm run runner

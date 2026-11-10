@@ -43,7 +43,7 @@ Each machine keeps a `models` map from model names to agent, model identifier an
 }
 ```
 
-All three keys are required, and every value must name a key in `models`. Invalid mappings stop the Runner at config load. Existing configs need this map before running the updated Runner. See `packages/delegator/config.example.json` for a complete example.
+All three keys are required, and every value must name a key in `models`. Invalid mappings stop the Runner at config load. See `packages/delegator/config.example.json` for a complete example.
 
 The skill is not part of the issue format. Runner config's optional `skill` key selects it and defaults to `do-implement`; its value must match `^[a-z0-9-]+$`. Delegator prompts Codex with `$<skill> <issue id>` and other agents with `/<skill> <issue id>`, followed by the delegated-run line. Orca setup runs only for `do-implement` and is skipped for other skills. The configured skill decides what it accepts; a `wayfinder:` label is not a Delegator gate.
 

@@ -9,11 +9,11 @@ Paths below are relative to `packages/delegator`.
 `JobState` (`queued`, `claimed`, `launched`, `failed`). Queue metadata belongs to the
 queue, not the job payload.
 
-`parse-issue.ts` exports `parseIssue(description, config?)`. It returns
+`parse-issue.ts` exports `parseIssue(description)`. It returns
 `{repo, level, model?, target?}` or a refusal `{field, expected}`. Test for
 `field` to distinguish a refusal. The required `[repo=owner/name]` and
 `[level=…]` tags accept Linear's escaped form; the first tag of each kind wins.
-The optional config enforces repo membership in `repos` (an allowlist).
+The parser checks syntax only; the Runner enforces its repo allowlist.
 
 The exported `matchModel(pin, names)` matches model pins after lowercasing and
 removing punctuation: exact first, then a unique substring match. The Runner

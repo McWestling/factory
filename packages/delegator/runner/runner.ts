@@ -8,7 +8,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
 import type { Claim } from '../job.ts';
-import { matchModel, parseIssue, type Level } from '../parse-issue.ts';
+import { LEVELS, matchModel, parseIssue, type Level } from '../parse-issue.ts';
 
 export const CONFIG_PATH = join(homedir(), '.config', 'factory-delegator', 'config.json');
 const POLL_MS = 15_000;
@@ -164,7 +164,7 @@ export function loadConfig(path = CONFIG_PATH): RunnerConfig {
     }
   }
   if (!isObject(levels)) fail('levels', 'a map of light, standard and deep to configured model names');
-  for (const level of ['light', 'standard', 'deep']) {
+  for (const level of LEVELS) {
     const name = (levels as Record<string, unknown>)[level];
     if (!Object.hasOwn(levels as object, level) || typeof name !== 'string' || !Object.hasOwn(models as object, name)) {
       fail(`levels.${level}`, 'a configured model name');
@@ -540,12 +540,11 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
   if (!isText(task.creatorId) || !config.allowedCreatorIds.includes(task.creatorId)) {
     return refuse('creator-refused', NOT_ALLOWED);
   }
-  const issue = parseIssue(typeof task.description === 'string' ? task.description : '', {
-    repos: Object.keys(config.repos),
-  });
+  const issue = parseIssue(typeof task.description === 'string' ? task.description : '');
   if ('field' in issue) {
     return refuse(`refused-${issue.field}`, `Refused \`${issue.field}\`: expected ${issue.expected}. ${RETRY}`);
   }
+  if (!Object.hasOwn(config.repos, issue.repo)) return refuse('refused-repo', `Refused \`repo\`: expected a repo on the machine allowlist. ${RETRY}`);
   const { identifier, branchName } = task;
   if (typeof identifier !== 'string' || !IDENTIFIER.test(identifier)) {
     return refuse('bad-identifier', `The issue id isn't a plain Linear id like ABC-123. ${RETRY}`);

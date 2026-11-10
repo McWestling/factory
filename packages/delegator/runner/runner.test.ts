@@ -807,25 +807,34 @@ test('heartbeat keeps a pending launch fresh and stops refreshing when cleared',
 for (const [pin, model, id] of [
   ['luna', 'GPT-6 Luna', 'gpt-6-luna'],
   ['unknown', 'Claude Opus 5.5', 'claude-opus-5-5'],
+  ['gpt6', 'Claude Opus 5.5', 'claude-opus-5-5'],
 ]) {
   test(`pin ${pin} launches ${model} and reports the actual model`, async () => {
     const f = fakes({ ...goodTask, description: description(pin) });
-    assert.equal(await handleJob(config, f.deps, claim), 'launched');
+    if (pin !== 'luna') {
+      const exec = f.deps.exec;
+      f.deps.exec = async (...args) => {
+        assert.deepEqual(f.updates[0], ['thought',
+          `Couldn't match model pin \`${pin}\`; using level \`standard\` with ${model}.`]);
+        return exec(...args);
+      };
+    }
+    const models = { ...config.models, 'GPT-6 Astra': { agent: 'codex', model: 'gpt-6-astra' } };
+    assert.equal(await handleJob({ ...config, models }, f.deps, claim), 'launched');
     assert.equal(f.argv[1]![f.argv[1]!.indexOf('--model') + 1], id);
     assert.equal(f.updates.at(-1)?.[1], `Started ${model} in Orca on \`someone/abc-123-do-the-thing\`.`);
-    if (pin === 'unknown') {
-      assert.deepEqual(f.updates[0], ['thought',
-        "Couldn't match model pin `unknown`; using level `standard` with Claude Opus 5.5."]);
-    } else assert.equal(f.updates.length, 1);
+    assert.equal(f.updates.length, pin === 'luna' ? 1 : 2);
   });
 }
 
-test('without a pin the level selects the model', async () => {
-  const f = fakes({ ...goodTask, description: '[repo=owner/repo] [level=light]' });
-  assert.equal(await handleJob(config, f.deps, claim), 'launched');
-  assert.ok(f.argv[1]!.includes('gpt-6-luna'));
-  assert.equal(f.updates.length, 1);
-});
+for (const pin of ['', ' [model=]']) {
+  test(`missing or empty pin ${JSON.stringify(pin)} uses the level without a fallback thought`, async () => {
+    const f = fakes({ ...goodTask, description: `[repo=owner/repo] [level=light]${pin}` });
+    assert.equal(await handleJob(config, f.deps, claim), 'launched');
+    assert.ok(f.argv[1]!.includes('gpt-6-luna'));
+    assert.equal(f.updates.length, 1);
+  });
+}
 
 for (const levels of [undefined, {}, { ...config.levels, standard: 'unknown' },
   { ...config.levels, light: 'toString' }]) {
@@ -834,16 +843,3 @@ for (const levels of [undefined, {}, { ...config.levels, standard: 'unknown' },
     assert.throws(() => loadConfig(writeConfig(dir, { ...valid, levels })), /config \`levels/);
   });
 }
-
-test('an ambiguous pin posts its fallback before starting Orca', async () => {
-  const f = fakes({ ...goodTask, description: description('gpt6') });
-  const exec = f.deps.exec;
-  f.deps.exec = async (...args) => {
-    assert.deepEqual(f.updates[0], ['thought',
-      "Couldn't match model pin `gpt6`; using level `standard` with Claude Opus 5.5."]);
-    return exec(...args);
-  };
-  const models = { ...config.models, 'GPT-6 Astra': { agent: 'codex', model: 'gpt-6-astra' } };
-  assert.equal(await handleJob({ ...config, models }, f.deps, claim), 'launched');
-  assert.ok(f.argv[1]!.includes('claude-opus-5-5'));
-});

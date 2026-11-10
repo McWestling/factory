@@ -16,7 +16,9 @@ for (const [level, expected] of [
   ['LIGHT', 'light'], ['Standard', 'standard'], ['DeEp', 'deep'],
 ]) {
   test(`accepts level ${level}`, () => {
-    assert.deepEqual(parseIssue(`[level=${level}] ${repo}`), { repo: 'example/project', level: expected });
+    assert.deepEqual(parseIssue(`[level=${level}] ${repo}`), {
+      repo: 'example/project', level: expected, model: undefined, target: undefined,
+    });
   });
 }
 
@@ -26,7 +28,7 @@ test('reads escaped tags and keeps the first of each kind', () => {
     repo: 'example/project', level: 'standard', model: 'astra', target: 'Claude',
   });
   assert.deepEqual(parseIssue(`${repo} [level=light] [level=deep] [model=] [model=astra] [target=] [target=Orca]`), {
-    repo: 'example/project', level: 'light', model: '', target: '',
+    repo: 'example/project', level: 'light', model: undefined, target: undefined,
   });
 });
 
@@ -48,12 +50,9 @@ for (const tag of ['', '[repo=]', '[repo=example]', '[repo=example/project/extra
   });
 }
 
-test('enforces the repo allowlist without refusing model pins', () => {
-  assert.deepEqual(parseIssue(`${repo} [level=standard] [model=unknown]`, { repos: ['example/project'] }), {
-    repo: 'example/project', level: 'standard', model: 'unknown',
-  });
-  assert.deepEqual(parseIssue(`${repo} [level=standard]`, { repos: [] }), {
-    field: 'repo', expected: 'a repo on the machine allowlist',
+test('accepts unknown model pins', () => {
+  assert.deepEqual(parseIssue(`${repo} [level=standard] [model=unknown]`), {
+    repo: 'example/project', level: 'standard', model: 'unknown', target: undefined,
   });
 });
 
