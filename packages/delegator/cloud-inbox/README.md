@@ -16,8 +16,9 @@ a missing or malformed block refuses dispatch. The repo comes
 from the required `[repo=owner/name]` tag, including Linear's escaped form.
 
 Without config, the parser checks syntax only. The Runner must pass its config
-to enforce the exact model name in `models` (a name-to-settings map) and repo
-membership in `repos` (an allowlist). `target` and `reason` do not affect dispatch.
+to enforce the exact model name in `models` (a name-to-settings map). The Runner
+resolves the repo separately from Orca registrations at pickup. `target` and `reason`
+do not affect dispatch.
 
 ## Cloud Inbox
 

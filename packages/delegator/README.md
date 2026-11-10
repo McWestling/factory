@@ -133,8 +133,8 @@ Copy [config.example.json](config.example.json) to
 `~/.config/factory-delegator/config.json`, fill it in and `chmod 600` it. The Runner
 refuses to start without it, with a looser mode, or with any key missing or empty;
 nothing has a default except `skill` (`do-implement`). `machine` is the Linear app's
-name, used in messages. Each `repos` path is a local checkout Orca knows, and each
-`models` key is an exact Preferred models name.
+name, used in messages. Each `models` key is an exact Preferred models name.
+Repos come from Orca at pickup; an old `repos` config key is ignored and can be removed.
 
 ```sh
 npm run runner
@@ -143,8 +143,9 @@ npm run runner
 Every 15 s it claims one job and checks it with what Cloud Inbox returns. Delegation
 by a user on `allowedCreatorIds` is the approval to launch. It drops a job whose issue
 is no longer delegated to the app, and refuses an unlisted or missing creator, an issue
-that fails the [issue format](../../docs/issue-format.md), or a model or repo not in
-its config. Otherwise it runs `orca open --json` and the documented
+that fails the [issue format](../../docs/issue-format.md), or a model not in
+its config. It runs `orca open --json`, resolves the repo using `orca repo list --json`,
+then runs the documented
 `orca worktree create`, retrying once if Orca's runtime is unavailable, then posts
 "Started …" and reports `launched`; Cloud Inbox sets the status, `Orca` label and
 assignee. Any failure posts one `error` and reports `failed`, which clears the delegate.
@@ -157,7 +158,7 @@ and posts the thought only if its saved flag says it wasn't accepted.
 
 If the Runner dies during create or before recording its result, the saved intent lets
 it check `orca repo show` and `orca worktree list` with `--json`. Recovery requires the
-exact configured checkout path, repo ID and branch on the local host. Without that
+exact discovered checkout path, repo ID and branch on the local host. Without that
 match (including unreadable or incomplete listing results with no match), it follows
 the normal create and failure path; `worktree_conflict` alone never proves a launch.
 Orca confirms a worktree, not that its agent started, received the prompt or is still
@@ -172,22 +173,20 @@ again on recovery: the updates API has no deduplication key. A timed-out create 
 fails and can leave a worktree; recovery applies to reclaimed claims, not terminal failures.
 Logs contain ids and outcomes only.
 
-### Register another repo before delegating
+### Repos come from Orca
 
-On each machine that should accept the repo:
+Clone a repo and add its checkout in Orca before delegating. At each pickup the
+Runner reads `orca repo list --json` and matches the issue's `[repo=owner/name]`
+tag to `gitRemoteIdentity.canonicalKey` (`github.com/owner/name`, ignoring case).
+It uses that registration's absolute checkout path. There is no separate repo
+allowlist or Runner restart when registering another repo.
 
-1. Clone the repo and add its checkout in Orca.
-2. Open `~/.config/factory-delegator/config.json` (or **Open config** in the
-   menu bar app) and add `"owner/name": "/absolute/path/to/checkout"` to `repos`,
-   preserving the existing entries and mode `600`.
-3. Stop and start the Runner from the menu bar app. It reads config at startup;
-   editing the file alone does not update the running process.
-4. Check that the issue's `[repo=owner/name]` tag exactly matches that key, then
-   delegate to that machine.
-
-An allowlist refusal happens before an agent launches. After fixing registration,
-delegate again to retry; a failed job does not retry itself. Keep the allowlist
-explicit: an issue's repo tag must never authorize a new checkout by itself.
+Every registered GitHub repo is eligible for delegation by an allowed creator,
+including personal repos. Folder projects and repos without a matching GitHub
+identity are not eligible. No match, multiple matches, or an unreadable repo list
+refuses the job before creating a worktree. Keep one Orca registration per GitHub
+repo; the Runner never picks arbitrarily between checkouts or clones from issue text.
+After correcting a registration, delegate again to retry a failed job.
 
 ### Install and control the Runner
 

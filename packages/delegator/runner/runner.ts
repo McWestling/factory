@@ -24,8 +24,6 @@ export type RunnerConfig = {
   /** The Linear app's name, as Cloud Inbox's queued thought shows it. */
   machine: string;
   allowedCreatorIds: readonly string[];
-  /** `owner/name` → absolute path of the local checkout Orca knows. */
-  repos: Readonly<Record<string, string>>;
   /** Preferred models name → how Orca starts it. */
   models: Readonly<Record<string, ModelSettings>>;
   skill: string;
@@ -108,7 +106,6 @@ export function startStatusHeartbeat(deps: Deps) {
 
 // Flag-like or shell-like values never reach argv, even though there's no shell.
 const ARG = /^[\w.:]+[\w.:-]*$/;
-const REPO = /^[\w.-]+\/[\w.-]+$/;
 const IDENTIFIER = /^[A-Z][A-Z0-9]*-[0-9]+$/;
 // Every segment starts alphanumeric, so the last one is safe as `--name` too.
 const BRANCH = /^[A-Za-z0-9][\w.-]*(\/[A-Za-z0-9][\w.-]*)*$/;
@@ -137,7 +134,7 @@ export function loadConfig(path = CONFIG_PATH): RunnerConfig {
     throw new Error(`config \`${key}\` must be ${expected}`);
   };
 
-  const { inboxUrl, bearerSecret, machine, allowedCreatorIds, repos, models, skill = 'do-implement' } = raw;
+  const { inboxUrl, bearerSecret, machine, allowedCreatorIds, models, skill = 'do-implement' } = raw;
   let url: URL | undefined;
   try {
     url = new URL(String(inboxUrl));
@@ -147,12 +144,6 @@ export function loadConfig(path = CONFIG_PATH): RunnerConfig {
   if (!isText(machine)) fail('machine', 'a nonempty string');
   if (!Array.isArray(allowedCreatorIds) || !allowedCreatorIds.length || !allowedCreatorIds.every(isText)) {
     fail('allowedCreatorIds', 'a nonempty list of Linear user ids');
-  }
-  if (!isObject(repos) || !Object.keys(repos).length) fail('repos', 'a nonempty map of owner/name to a local path');
-  for (const [repo, path] of Object.entries(repos as object)) {
-    if (!REPO.test(repo) || typeof path !== 'string' || !isAbsolute(path)) {
-      fail('repos', 'a map of owner/name to an absolute local path');
-    }
   }
   if (!isObject(models) || !Object.keys(models).length) fail('models', 'a nonempty map of model name to settings');
   for (const settings of Object.values(models as object)) {
@@ -169,7 +160,6 @@ export function loadConfig(path = CONFIG_PATH): RunnerConfig {
     bearerSecret: bearerSecret as string,
     machine: machine as string,
     allowedCreatorIds: allowedCreatorIds as string[],
-    repos: repos as Record<string, string>,
     models: models as Record<string, ModelSettings>,
     skill: skill as string,
   };
@@ -237,12 +227,12 @@ function inbox(config: RunnerConfig, deps: Deps) {
 }
 
 /** The exact argv for `orca worktree create`, per docs/issue-format.md. */
-export function launchArgs(config: RunnerConfig, repo: string, model: string, task: Pick<Task, 'identifier' | 'branchName'>) {
+export function launchArgs(config: RunnerConfig, repoPath: string, model: string, task: Pick<Task, 'identifier' | 'branchName'>) {
   const { agent, model: id, effort } = config.models[model]!;
   return [
     'worktree', 'create',
     '--name', task.branchName.split('/').pop()!,
-    '--repo', `path:${config.repos[repo]}`,
+    '--repo', `path:${repoPath}`,
     '--branch', task.branchName,
     '--agent', agent,
     '--model', id,
@@ -534,7 +524,6 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
   const issue = parseIssue(typeof task.description === 'string' ? task.description : '', {
     machine: config.machine,
     models: config.models,
-    repos: Object.keys(config.repos),
   });
   if ('field' in issue) {
     return refuse(`refused-${issue.field}`, `Refused \`${issue.field}\`: ${issue.field === 'model' ? '' : 'expected '}${issue.expected}. ${RETRY}`);
@@ -547,7 +536,34 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
     return refuse('bad-branch', `The issue's Linear branch name isn't a plain git branch name. ${RETRY}`);
   }
 
-  if (saved && typeof saved !== 'number' && saved.repo === config.repos[issue.repo]
+  const opened = await orca(deps.exec, ['open', '--json']);
+  if (opened === 'orca_not_found') {
+    return refuse('orca-not-found', `The Runner can't find the \`orca\` command on ${config.machine}. Put Orca's CLI on its PATH. ${RETRY}`);
+  }
+  let paths: string[];
+  try {
+    const listing = JSON.parse((await deps.exec('orca', ['repo', 'list', '--json'], 30_000)).stdout);
+    if (listing?.ok !== true || !Array.isArray(listing.result?.repos)) throw new Error('invalid repo list');
+    paths = [];
+    for (const row of listing.result.repos) {
+      if (!isObject(row)) throw new Error('invalid repo row');
+      if (row.kind !== 'git' || !isObject(row.gitRemoteIdentity)
+        || typeof row.gitRemoteIdentity.canonicalKey !== 'string'
+        || row.gitRemoteIdentity.canonicalKey.toLowerCase() !== `github.com/${issue.repo.toLowerCase()}`) continue;
+      if (!isText(row.path) || !isAbsolute(row.path) || row.path.includes('\0')) throw new Error('invalid repo path');
+      paths.push(row.path);
+    }
+  } catch {
+    return refuse('orca-repos-unreadable', `Couldn't read registered repos from Orca on ${config.machine}. Check \`orca repo list --json\`. ${RETRY}`);
+  }
+  if (paths.length !== 1) {
+    return refuse('refused-repo', paths.length === 0
+      ? `Orca has no registered GitHub checkout for \`${issue.repo}\` on ${config.machine}. Add its checkout in Orca. ${RETRY}`
+      : `Orca has multiple registered checkouts for \`${issue.repo}\` on ${config.machine}. Keep one registration for that GitHub repo. ${RETRY}`);
+  }
+  const repoPath = paths[0]!;
+
+  if (saved && typeof saved !== 'number' && saved.repo === repoPath
     && saved.branch === branchName && Object.hasOwn(config.models, saved.model) && await hasWorktree(deps, saved)) {
     saved.launched = true;
     record(deps, log, (launches) => { launches[claim.sessionId] = saved; });
@@ -555,13 +571,12 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
     return reportLaunch(api, deps, claim, log, saved);
   }
 
-  const launch: Launch = { at: (deps.now ?? Date.now)(), repo: config.repos[issue.repo]!, branch: branchName,
+  const launch: Launch = { at: (deps.now ?? Date.now)(), repo: repoPath, branch: branchName,
     model: issue.model, launched: false, thoughtPosted: false };
   if (!record(deps, log, (launches) => { launches[claim.sessionId] = launch; })) {
     return refuse('launch-record-failed', `Couldn't save the launch intent. Check the Runner config directory is writable. ${RETRY}`);
   }
-  const args = launchArgs(config, issue.repo, issue.model, { identifier, branchName });
-  await orca(deps.exec, ['open', '--json']);
+  const args = launchArgs(config, repoPath, issue.model, { identifier, branchName });
   let code = await orca(deps.exec, args);
   if (code === 'runtime_unavailable') code = await orca(deps.exec, args);
   if (code === 'runtime_unavailable') {
@@ -571,7 +586,7 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
     return refuse('orca-not-found', `The Runner can't find the \`orca\` command on ${config.machine}. Put Orca's CLI on its PATH. ${RETRY}`);
   }
   if (code === 'repo_not_found') {
-    return refuse('orca-repo_not_found', `Orca doesn't know ${issue.repo}'s checkout on ${config.machine}. Add it in Orca, or fix its path in the Runner config. ${RETRY}`);
+    return refuse('orca-repo_not_found', `Orca doesn't know ${issue.repo}'s checkout on ${config.machine}. Check its registration in Orca. ${RETRY}`);
   }
   if (code) return refuse(`orca-${code}`, `Orca couldn't start the agent (\`${code}\`). Check Orca on ${config.machine}. ${RETRY}`);
 

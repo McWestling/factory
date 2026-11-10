@@ -18,7 +18,6 @@ const config: RunnerConfig = {
   bearerSecret: 'bearer-example',
   machine: 'Example Mac',
   allowedCreatorIds: ['user-allowed'],
-  repos: { 'owner/repo': '/repos/repo' },
   models: {
     'Claude Opus 5.5': { agent: 'claude', model: 'claude-opus-5-5', effort: 'high' },
     'GPT-6 Luna': { agent: 'codex', model: 'gpt-6-luna' },
@@ -37,6 +36,8 @@ const goodTask: Task = {
   statusType: 'unstarted',
 };
 const ok = JSON.stringify({ ok: true, result: {} });
+const registeredRepo = { kind: 'git', path: '/repos/repo', gitRemoteIdentity: { canonicalKey: 'github.com/owner/repo' } };
+const repoList = (repos: unknown[] = [registeredRepo]) => JSON.stringify({ ok: true, result: { repos } });
 const orcaError = (code: string) => Object.assign(new Error('exit 1'), { stdout: JSON.stringify({ ok: false, error: { code } }) });
 
 /** A fake Cloud Inbox and Orca, recording every call. */
@@ -64,6 +65,7 @@ function fakes(task: Partial<Task> | null = goodTask, orca: (string | Error)[] =
     async exec(file, args) {
       assert.equal(file, 'orca');
       argv.push(args);
+      if (args[0] === 'repo' && args[1] === 'list') return { stdout: repoList() };
       const next = orca.shift() ?? ok;
       if (next instanceof Error) throw next;
       return { stdout: next };
@@ -203,6 +205,7 @@ test('a launch runs orca open, then the exact worktree create argv', async () =>
   assert.equal(await handleJob(config, f.deps, claim), 'launched');
   assert.deepEqual(f.argv, [
     ['open', '--json'],
+    ['repo', 'list', '--json'],
     ['worktree', 'create', '--name', 'abc-123-do-the-thing', '--repo', 'path:/repos/repo',
       '--branch', 'someone/abc-123-do-the-thing', '--agent', 'claude', '--model', 'claude-opus-5-5',
       '--effort', 'high', '--prompt=/do-implement ABC-123\nDelegated run: nobody is watching this session.', '--setup', 'run', '--linear-issue', 'ABC-123', '--json'],
@@ -210,12 +213,12 @@ test('a launch runs orca open, then the exact worktree create argv', async () =>
 });
 
 test('Codex uses a dollar prefix for do-implement', () => {
-  const args = launchArgs(config, 'owner/repo', 'GPT-6 Luna', goodTask);
+  const args = launchArgs(config, '/repos/repo', 'GPT-6 Luna', goodTask);
   assert.ok(args.includes('--prompt=$do-implement ABC-123\nDelegated run: nobody is watching this session.'));
 });
 
 test('a skill other than do-implement skips setup, and a model without effort omits it', () => {
-  const args = launchArgs({ ...config, skill: 'do-refine' }, 'owner/repo', 'GPT-6 Luna', goodTask);
+  const args = launchArgs({ ...config, skill: 'do-refine' }, '/repos/repo', 'GPT-6 Luna', goodTask);
   assert.deepEqual(args, ['worktree', 'create', '--name', 'abc-123-do-the-thing', '--repo', 'path:/repos/repo',
     '--branch', 'someone/abc-123-do-the-thing', '--agent', 'codex', '--model', 'gpt-6-luna', '--prompt=$do-refine ABC-123\nDelegated run: nobody is watching this session.',
     '--setup', 'skip', '--linear-issue', 'ABC-123', '--json']);
@@ -247,8 +250,6 @@ const refusals: [string, Partial<Task>, string][] = [
     "Refused `model`: `GPT-6 Astra` isn't configured on Example Mac. Supported: `Claude Opus 5.5`, `GPT-6 Luna`. Fix it and delegate again to retry."],
   ['a malformed repo tag', { description: description('Claude Opus 5.5', 'not a repo') },
     'Refused `repo`: expected a [repo=owner/name] tag matching ^[\\w.-]+/[\\w.-]+$. Fix it and delegate again to retry.'],
-  ['a repo not on the allowlist', { description: description('Claude Opus 5.5', 'owner/other') },
-    "Refused `repo`: expected a repo on Example Mac's allowlist. Add `owner/other` to `repos` in `~/.config/factory-delegator/config.json`, register its checkout in Orca, and restart the Runner. Fix it and delegate again to retry."],
   ['a flag-like branch name', { branchName: '--upload-pack=evil' },
     "The issue's Linear branch name isn't a plain git branch name. Fix it and delegate again to retry."],
   ['a branch segment that starts with a dash', { branchName: 'someone/-x' },
@@ -275,7 +276,7 @@ test('an issue no longer delegated is dropped silently', async () => {
 test('Orca still unavailable after one retry gets the Orca-down error', async () => {
   const f = fakes(goodTask, [ok, orcaError('runtime_unavailable'), orcaError('runtime_unavailable')]);
   assert.equal(await handleJob(config, f.deps, claim), 'orca-unavailable');
-  assert.equal(f.argv.length, 3);
+  assert.equal(f.argv.length, 4);
   assert.deepEqual(f.updates, [['error', "Orca isn't running on Example Mac. Open Orca and delegate again to retry."]]);
   assert.equal(f.requests.at(-1), 'POST /jobs/session-1/failed');
 });
@@ -283,11 +284,11 @@ test('Orca still unavailable after one retry gets the Orca-down error', async ()
 test('Orca becoming available on the retry launches', async () => {
   const f = fakes(goodTask, [orcaError('runtime_unavailable'), orcaError('runtime_unavailable'), ok]);
   assert.equal(await handleJob(config, f.deps, claim), 'launched');
-  assert.equal(f.argv.length, 3);
+  assert.equal(f.argv.length, 4);
 });
 
 const orcaFailures: [string | Error, string][] = [
-  [orcaError('repo_not_found'), "Orca doesn't know owner/repo's checkout on Example Mac. Add it in Orca, or fix its path in the Runner config. Fix it and delegate again to retry."],
+  [orcaError('repo_not_found'), "Orca doesn't know owner/repo's checkout on Example Mac. Check its registration in Orca. Fix it and delegate again to retry."],
   [Object.assign(new Error('spawn orca ENOENT'), { code: 'ENOENT' }), "The Runner can't find the `orca` command on Example Mac. Put Orca's CLI on its PATH. Fix it and delegate again to retry."],
   [orcaError('worktree_conflict'), "Orca couldn't start the agent (`worktree_conflict`). Check Orca on Example Mac. Fix it and delegate again to retry."],
   [JSON.stringify({ ok: false, error: { code: 'Not A Code; rm -rf' } }), "Orca couldn't start the agent (`orca_failed`). Check Orca on Example Mac. Fix it and delegate again to retry."],
@@ -296,7 +297,7 @@ for (const [failure, message] of orcaFailures) {
   test(`an Orca failure is reported, not retried: ${message.slice(0, 40)}`, async () => {
     const f = fakes(goodTask, [ok, failure]);
     assert.notEqual(await handleJob(config, f.deps, claim), 'launched');
-    assert.equal(f.argv.length, 2);
+    assert.equal(f.argv.length, 3);
     assert.deepEqual(f.updates, [['error', message]]);
     assert.equal(f.requests.at(-1), 'POST /jobs/session-1/failed');
   });
@@ -513,6 +514,7 @@ for (const [label, listing, recovers, repoOutput = repoInfo] of [
     syncBuiltinESMExports();
     f.deps.exec = async (_file, args) => {
       f.argv.push(args);
+      if (args[0] === 'repo' && args[1] === 'list') return { stdout: repoList() };
       if (args[0] === 'worktree' && args[1] === 'create') created = true;
       return { stdout: ok };
     };
@@ -527,6 +529,7 @@ for (const [label, listing, recovers, repoOutput = repoInfo] of [
     restarted.deps = { ...restarted.deps, fetch: inbox.fetch, launches: f.deps.launches };
     restarted.deps.exec = async (_file, args) => {
       restarted.argv.push(args);
+      if (args[0] === 'repo' && args[1] === 'list') return { stdout: repoList() };
       if (args[0] === 'repo') return { stdout: repoOutput };
       if (args[0] === 'worktree' && args[1] === 'list') return { stdout: listing };
       if (args[0] === 'worktree' && args[1] === 'create') throw orcaError('worktree_conflict');
@@ -542,6 +545,8 @@ for (const [label, listing, recovers, repoOutput = repoInfo] of [
     assert.equal(inbox.issueEdits.some((edit) => 'delegateId' in edit), !recovers);
     if (recovers) {
       assert.deepEqual(restarted.argv, [
+        ['open', '--json'],
+        ['repo', 'list', '--json'],
         ['repo', 'show', '--repo', 'path:/repos/repo', '--json'],
         ['worktree', 'list', '--repo', 'path:/repos/repo', '--limit', '10000', '--json'],
       ]);
@@ -594,11 +599,11 @@ test('an unreadable launch file logs without throwing', async () => {
   ]);
 });
 
-test('a failed intent write refuses before Orca can start', async () => {
+test('a failed intent write refuses before a worktree can be created', async () => {
   const f = fakes();
   f.deps.launches = join(f.deps.launches, 'missing', 'launches.json');
   assert.equal(await handleJob(config, f.deps, claim), 'launch-record-failed');
-  assert.deepEqual(f.argv, []);
+  assert.deepEqual(f.argv, [['open', '--json'], ['repo', 'list', '--json']]);
   assert.deepEqual(f.requests.slice(-2), ['POST /jobs/session-1/updates', 'POST /jobs/session-1/failed']);
 });
 
@@ -636,8 +641,6 @@ test('the config loads, defaults the skill, and the example has every key', () =
 const badConfigs: [string, unknown][] = [
   ['no allowlist', { ...valid, allowedCreatorIds: undefined }],
   ['an empty allowlist', { ...valid, allowedCreatorIds: [] }],
-  ['no repos', { ...valid, repos: {} }],
-  ['a relative repo path', { ...valid, repos: { 'owner/repo': 'repo' } }],
   ['no models', { ...valid, models: undefined }],
   ['a flag-like model', { ...valid, models: { X: { agent: 'claude', model: '--danger' } } }],
   ['a bad skill', { ...valid, skill: 'Do Implement' }],
@@ -803,4 +806,68 @@ test('heartbeat keeps a pending launch fresh and stops refreshing when cleared',
   clearInterval(heartbeat);
   t.mock.timers.tick(31_000);
   assert.ok(Date.now() - Date.parse(JSON.parse(readFileSync(f.deps.status, 'utf8')).updatedAt) > 30_000);
+});
+
+
+test('a registered repo resolves without a config entry, using its current path and GitHub casing', async () => {
+  const f = fakes();
+  const exec = f.deps.exec;
+  f.deps.exec = (file, args, timeout) => args[0] === 'repo' && args[1] === 'list'
+    ? Promise.resolve({ stdout: repoList([{ ...registeredRepo, path: '/new checkout/repo',
+      gitRemoteIdentity: { canonicalKey: 'github.com/Owner/Repo' } }]) }) : exec(file, args, timeout);
+  assert.equal(await handleJob(config, f.deps, claim), 'launched');
+  assert.ok(f.argv.some(args => args.includes('path:/new checkout/repo')));
+});
+
+for (const [label, output] of [
+  ['missing repo', repoList([])],
+  ['duplicate repo', repoList([registeredRepo, { ...registeredRepo, path: '/other/repo' }])],
+  ['relative path', repoList([{ ...registeredRepo, path: 'repo' }])],
+  ['malformed JSON', 'not json'],
+  ['failed envelope', JSON.stringify({ ok: false })],
+  ['malformed list', JSON.stringify({ ok: true, result: { repos: {} } })],
+  ['malformed row', repoList([null])],
+  ['folder', repoList([{ ...registeredRepo, kind: 'folder' }])],
+  ['missing identity', repoList([{ kind: 'git', path: '/repos/repo' }])],
+  ['wrong host', repoList([{ ...registeredRepo, gitRemoteIdentity: { canonicalKey: 'gitlab.com/owner/repo' } }])],
+] as const) {
+  test(`repo discovery refuses ${label} before saving intent or creating a worktree`, async () => {
+    const f = fakes();
+    const exec = f.deps.exec;
+    f.deps.exec = (file, args, timeout) => args[0] === 'repo' && args[1] === 'list'
+      ? Promise.resolve({ stdout: output }) : exec(file, args, timeout);
+    assert.notEqual(await handleJob(config, f.deps, claim), 'launched');
+    assert.equal(f.updates.length, 1);
+    assert.equal(f.updates[0]?.[0], 'error');
+    assert.equal(f.requests.at(-1), 'POST /jobs/session-1/failed');
+    assert.ok(!f.argv.some(args => args[1] === 'create'));
+    assert.ok(!fs.existsSync(f.deps.launches));
+  });
+}
+
+test('legacy repos config is ignored', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'runner-'));
+  assert.deepEqual(loadConfig(writeConfig(dir, { ...config, repos: { 'owner/other': '/old/path' } })), config);
+});
+
+
+test('repo discovery failure reports an error without exposing CLI output', async () => {
+  const f = fakes();
+  const exec = f.deps.exec;
+  f.deps.exec = (file, args, timeout) => args[0] === 'repo' && args[1] === 'list'
+    ? Promise.reject(new Error('private CLI details')) : exec(file, args, timeout);
+  assert.equal(await handleJob(config, f.deps, claim), 'orca-repos-unreadable');
+  assert.deepEqual(f.updates, [['error', "Couldn't read registered repos from Orca on Example Mac. Check `orca repo list --json`. Fix it and delegate again to retry."]]);
+  assert.ok(!f.argv.some(args => args[1] === 'create'));
+});
+
+test('new registrations are read on the next job without reloading config', async () => {
+  const f = fakes();
+  const exec = f.deps.exec;
+  let repos: unknown[] = [];
+  f.deps.exec = (file, args, timeout) => args[0] === 'repo' && args[1] === 'list'
+    ? Promise.resolve({ stdout: repoList(repos) }) : exec(file, args, timeout);
+  assert.equal(await handleJob(config, f.deps, claim), 'refused-repo');
+  repos = [registeredRepo];
+  assert.equal(await handleJob(config, f.deps, claim), 'launched');
 });

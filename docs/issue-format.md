@@ -10,7 +10,7 @@ Every implementation issue must include a repo tag in its Agent brief, outside t
 [repo=owner/name]
 ```
 
-Linear may escape the brackets in its rendered description as `\[repo=owner/name\]`; that form means the same thing. The value must match `^[\w.-]+/[\w.-]+$` and name a repo on the machine's allowlist. Delegator reads this tag directly and does not fall back to Product → initiative routing. Keeping the tag outside the block also lets Cursor's Linear integration read it.
+Linear may escape the brackets in its rendered description as `\[repo=owner/name\]`; that form means the same thing. The value must match `^[\w.-]+/[\w.-]+$` and name exactly one GitHub repo registered in Orca on the machine. Delegator reads this tag directly and does not fall back to Product → initiative routing. Keeping the tag outside the block also lets Cursor's Linear integration read it.
 
 ## Factory-run block
 
@@ -35,13 +35,19 @@ Each refusal names the field and what was expected:
 - `factory-run`: expected a parseable fenced `factory-run` block with one nonempty model field.
 - `model`: expected a model name configured on this machine and listed under **Preferred models**.
 - `repo`: expected a `[repo=owner/name]` tag matching `^[\w.-]+/[\w.-]+$`.
-- `repo`: expected the tagged repo to appear on this machine's allowlist.
+- At pickup, the Runner requires exactly one matching GitHub checkout from `orca repo list --json`; missing or ambiguous registrations refuse dispatch.
 
 These are format and configuration refusals. Runtime and launch failures are handled separately by the Runner.
 
 ## Launch
 
-The Runner resolves the repo tag, model mapping and configured skill, then launches the Linear branch with Orca:
+The Runner opens Orca and reads `orca repo list --json` at each pickup. It matches
+the repo tag case-insensitively to `gitRemoteIdentity.canonicalKey` on a Git repo
+(`github.com/owner/name`) and uses its absolute local path. All registered GitHub
+repos are eligible for allowed creators; no separate repo config or restart is needed.
+Unreadable listings and missing or duplicate matches refuse before worktree creation.
+
+The Runner resolves the model mapping and configured skill, then launches the Linear branch with Orca:
 
 ```text
 orca worktree create --name <last segment of the branch> --repo path:<local checkout> --branch <Linear gitBranchName> --agent <agent> --model <model> [--effort <effort>] "--prompt=<agent-specific prefix><skill> <issue id>\nDelegated run: nobody is watching this session." --setup run|skip --linear-issue <issue id> --json

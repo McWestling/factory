@@ -3,7 +3,6 @@ export type Refusal = { field: 'factory-run' | 'model' | 'repo'; expected: strin
 export type DelegatorConfig = {
   machine?: string;
   models: Readonly<Record<string, unknown>>;
-  repos: readonly string[];
 };
 
 function readModel(description: string): string | undefined {
@@ -40,12 +39,6 @@ export function parseIssue(description: string, config?: DelegatorConfig): Deleg
     return {
       field: 'model',
       expected: `\`${model}\` isn't configured on ${config.machine ?? 'this machine'}. Supported: ${Object.keys(config.models).map(name => `\`${name}\``).join(', ') || 'none'}`,
-    };
-  }
-  if (config && !config.repos.includes(repo)) {
-    return {
-      field: 'repo',
-      expected: `a repo on ${config.machine ?? 'this machine'}'s allowlist. Add \`${repo}\` to \`repos\` in \`~/.config/factory-delegator/config.json\`, register its checkout in Orca, and restart the Runner`,
     };
   }
   return { repo, model };
