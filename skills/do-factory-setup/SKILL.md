@@ -256,7 +256,7 @@ The model table and its Checked date are the factory's curated pick. Copy them a
 
 This is {{workspace}}'s config; to adopt, copy it and replace the values.
 
-**Setup version:** 2026-11-09.3
+**Setup version:** 2026-11-10
 
 The skills hold the procedure. This file holds only the values they look up, under the headings below. Keep the headings stable: skills cite them by name.
 
@@ -335,12 +335,12 @@ The label records where the work was dispatched from, not where the session runs
 
 ## Preferred models
 
-**Checked:** 2026-10-25, against the vendor pages under Sources. Re-check when this date is over 90 days old or a listed model retires.
+**Checked:** 2026-11-10, against the vendor pages under Sources. Re-check when this date is over 90 days old or a listed model retires.
 
 | Model            | Use it for                                                                     |
 | ---------------- | ------------------------------------------------------------------------------ |
 | Claude Opus 5.5  | Judgment-heavy, cross-cutting or ambiguous work; the maintainer in the session |
-| Claude Fable 5.1 | Long-horizon or hardest work, when Opus 5.5 at higher effort falls short       |
+| Claude Fable 5.2 | Long-horizon or hardest work, when Opus 5.5 at higher effort falls short       |
 | GPT-6 Astra      | Hardest end-to-end work in Codex, when GPT-6.1 Sol falls short                 |
 | GPT-6.1 Sol      | Complex implementation and agentic work                                        |
 | GPT-6 Luna       | Focused, pattern-following tickets where a good result is clear                |
@@ -350,7 +350,7 @@ The label records where the work was dispatched from, not where the session runs
 **Sources:**
 
 - Claude: <https://platform.claude.com/docs/en/about-claude/models/overview>
-- Codex: <https://learn.chatgpt.com/docs/models>
+- Codex: <https://learn.chatgpt.com/docs/models.md>
 - Cursor: <https://cursor.com/docs/models>
 
 ## Views
@@ -449,3 +449,21 @@ Apply each entry newer than the doc's version, in order. Compare with slots fill
 - **Old text:** `` - **Branch:** exactly the issue's Linear branch name (`gitBranchName` from `get_issue`). Never invent or prefix one. ``
 - **New text:** `` - **Branch:** the issue's Linear branch name (`gitBranchName` from `get_issue`), or the branch the host already made for the issue when its name contains the issue id. Linear builds the prefix for whoever asks, and the prefix shows whether a delegated agent or a person did the work, so keep the host's branch rather than renaming it. Never invent or prefix one yourself. ``
 - **Why:** Linear gives each caller its own branch prefix, so delegated runs renamed the host's branch to the person's and collided with earlier runs' worktrees.
+
+
+### 2026-11-10
+
+- **Where:** `## Preferred models`, the Claude Fable row.
+- **Old text:** `Claude Fable 5.1`
+- **New text:** `Claude Fable 5.2`
+- **Why:** Anthropic lists Fable 5.2 as current and Fable 5.1 as legacy.
+
+- **Where:** `## Preferred models`, the **Checked** date.
+- **Old text:** `2026-10-25`
+- **New text:** `2026-11-10`
+- **Why:** All listed models were confirmed against the vendor pages.
+
+- **Where:** `## Preferred models`, the Codex Source.
+- **Old text:** `https://learn.chatgpt.com/docs/models`
+- **New text:** `https://learn.chatgpt.com/docs/models.md`
+- **Why:** The markdown page loads fully and lists every Codex model in the table.
