@@ -8,7 +8,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
 import type { Claim } from '../job.ts';
-import { parseIssue } from '../parse-issue.ts';
+import { matchModel, parseIssue, type Level } from '../parse-issue.ts';
 
 export const CONFIG_PATH = join(homedir(), '.config', 'factory-delegator', 'config.json');
 const POLL_MS = 15_000;
@@ -28,6 +28,7 @@ export type RunnerConfig = {
   repos: Readonly<Record<string, string>>;
   /** Preferred models name → how Orca starts it. */
   models: Readonly<Record<string, ModelSettings>>;
+  levels: Readonly<Record<Level, string>>;
   skill: string;
 };
 
@@ -137,7 +138,7 @@ export function loadConfig(path = CONFIG_PATH): RunnerConfig {
     throw new Error(`config \`${key}\` must be ${expected}`);
   };
 
-  const { inboxUrl, bearerSecret, machine, allowedCreatorIds, repos, models, skill = 'do-implement' } = raw;
+  const { inboxUrl, bearerSecret, machine, allowedCreatorIds, repos, models, levels, skill = 'do-implement' } = raw;
   let url: URL | undefined;
   try {
     url = new URL(String(inboxUrl));
@@ -162,6 +163,13 @@ export function loadConfig(path = CONFIG_PATH): RunnerConfig {
       fail('models', 'a map of model name to {agent, model, effort?} with plain identifiers');
     }
   }
+  if (!isObject(levels)) fail('levels', 'a map of light, standard and deep to configured model names');
+  for (const level of ['light', 'standard', 'deep']) {
+    const name = (levels as Record<string, unknown>)[level];
+    if (!Object.hasOwn(levels as object, level) || typeof name !== 'string' || !Object.hasOwn(models as object, name)) {
+      fail(`levels.${level}`, 'a configured model name');
+    }
+  }
   if (typeof skill !== 'string' || !/^[a-z0-9-]+$/.test(skill)) fail('skill', 'a name matching ^[a-z0-9-]+$');
 
   return {
@@ -171,6 +179,7 @@ export function loadConfig(path = CONFIG_PATH): RunnerConfig {
     allowedCreatorIds: allowedCreatorIds as string[],
     repos: repos as Record<string, string>,
     models: models as Record<string, ModelSettings>,
+    levels: levels as Record<Level, string>,
     skill: skill as string,
   };
 }
@@ -532,12 +541,10 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
     return refuse('creator-refused', NOT_ALLOWED);
   }
   const issue = parseIssue(typeof task.description === 'string' ? task.description : '', {
-    machine: config.machine,
-    models: config.models,
     repos: Object.keys(config.repos),
   });
   if ('field' in issue) {
-    return refuse(`refused-${issue.field}`, `Refused \`${issue.field}\`: ${issue.field === 'model' ? '' : 'expected '}${issue.expected}. ${RETRY}`);
+    return refuse(`refused-${issue.field}`, `Refused \`${issue.field}\`: expected ${issue.expected}. ${RETRY}`);
   }
   const { identifier, branchName } = task;
   if (typeof identifier !== 'string' || !IDENTIFIER.test(identifier)) {
@@ -555,12 +562,17 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
     return reportLaunch(api, deps, claim, log, saved);
   }
 
+  const matched = issue.model === undefined ? undefined : matchModel(issue.model, Object.keys(config.models));
+  const model = matched ?? config.levels[issue.level];
+  if (issue.model !== undefined && matched === undefined) {
+    await api.update(claim, 'thought', `Couldn't match model pin \`${issue.model}\`; using level \`${issue.level}\` with ${model}.`);
+  }
   const launch: Launch = { at: (deps.now ?? Date.now)(), repo: config.repos[issue.repo]!, branch: branchName,
-    model: issue.model, launched: false, thoughtPosted: false };
+    model, launched: false, thoughtPosted: false };
   if (!record(deps, log, (launches) => { launches[claim.sessionId] = launch; })) {
     return refuse('launch-record-failed', `Couldn't save the launch intent. Check the Runner config directory is writable. ${RETRY}`);
   }
-  const args = launchArgs(config, issue.repo, issue.model, { identifier, branchName });
+  const args = launchArgs(config, issue.repo, model, { identifier, branchName });
   await orca(deps.exec, ['open', '--json']);
   let code = await orca(deps.exec, args);
   if (code === 'runtime_unavailable') code = await orca(deps.exec, args);

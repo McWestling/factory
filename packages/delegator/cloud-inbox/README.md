@@ -9,15 +9,17 @@ Paths below are relative to `packages/delegator`.
 `JobState` (`queued`, `claimed`, `launched`, `failed`). Queue metadata belongs to the
 queue, not the job payload.
 
-`parse-issue.ts` exports `parseIssue(description, config?)`. It returns either
-`{repo, model}` or a refusal `{field, expected}`. Test for `field` to distinguish
-a refusal. It requires a fenced `factory-run` block with one nonempty model field;
-a missing or malformed block refuses dispatch. The repo comes
-from the required `[repo=owner/name]` tag, including Linear's escaped form.
+`parse-issue.ts` exports `parseIssue(description, config?)`. It returns
+`{repo, level, model?, target?}` or a refusal `{field, expected}`. Test for
+`field` to distinguish a refusal. The required `[repo=owner/name]` and
+`[level=…]` tags accept Linear's escaped form; the first tag of each kind wins.
+The optional config enforces repo membership in `repos` (an allowlist).
 
-Without config, the parser checks syntax only. The Runner must pass its config
-to enforce the exact model name in `models` (a name-to-settings map) and repo
-membership in `repos` (an allowlist). `target` and `reason` do not affect dispatch.
+The exported `matchModel(pin, names)` matches model pins after lowercasing and
+removing punctuation: exact first, then a unique substring match. The Runner
+uses a matched pin or falls back to the level's configured model, posting a
+thought when a pin cannot be matched. `target` does not affect launch selection.
+See [the issue format contract](../../../docs/issue-format.md).
 
 ## Cloud Inbox
 

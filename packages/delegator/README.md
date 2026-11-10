@@ -134,7 +134,9 @@ Copy [config.example.json](config.example.json) to
 refuses to start without it, with a looser mode, or with any key missing or empty;
 nothing has a default except `skill` (`do-implement`). `machine` is the Linear app's
 name, used in messages. Each `repos` path is a local checkout Orca knows, and each
-`models` key is an exact Preferred models name.
+`models` key is a Preferred models name. The required `levels` map names a
+configured model for each of `light`, `standard` and `deep`; add it to existing
+configs before starting the updated Runner.
 
 ```sh
 npm run runner
@@ -143,8 +145,9 @@ npm run runner
 Every 15 s it claims one job and checks it with what Cloud Inbox returns. Delegation
 by a user on `allowedCreatorIds` is the approval to launch. It drops a job whose issue
 is no longer delegated to the app, and refuses an unlisted or missing creator, an issue
-that fails the [issue format](../../docs/issue-format.md), or a model or repo not in
-its config. Otherwise it runs `orca open --json` and the documented
+that fails the [issue format](../../docs/issue-format.md), or a repo not in its config.
+It uses a matched model pin or the level's model, posting a fallback thought when a
+pin is unknown or ambiguous. It then runs `orca open --json` and the documented
 `orca worktree create`, retrying once if Orca's runtime is unavailable, then posts
 "Started …" and reports `launched`; Cloud Inbox sets the status, `Orca` label and
 assignee. Any failure posts one `error` and reports `failed`, which clears the delegate.

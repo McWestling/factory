@@ -10,5 +10,10 @@
     "Claude Opus 5.5": { "agent": "claude", "model": "<model id>", "effort": "high" },
     "GPT-6 Luna": { "agent": "codex", "model": "<model id>" }
   },
+  "levels": {
+    "light": "GPT-6 Luna",
+    "standard": "Claude Opus 5.5",
+    "deep": "Claude Opus 5.5"
+  },
   "skill": "do-implement"
 }

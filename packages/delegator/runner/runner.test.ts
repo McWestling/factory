@@ -23,11 +23,12 @@ const config: RunnerConfig = {
     'Claude Opus 5.5': { agent: 'claude', model: 'claude-opus-5-5', effort: 'high' },
     'GPT-6 Luna': { agent: 'codex', model: 'gpt-6-luna' },
   },
+  levels: { light: 'GPT-6 Luna', standard: 'Claude Opus 5.5', deep: 'Claude Opus 5.5' },
   skill: 'do-implement',
 };
 const claim = { issueId: 'issue-1', sessionId: 'session-1', claimId: 'claim-1' };
 const description = (model = 'Claude Opus 5.5', repo = 'owner/repo') =>
-  `\`[repo=${repo}]\`\n\n\`\`\`factory-run\ntarget: Orca\nmodel: ${model}\nreason: test\n\`\`\`\n`;
+  `[repo=${repo}] [level=standard] [model=${model}]`;
 const goodTask: Task = {
   delegated: true,
   creatorId: 'user-allowed',
@@ -241,10 +242,8 @@ for (const statusType of ['unstarted', 'started', 'completed']) {
 const refusals: [string, Partial<Task>, string][] = [
   ['a null creator', { creatorId: null }, NOT_ALLOWED],
   ['a creator not on the allowlist', { creatorId: 'user-other' }, NOT_ALLOWED],
-  ['no factory-run block', { description: '`[repo=owner/repo]`' },
-    'Refused `factory-run`: expected a factory-run block with one nonempty model field. Fix it and delegate again to retry.'],
-  ['a model not in config', { description: description('GPT-6 Astra') },
-    "Refused `model`: `GPT-6 Astra` isn't configured on Example Mac. Supported: `Claude Opus 5.5`, `GPT-6 Luna`. Fix it and delegate again to retry."],
+  ['no level tag', { description: '`[repo=owner/repo]`' },
+    'Refused `level`: expected a [level=…] tag with 1/light, 2/standard, 3/deep. Fix it and delegate again to retry.'],
   ['a malformed repo tag', { description: description('Claude Opus 5.5', 'not a repo') },
     'Refused `repo`: expected a [repo=owner/name] tag matching ^[\\w.-]+/[\\w.-]+$. Fix it and delegate again to retry.'],
   ['a repo not on the allowlist', { description: description('Claude Opus 5.5', 'owner/other') },
@@ -803,4 +802,48 @@ test('heartbeat keeps a pending launch fresh and stops refreshing when cleared',
   clearInterval(heartbeat);
   t.mock.timers.tick(31_000);
   assert.ok(Date.now() - Date.parse(JSON.parse(readFileSync(f.deps.status, 'utf8')).updatedAt) > 30_000);
+});
+
+for (const [pin, model, id] of [
+  ['luna', 'GPT-6 Luna', 'gpt-6-luna'],
+  ['unknown', 'Claude Opus 5.5', 'claude-opus-5-5'],
+]) {
+  test(`pin ${pin} launches ${model} and reports the actual model`, async () => {
+    const f = fakes({ ...goodTask, description: description(pin) });
+    assert.equal(await handleJob(config, f.deps, claim), 'launched');
+    assert.equal(f.argv[1]![f.argv[1]!.indexOf('--model') + 1], id);
+    assert.equal(f.updates.at(-1)?.[1], `Started ${model} in Orca on \`someone/abc-123-do-the-thing\`.`);
+    if (pin === 'unknown') {
+      assert.deepEqual(f.updates[0], ['thought',
+        "Couldn't match model pin `unknown`; using level `standard` with Claude Opus 5.5."]);
+    } else assert.equal(f.updates.length, 1);
+  });
+}
+
+test('without a pin the level selects the model', async () => {
+  const f = fakes({ ...goodTask, description: '[repo=owner/repo] [level=light]' });
+  assert.equal(await handleJob(config, f.deps, claim), 'launched');
+  assert.ok(f.argv[1]!.includes('gpt-6-luna'));
+  assert.equal(f.updates.length, 1);
+});
+
+for (const levels of [undefined, {}, { ...config.levels, standard: 'unknown' },
+  { ...config.levels, light: 'toString' }]) {
+  test(`config refuses invalid levels: ${JSON.stringify(levels)}`, () => {
+    const dir = mkdtempSync(join(tmpdir(), 'runner-'));
+    assert.throws(() => loadConfig(writeConfig(dir, { ...valid, levels })), /config \`levels/);
+  });
+}
+
+test('an ambiguous pin posts its fallback before starting Orca', async () => {
+  const f = fakes({ ...goodTask, description: description('gpt6') });
+  const exec = f.deps.exec;
+  f.deps.exec = async (...args) => {
+    assert.deepEqual(f.updates[0], ['thought',
+      "Couldn't match model pin `gpt6`; using level `standard` with Claude Opus 5.5."]);
+    return exec(...args);
+  };
+  const models = { ...config.models, 'GPT-6 Astra': { agent: 'codex', model: 'gpt-6-astra' } };
+  assert.equal(await handleJob({ ...config, models }, f.deps, claim), 'launched');
+  assert.ok(f.argv[1]!.includes('claude-opus-5-5'));
 });
