@@ -133,9 +133,9 @@ Copy [config.example.json](config.example.json) to
 `~/.config/factory-delegator/config.json`, fill it in and `chmod 600` it. The Runner
 refuses to start without it, with a looser mode, or with any key missing or empty;
 nothing has a default except `skill` (`do-implement`). `machine` is the Linear app's
-name, used in messages. Each `repos` path is a local checkout Orca knows, and each
-`models` key is a Preferred models name. The required `levels` map names a
-configured model for each of `light`, `standard` and `deep`.
+name, used in messages. Each `models` key is a Preferred models name. The required
+`levels` map names a configured model for each of `light`, `standard` and `deep`.
+Repos come from Orca at pickup; an old `repos` config key is ignored and can be removed.
 
 ```sh
 npm run runner
@@ -144,9 +144,10 @@ npm run runner
 Every 15 s it claims one job and checks it with what Cloud Inbox returns. Delegation
 by a user on `allowedCreatorIds` is the approval to launch. It drops a job whose issue
 is no longer delegated to the app, and refuses an unlisted or missing creator, an issue
-that fails the [issue format](../../docs/issue-format.md), or a repo not in its config.
+that fails the [issue format](../../docs/issue-format.md).
 It uses a matched model pin or the level's model, posting a fallback thought when a
-pin is unknown or ambiguous. It then runs `orca open --json` and the documented
+pin is unknown or ambiguous. It runs `orca open --json`, resolves the repo using
+`orca repo list --json`, then runs the documented
 `orca worktree create`, retrying once if Orca's runtime is unavailable, then posts
 "Started …" and reports `launched`; Cloud Inbox sets the status, `Orca` label and
 assignee. Any failure posts one `error` and reports `failed`, which clears the delegate.
@@ -159,7 +160,7 @@ and posts the thought only if its saved flag says it wasn't accepted.
 
 If the Runner dies during create or before recording its result, the saved intent lets
 it check `orca repo show` and `orca worktree list` with `--json`. Recovery requires the
-exact configured checkout path, repo ID and branch on the local host. Without that
+exact discovered checkout path, repo ID and branch on the local host. Without that
 match (including unreadable or incomplete listing results with no match), it follows
 the normal create and failure path; `worktree_conflict` alone never proves a launch.
 Orca confirms a worktree, not that its agent started, received the prompt or is still
@@ -173,6 +174,21 @@ A thought accepted just before a crash, lost response or failed flag write may b
 again on recovery: the updates API has no deduplication key. A timed-out create still
 fails and can leave a worktree; recovery applies to reclaimed claims, not terminal failures.
 Logs contain ids and outcomes only.
+
+### Repos come from Orca
+
+Clone a repo and add its checkout in Orca before delegating. At each pickup the
+Runner reads `orca repo list --json` and matches the issue's `[repo=owner/name]`
+tag to `gitRemoteIdentity.canonicalKey` (`github.com/owner/name`, ignoring case).
+It uses that registration's absolute checkout path. There is no separate repo
+allowlist or Runner restart when registering another repo.
+
+Every registered GitHub repo is eligible for delegation by an allowed creator,
+including personal repos. Folder projects and repos without a matching GitHub
+identity are not eligible. No match, multiple matches, or an unreadable repo list
+refuses the job before creating a worktree. Keep one Orca registration per GitHub
+repo; the Runner never picks arbitrarily between checkouts or clones from issue text.
+After correcting a registration, delegate again to retry a failed job.
 
 ### Install and control the Runner
 

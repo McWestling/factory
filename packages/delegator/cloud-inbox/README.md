@@ -13,7 +13,7 @@ queue, not the job payload.
 `{repo, level, model?, target?}` or a refusal `{field, expected}`. Test for
 `field` to distinguish a refusal. The required `[repo=owner/name]` and
 `[level=…]` tags accept Linear's escaped form; the first tag of each kind wins.
-The parser checks syntax only; the Runner enforces its repo allowlist.
+The parser checks syntax only; the Runner resolves repos from Orca registrations at pickup.
 
 The exported `matchModel(pin, names)` matches model pins after lowercasing and
 removing punctuation: exact first, then a unique substring match. The Runner

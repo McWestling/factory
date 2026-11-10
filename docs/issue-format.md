@@ -4,7 +4,7 @@ Factory Delegator reads inline tags from an implementation issue's description. 
 
 ## Repo tag
 
-Every implementation issue must include `[repo=owner/name]` in its Agent brief. The value must match `^[\w.-]+/[\w.-]+$` and name a repo on the machine's allowlist. Delegator reads this tag directly and does not fall back to Product → initiative routing.
+Every implementation issue must include `[repo=owner/name]` in its Agent brief. The value must match `^[\w.-]+/[\w.-]+$` and name exactly one GitHub repo registered in Orca on the machine. Delegator reads this tag directly and does not fall back to Product → initiative routing.
 
 ## Level and optional pins
 
@@ -53,13 +53,19 @@ Each refusal names the field and what was expected:
 
 - `level`: expected a `[level=…]` tag with 1/light, 2/standard, 3/deep.
 - `repo`: expected a `[repo=owner/name]` tag matching `^[\w.-]+/[\w.-]+$`.
-- `repo`: expected the tagged repo to appear on this machine's allowlist.
+- At pickup, the Runner requires exactly one matching GitHub checkout from `orca repo list --json`; missing or ambiguous registrations refuse dispatch.
 
 Runtime and launch failures are handled separately by the Runner.
 
 ## Launch
 
-The Runner resolves the repo tag, model pin or level mapping, and configured skill, then launches the Linear branch with Orca:
+The Runner opens Orca and reads `orca repo list --json` at each pickup. It matches
+the repo tag case-insensitively to `gitRemoteIdentity.canonicalKey` on a Git repo
+(`github.com/owner/name`) and uses its absolute local path. All registered GitHub
+repos are eligible for allowed creators; no separate repo config or restart is needed.
+Unreadable listings and missing or duplicate matches refuse before worktree creation.
+
+The Runner resolves the model pin or level mapping and configured skill, then launches the Linear branch with Orca:
 
 ```text
 orca worktree create --name <last segment of the branch> --repo path:<local checkout> --branch <Linear gitBranchName> --agent <agent> --model <model> [--effort <effort>] "--prompt=<agent-specific prefix><skill> <issue id>\nDelegated run: nobody is watching this session." --setup run|skip --linear-issue <issue id> --json
