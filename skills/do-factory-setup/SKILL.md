@@ -72,7 +72,7 @@ Read in parallel:
 - **Templates:** `list_templates` for the team, type `issue`.
 - **Tool stack:** `list_documents` with query `Tool Stack`, then `get_document` on the one titled exactly `Tool Stack`. Its **Scripts row** is the table row whose first cell is `Scripts`; its rule is that row's second cell.
 - **Adding a repo blocks:** `get_document` on each Linear document the Tool Stack links to, one hop only (never follow links from those pages). A page's **block** is the first ```` ```toml ```` code block under a heading that reads exactly `## Adding a repo`. Most pages have none; skip them silently.
-- **Models:** fetch each page under the template's Sources, following redirects, and check every model in the template's table is still listed.
+- **Models:** on every run, fetch each page under the template's Sources, following redirects, and check every model in the template's table is still listed. Never reuse a check from an earlier run or session, however recent. If a page fails or only partly loads, fetch it once more. If it is still incomplete, each of its models you can't find there is **unconfirmed**: keep it, ask nothing about it, and name it in [Finish](#8-finish) with the page that failed. A model is stale only when a fully loaded page no longer lists it. While any model is unconfirmed, leave the doc's **Checked** date as it is.
 
 ## 3. Ask, once
 
@@ -85,7 +85,7 @@ Collect everything below that applies, and ask it all in one AskUserQuestion rou
 - **Unknown names:** an issue status, or a label in the Dispatch target group, that the template doesn't have a row for. Ask what it's for, with your best guess as the first option.
 - **Default target:** the Dispatch target group has no `Orca` label. Which tool should do work by default?
 - **Missing views:** a `Factory:` view from the template that Linear doesn't have. Say the user needs to create it in Linear (the MCP can't), with the filters from the template; offer "I'll do it" or "Skip for now".
-- **Stale models:** a model the vendor page no longer lists. Offer to drop its row or keep it.
+- **Stale models:** a model a fully loaded vendor page no longer lists. Offer to drop its row or keep it. Never ask about an unconfirmed model.
 - **Dev command:** the `dev` script doesn't start the server itself (it calls a custom wrapper such as `node infra/scripts/dev-config.mjs`, or a task runner like `turbo dev`), so you can't tell with confidence how the server takes its port. Say in one sentence which file picks the port, then offer to edit that file so each workspace gets its own port, or to skip for now (every workspace keeps the current port). Never guess.
 - **Template:** the team has issue templates, but not exactly one whose name or description says "implementation". Which one do agents use to write implementation issues? Offer each template by name, plus "None" (agents write them without a Linear template).
 - **Scripts:** `AGENTS.md` has a `## Scripts` section whose text differs from the Scripts row's rule, with its Linear mentions written as links. Offer to replace the section's text with the rule (recommended) or keep it.
@@ -180,7 +180,7 @@ Skip this step if step 1 found no dev server. Otherwise do each part that isn't 
 
 ## 8. Finish
 
-If all dependencies are advertised and usable, say "Looks good, we're set up!". Otherwise say "Repo setup finished; supporting skills are still pending", name the missing skills or failed install, and give the fresh-session instruction above when needed. Add a few words if dev ports were skipped for having no dev server, or if you replaced a `scripts/dev-port` that had drifted. If an Adding a repo block ran, failed or was skipped for want of Python, add one line naming the maintainer steps left to do and any page that failed, with its failed step and exit code. If the [machine check](#machine-check) didn't find Orca, add one line recommending it, with the link <https://onorca.dev/download>. If you wrote nothing, stop there.
+If all dependencies are advertised and usable, say "Looks good, we're set up!". Otherwise say "Repo setup finished; supporting skills are still pending", name the missing skills or failed install, and give the fresh-session instruction above when needed. Add a few words if dev ports were skipped for having no dev server, or if you replaced a `scripts/dev-port` that had drifted. If an Adding a repo block ran, failed or was skipped for want of Python, add one line naming the maintainer steps left to do and any page that failed, with its failed step and exit code. If any model is unconfirmed, add one line naming each one with the vendor page that failed to load. If the [machine check](#machine-check) didn't find Orca, add one line recommending it, with the link <https://onorca.dev/download>. If you wrote nothing, stop there.
 
 If you wrote files, name them in one line, then ask once (AskUserQuestion): **Open a draft PR** (recommended) or **Leave the changes for me**. Leaving them ends the run with the working tree as it is, for the user to review with `git diff`.
 
@@ -256,7 +256,7 @@ The model table and its Checked date are the factory's curated pick. Copy them a
 
 This is {{workspace}}'s config; to adopt, copy it and replace the values.
 
-**Setup version:** 2026-11-09.3
+**Setup version:** 2026-11-10
 
 The skills hold the procedure. This file holds only the values they look up, under the headings below. Keep the headings stable: skills cite them by name.
 
@@ -335,12 +335,12 @@ The label records where the work was dispatched from, not where the session runs
 
 ## Preferred models
 
-**Checked:** 2026-10-25, against the vendor pages under Sources. Re-check when this date is over 90 days old or a listed model retires.
+**Checked:** 2026-11-10, against the vendor pages under Sources. Re-check when this date is over 90 days old or a listed model retires.
 
 | Model            | Use it for                                                                     |
 | ---------------- | ------------------------------------------------------------------------------ |
 | Claude Opus 5.5  | Judgment-heavy, cross-cutting or ambiguous work; the maintainer in the session |
-| Claude Fable 5.1 | Long-horizon or hardest work, when Opus 5.5 at higher effort falls short       |
+| Claude Fable 5.2 | Long-horizon or hardest work, when Opus 5.5 at higher effort falls short       |
 | GPT-6 Astra      | Hardest end-to-end work in Codex, when GPT-6.1 Sol falls short                 |
 | GPT-6.1 Sol      | Complex implementation and agentic work                                        |
 | GPT-6 Luna       | Focused, pattern-following tickets where a good result is clear                |
@@ -350,7 +350,7 @@ The label records where the work was dispatched from, not where the session runs
 **Sources:**
 
 - Claude: <https://platform.claude.com/docs/en/about-claude/models/overview>
-- Codex: <https://learn.chatgpt.com/docs/models>
+- Codex: <https://learn.chatgpt.com/docs/models.md>
 - Cursor: <https://cursor.com/docs/models>
 
 ## Views
@@ -449,3 +449,21 @@ Apply each entry newer than the doc's version, in order. Compare with slots fill
 - **Old text:** `` - **Branch:** exactly the issue's Linear branch name (`gitBranchName` from `get_issue`). Never invent or prefix one. ``
 - **New text:** `` - **Branch:** the issue's Linear branch name (`gitBranchName` from `get_issue`), or the branch the host already made for the issue when its name contains the issue id. Linear builds the prefix for whoever asks, and the prefix shows whether a delegated agent or a person did the work, so keep the host's branch rather than renaming it. Never invent or prefix one yourself. ``
 - **Why:** Linear gives each caller its own branch prefix, so delegated runs renamed the host's branch to the person's and collided with earlier runs' worktrees.
+
+
+### 2026-11-10
+
+- **Where:** `## Preferred models`, the Claude Fable row.
+- **Old text:** `Claude Fable 5.1`
+- **New text:** `Claude Fable 5.2`
+- **Why:** Anthropic lists Fable 5.2 as current and Fable 5.1 as legacy.
+
+- **Where:** `## Preferred models`, the **Checked** date.
+- **Old text:** `2026-10-25`
+- **New text:** `2026-11-10`
+- **Why:** All listed models were confirmed against the vendor pages.
+
+- **Where:** `## Preferred models`, the Codex Source.
+- **Old text:** `https://learn.chatgpt.com/docs/models`
+- **New text:** `https://learn.chatgpt.com/docs/models.md`
+- **Why:** The markdown page loads fully and lists every Codex model in the table.

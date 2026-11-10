@@ -2,7 +2,7 @@
 
 This is McWestling's config; to adopt, copy it and replace the values.
 
-**Setup version:** 2026-11-09.3
+**Setup version:** 2026-11-10
 
 The skills hold the procedure. This file holds only the values they look up, under the headings below. Keep the headings stable: skills cite them by name.
 
@@ -91,12 +91,12 @@ The label records where the work was dispatched from, not where the session runs
 
 ## Preferred models
 
-**Checked:** 2026-10-25, against the vendor pages under Sources. Re-check when this date is over 90 days old or a listed model retires.
+**Checked:** 2026-11-10, against the vendor pages under Sources. Re-check when this date is over 90 days old or a listed model retires.
 
 | Model            | Use it for                                                                     |
 | ---------------- | ------------------------------------------------------------------------------ |
 | Claude Opus 5.5  | Judgment-heavy, cross-cutting or ambiguous work; the maintainer in the session |
-| Claude Fable 5.1 | Long-horizon or hardest work, when Opus 5.5 at higher effort falls short       |
+| Claude Fable 5.2 | Long-horizon or hardest work, when Opus 5.5 at higher effort falls short       |
 | GPT-6 Astra      | Hardest end-to-end work in Codex, when GPT-6.1 Sol falls short                 |
 | GPT-6.1 Sol      | Complex implementation and agentic work                                        |
 | GPT-6 Luna       | Focused, pattern-following tickets where a good result is clear                |
@@ -106,7 +106,7 @@ The label records where the work was dispatched from, not where the session runs
 **Sources:**
 
 - Claude: <https://platform.claude.com/docs/en/about-claude/models/overview>
-- Codex: <https://learn.chatgpt.com/docs/models>
+- Codex: <https://learn.chatgpt.com/docs/models.md>
 - Cursor: <https://cursor.com/docs/models>
 
 ## Views
