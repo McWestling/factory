@@ -24,7 +24,7 @@ import urllib.request
 import urllib.parse
 
 
-def read_checks(root, commit=None):
+def read_checks(root, commit=None, autopilot=False):
     path = Path(".factory/verifier.toml")
     try:
         text = git_output(root, "show", f"{commit}:{path}") if commit else (root / path).read_text(encoding="utf-8")
@@ -37,9 +37,15 @@ def read_checks(root, commit=None):
 
     if type(data.get("version")) is not int or data["version"] != 1:
         invalid("expected version = 1")
-    unknown = data.keys() - {"version", "checks"}
+    unknown = data.keys() - {"version", "checks", "autopilot"}
     if unknown:
         invalid(f"unknown keys: {', '.join(sorted(unknown))}")
+    config = data.get("autopilot", {})
+    if not isinstance(config, dict) or config.keys() - {"wait"}:
+        invalid("autopilot must be a table with only wait")
+    wait = config.get("wait", [])
+    if not isinstance(wait, list) or any(not isinstance(name, str) for name in wait):
+        invalid("autopilot.wait must be an array of strings")
     tables = data.get("checks", {})
     if not isinstance(tables, dict):
         invalid("checks must be a table")
@@ -65,7 +71,7 @@ def read_checks(root, commit=None):
                 f"checks.{name}.paths must be a non-empty array of "
                 "non-empty strings without NUL characters"
             )
-    return tables
+    return {"wait": wait} if autopilot else tables
 
 
 def run_check(root, name, check, output=None):
@@ -383,6 +389,7 @@ def report_failures(root, before, after, failed):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=False)
+    commands.add_parser("autopilot-config", help="print hosted wait names as JSON")
     commands.add_parser("preflight", help="run all local checks and save clean-tree evidence")
     commands.add_parser("install-hook", help="install the shared pre-push hook")
     hook = commands.add_parser("pre-push", help="validate pushed branch evidence")
@@ -418,6 +425,9 @@ def main():
             return report_failures(root, args.before, args.after, args.failed)
         except (KeyError, TypeError, AttributeError):
             raise ValueError("invalid Linear response") from None
+    if args.command == "autopilot-config":
+        print(json.dumps(read_checks(root, autopilot=True)))
+        return 0
     checks = read_checks(root)
     if args.command in (None, "preflight"):
         return preflight(root, checks)

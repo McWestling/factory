@@ -48,6 +48,17 @@ class FactoryVerifierTests(unittest.TestCase):
         self.git("commit", "-qm", "base")
         self.base = self.git("rev-parse", "HEAD")
 
+    def test_autopilot_config(self):
+        self.assertEqual(json.loads(self.verifier("autopilot-config").stdout), {"wait": []})
+        self.write_contract('version = 1\n[autopilot]\nwait = ["deploy"]\n')
+        result = self.verifier("autopilot-config")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {"wait": ["deploy"]})
+        for table in ('autopilot = []', '[autopilot]\nother = []',
+                      '[autopilot]\nwait = "deploy"', '[autopilot]\nwait = [1]'):
+            self.write_contract('version = 1\n' + table)
+            self.assert_fails_cleanly(self.verifier("autopilot-config"), "autopilot")
+
     def git(self, *args):
         return subprocess.check_output(
             ["git", *args], cwd=self.root, env=self.env, text=True,

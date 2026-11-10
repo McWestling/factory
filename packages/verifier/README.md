@@ -13,9 +13,9 @@ From the Factory root:
 ```sh
 node packages/verifier/bundle.ts
 node packages/verifier/bundle.ts --check
-node --test packages/verifier/bundle.test.ts
+node --test packages/verifier/autopilot.test.mjs packages/verifier/bundle.test.ts
 python3 packages/verifier/factory-verifier.test.py
-actionlint packages/verifier/factory-verifier.yml
+actionlint packages/verifier/factory-verifier.yml packages/verifier/autopilot.yml
 ```
 
 Regenerate and commit the bundle whenever the core or workflow changes. The consistency check
@@ -36,7 +36,7 @@ checks in each pushed branch commit’s contract; tags and deletes are ignored.
 agents need explicit user authorization to use it. Local proof does not test a
 later merge result or replace hosted checks.
 
-Full setup installation and autopilot are still planned. The future
+Full setup installation is still planned. [Agent PR autopilot](../../docs/autopilot.md) ships alongside the core. The future
 installer copies from the installed skill's `verifier/` directory to the consuming
 repo's `scripts/factory-verifier`, preserving executable permissions. The committed
 copy remains the version pin; setup updates produce reviewable diffs.

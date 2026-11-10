@@ -60,3 +60,20 @@ test('report job includes failed and timed-out checks but excludes successful ch
   assert.ok(workflow.includes('FAILED_CHECKS: ${{ steps.failures.outputs.checks }}'));
   assert.ok(workflow.includes('--failed "$FAILED_CHECKS"'));
 });
+
+test('bundle includes autopilot script and workflow and detects stale copies', () => {
+  const root = mkdtempSync(join(tmpdir(), 'autopilot-bundle-'));
+  try {
+    cpSync(source, join(root, 'packages/verifier'), { recursive: true });
+    const run = (...args: string[]) => spawnSync(process.execPath,
+      [join(root, 'packages/verifier/bundle.ts'), ...args], { encoding: 'utf8' });
+    assert.equal(run().status, 0);
+    for (const name of ['autopilot.mjs', 'autopilot.yml']) {
+      const target = join(root, 'skills/do-factory-setup/verifier', name);
+      assert.deepEqual(readFileSync(target), readFileSync(new URL(name, source)));
+      writeFileSync(target, 'stale');
+      assert.notEqual(run('--check').status, 0);
+      assert.equal(run().status, 0);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
