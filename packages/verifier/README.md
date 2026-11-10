@@ -36,8 +36,9 @@ checks in each pushed branch commit’s contract; tags and deletes are ignored.
 agents need explicit user authorization to use it. Local proof does not test a
 later merge result or replace hosted checks.
 
-Full setup installation is still planned. [Agent PR autopilot](../../docs/autopilot.md) ships alongside the core. The future
-installer copies from the installed skill's `verifier/` directory to the consuming
+The bundle also carries [agent PR autopilot](../../docs/autopilot.md), a
+workflow that marks an agent's draft PR ready for review once its checks pass.
+Full setup installation is still planned. The future installer copies from the installed skill's `verifier/` directory to the consuming
 repo's `scripts/factory-verifier`, preserving executable permissions. The committed
 copy remains the version pin; setup updates produce reviewable diffs.
 

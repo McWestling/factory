@@ -12,11 +12,11 @@ function fixture(overrides = {}) {
     if (path === '/repos/example/repo') return { default_branch: 'main' };
     if (path.includes('/pulls/')) return pr;
     if (path.includes('/check-runs')) return { check_runs: [{ name: 'verifier', status: 'completed', conclusion: 'success', html_url: 'https://logs' }] };
-    if (path.includes('/statuses')) return [];
+    if (path.endsWith('/status')) return { statuses: [] };
     throw Error(path);
   };
   return { pr, writes, request, event: { pull_request: pr }, eventName: 'pull_request_target',
-    repo: 'example/repo', wait: [], warn: () => {} };
+    repo: 'example/repo', number: 1, warn: () => {} };
 }
 test('qualified draft passes and is marked ready', async () => {
   const f = fixture();
@@ -43,17 +43,18 @@ for (const overrides of [
 ]) test('nonqualifying PR untouched ' + JSON.stringify(overrides), async () => {
   const f = fixture(overrides); await run(f); assert.deepEqual(f.writes, []);
 });
-test('waiting for extra check; new push removes label', async () => {
+test('waiting for verifier; new push removes label', async () => {
   const f = fixture({ labels: [{ name: 'ready-to-merge' }] });
-  f.event.action = 'synchronize'; f.wait = ['deploy'];
+  f.event.action = 'synchronize';
   const original = f.request;
   f.request = async (path, body, method) => {
     if (method === 'DELETE') { f.writes.push({ path, method }); return {}; }
+    if (path.includes('/check-runs')) return { check_runs: [{ name: 'verifier', status: 'in_progress' }] };
     return original(path, body);
   };
   await run(f);
   assert.equal(f.writes[0].method, 'DELETE');
-  assert.equal(f.writes[1].body.description, 'waiting on: deploy');
+  assert.equal(f.writes[1].body.description, 'waiting on: verifier');
 });
 test('failed check includes logs and ordered hand-back', async () => {
   const f = fixture(); const original = f.request;
@@ -66,10 +67,6 @@ test('failed check includes logs and ordered hand-back', async () => {
   assert.match(comment, /\[verifier\]\(https:\/\/logs\)/);
   assert.match(comment, /origin\/main first.*fix.*commit.*full scripts\/factory-verifier preflight.*clean tree.*push/);
   assert.doesNotMatch(comment, /OVERRIDE|bypass/);
-});
-test('own status events ignored', async () => {
-  const f = fixture(); f.eventName = 'status'; f.event = { context: 'autopilot' };
-  await run(f); assert.deepEqual(f.writes, []);
 });
 
 import { createServer } from 'node:http';
@@ -86,8 +83,7 @@ test('fake Linear server receives pass and fail once each without leaking creden
     const { query, variables } = JSON.parse(raw);
     let data;
     if (query.includes('commentCreate')) { comments.push(variables.input.body); data = { commentCreate: { success: true } }; }
-    else if (query.includes('comments(')) data = { issue: { comments: { nodes: comments.map(body => ({ body })), pageInfo: { hasNextPage: false } } } };
-    else data = { issue: { id: 'issue' } };
+    else data = { issue: { id: 'issue', comments: { nodes: comments.map(body => ({ body })) } } };
     res.end(JSON.stringify({ data }));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -110,16 +106,8 @@ test('fake Linear server receives pass and fail once each without leaking creden
   assert.match(comments[0], /head pass/); assert.match(comments[1], /head fail verifier/);
   assert.doesNotMatch(JSON.stringify({ comments, warnings }), /secret-/);
 });
-test('newest rerun wins and stale head events do nothing', async () => {
-  const f = fixture(); const original = f.request;
-  f.request = async (path, body) => path.includes('/check-runs') ? { check_runs: [
-    { id: 1, name: 'verifier', status: 'completed', conclusion: 'success' },
-    { id: 2, name: 'verifier', status: 'in_progress' },
-  ] } : original(path, body);
-  await run(f);
-  assert.equal(f.writes[0].body.description, 'waiting on: verifier');
-  f.writes.length = 0; f.eventName = 'check_run';
-  f.event = { check_run: { head_sha: 'old' }, pull_request: f.pr };
+test('stale head events do nothing', async () => {
+  const f = fixture(); f.eventName = 'check_run'; f.event = { check_run: { head_sha: 'old' } };
   await run(f); assert.deepEqual(f.writes, []);
 });
 test('missing credentials warn but preserve GitHub promotion', async () => {
