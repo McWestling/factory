@@ -244,7 +244,7 @@ const refusals: [string, Partial<Task>, string][] = [
   ['no factory-run block', { description: '`[repo=owner/repo]`' },
     'Refused `factory-run`: expected a factory-run block with one nonempty model field. Fix it and delegate again to retry.'],
   ['a model not in config', { description: description('GPT-6 Astra') },
-    'Refused `model`: expected an exact model name in the machine config. Fix it and delegate again to retry.'],
+    "Refused `model`: `GPT-6 Astra` isn't configured on Example Mac. Supported: `Claude Opus 5.5`, `GPT-6 Luna`. Fix it and delegate again to retry."],
   ['a malformed repo tag', { description: description('Claude Opus 5.5', 'not a repo') },
     'Refused `repo`: expected a [repo=owner/name] tag matching ^[\\w.-]+/[\\w.-]+$. Fix it and delegate again to retry.'],
   ['a repo not on the allowlist', { description: description('Claude Opus 5.5', 'owner/other') },
