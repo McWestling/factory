@@ -53,9 +53,9 @@ for (const fence of ['',
   });
 }
 
-const config = { models: { 'Example Model': {} }, repos: ['example/project'] };
+const config = { models: { 'Example Model': {} } };
 
-test('accepts a model and repo present in the machine config', () => {
+test('accepts a configured model without a repo allowlist', () => {
   assert.deepEqual(parseIssue(`${block}\n${repo}`, config), {
     repo: 'example/project', model: 'Example Model',
   });
@@ -64,12 +64,6 @@ test('accepts a model and repo present in the machine config', () => {
 test('refuses a model absent from the machine config', () => {
   assert.deepEqual(parseIssue(`${block.replace('Example Model', 'Other Model')}\n${repo}`, config), {
     field: 'model', expected: "`Other Model` isn't configured on this machine. Supported: `Example Model`",
-  });
-});
-
-test('refuses a repo absent from the machine allowlist', () => {
-  assert.deepEqual(parseIssue(`${block}\n${repo}`, { ...config, repos: [] }), {
-    field: 'repo', expected: 'a repo on the machine allowlist',
   });
 });
 
