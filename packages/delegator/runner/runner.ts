@@ -49,7 +49,7 @@ export type Deps = {
   watches: string;
   status: string;
   paused: string;
-  /** Upkeep's drain request; the acknowledgment is written beside it as `<drain>.ack`. */
+  /** Setup's drain request; the acknowledgment is written beside it as `<drain>.ack`. */
   drain?: string;
   now?: () => number;
 };
@@ -107,7 +107,7 @@ export function startStatusHeartbeat(deps: Deps) {
   return setInterval(() => { writeStatus(deps); acknowledgeDrain(deps); }, 10_000);
 }
 
-/** Upkeep reads this from the installed bundle to know the Runner can drain. */
+/** Setup reads this from the installed bundle to know the Runner can drain. */
 export const DRAIN_PROTOCOL = 1;
 const active = new WeakMap<Deps, number>();
 
@@ -118,7 +118,7 @@ async function busy<T>(deps: Deps, work: () => Promise<T>): Promise<T> {
   finally { active.set(deps, active.get(deps)! - 1); acknowledgeDrain(deps); }
 }
 
-/** An unexpired upkeep request's nonce. While it stands, no claim or watch check starts. */
+/** An unexpired setup request's nonce. While it stands, no claim or watch check starts. */
 function drainRequest(deps: Deps): string | null {
   if (!deps.drain) return null;
   try {
@@ -415,7 +415,7 @@ export async function resumeWatches(config: RunnerConfig, deps: Deps): Promise<v
   finally { writeStatus(deps); }
 }
 
-/** Watch recovery then completion checks, held off while upkeep drains the Runner. */
+/** Watch recovery then completion checks, held off while setup drains the Runner. */
 export async function checkWatches(config: RunnerConfig, deps: Deps): Promise<void> {
   if (drainRequest(deps)) return;
   await busy(deps, async () => { await resumeWatches(config, deps); await watchJobs(config, deps); });
@@ -686,7 +686,7 @@ if (import.meta.main) {
     console.error(`factory-runner: ${(error as Error).message}`);
     process.exit(1);
   }
-  // Upkeep checks a staged bundle against the installed config this way.
+  // Setup checks a staged bundle against the installed config this way.
   if (process.argv[2] === '--check-config') process.exit(0);
   const run = promisify(execFile);
   const stateDir = join(isAbsolute(process.env.XDG_STATE_HOME ?? '') ? process.env.XDG_STATE_HOME!

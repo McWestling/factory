@@ -1,7 +1,8 @@
 {
   "private": true,
+  "type": "module",
   "scripts": {
-    "upkeep": "node packages/delegator/upkeep.ts",
+    "setup": "node packages/setup/setup.ts",
     "menubar": "pkill -x FactoryRunnerMenuBar; open \"$HOME/Applications/Factory Runner.app\""
   }
 }
