@@ -104,6 +104,7 @@ npm run upkeep
 ```
 
 See [what it checks before restarting the Runner](packages/delegator/README.md#update-after-merging-factory-changes).
+To restart the Runner's menu bar app, for example after an update, run `npm run menubar`.
 
 Delegator is a separate, optional service. It requires deploying Cloud Inbox to your
 own Cloudflare account; installing the skills does not deploy it. Cloud Inbox and

@@ -196,7 +196,7 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
       !running ? '' : back ? ` and restarted (pid ${back})` : ' but didn\'t restart; check ~/Library/Logs/factory-delegator'}.`);
   }
   rmSync(drain, { force: true });
-  const reopen = ' Quit and reopen the menu bar app to load its new version.';
+  const reopen = ' Run `npm run menubar` to restart the menu bar app on its new version.';
   if (!running) {
     rmSync(previous, { recursive: true, force: true });
     return { ok: true, line: `runner: refreshed${existsSync(plist) ? ' and left stopped' : ' the app; no Runner agent is installed'}.${reopen}` };
