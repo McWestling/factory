@@ -24,7 +24,7 @@ Run this before anything else; it asks nothing, so it doesn't count toward the q
 
 ### Dependency installation
 
-Factory owns the workflow; [Matt's upstream skills](https://github.com/mattpocock/skills#installation-30-second-setup) supply the supporting practices. Install the full upstream set so its sibling calls and references are supplied too. Use one form per agent, and only target the agent running setup.
+Factory owns the workflow; [Matt's upstream skills](https://github.com/mattpocock/skills#installation-30-second-setup) supply the supporting practices. Install the full upstream set so its sibling calls and references are supplied too. Use one form per agent, and only target the agent running setup. On a Mac, `npm run setup` in the home repo's checkout follows these same rules for the agents it's run for, so mention it when the dependencies are missing.
 
 - **Already usable:** keep the existing form; offer no install. If both forms are present, report the duplication for the maintainer to resolve; do not install or remove anything.
 - **Installed but undiscovered:** request a fresh session of the current agent and rerun setup; do not install another form.
@@ -228,7 +228,7 @@ skill; installed skills use their local bundle without sibling packages or downl
 
 ## Stale skills check
 
-This is per machine, so it isn't part of a setup run. To get warned about out-of-date factory skills, add a `SessionStart` command hook that runs `node ~/.agents/skills/do-repo-setup/check-skills.ts`.
+This is per machine, so it isn't part of a setup run. To get warned about out-of-date factory skills, add a `SessionStart` command hook that runs `node ~/.agents/skills/do-repo-setup/check-skills.ts`. It reads the repo the skills were installed from, so it works for forks, and its fix is `npm run setup` in that checkout.
 
 ## Template
 

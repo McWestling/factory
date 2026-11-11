@@ -4,28 +4,21 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { acknowledgeDrain, poll, type Deps, type RunnerConfig } from './runner/runner.ts';
-import { upkeep, type UpkeepDeps } from './upkeep.ts';
+import { updateRunner, withLock, type UpkeepDeps } from './upkeep.ts';
 
 const root = resolve(import.meta.dirname, '../..');
-const HEAD = 'a'.repeat(40);
 const LABEL = 'com.factory.factory-delegator.runner';
 const BUNDLED = ['job.ts', 'parse-issue.ts', 'runner/runner.ts', 'runner/launchd/install.sh',
   'runner/launchd/runner.plist', 'menubar/menubar.plist'];
 
-/** A disposable machine: real files under a temp home, with git, the skills CLI, the installer and launchd faked. */
+/** A disposable machine: real files under a temp home, with the installer and launchd faked. */
 function machine({ runner = 'running' as 'running' | 'stopped' | 'none', oldRunner = false } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'upkeep-'));
   const stateDir = join(home, '.local/state/factory');
   const app = join(home, 'Applications/Factory Runner.app');
   const plist = join(home, 'Library/LaunchAgents', `${LABEL}.plist`);
   const config = join(home, '.config/factory-delegator/config.json');
-  const lock = join(home, '.agents/.skill-lock.json');
   mkdirSync(stateDir, { recursive: true });
-  mkdirSync(dirname(lock), { recursive: true });
-  writeFileSync(lock, JSON.stringify({ skills: {
-    'do-implement': { source: 'McWestling/factory', skillFolderHash: 'old' },
-    'other-skill': { source: 'someone/else', skillFolderHash: 'x' },
-  } }));
   const bundle = (dir: string, version: string) => {
     for (const file of BUNDLED) {
       mkdirSync(dirname(join(dir, 'Contents/Resources', file)), { recursive: true });
@@ -48,7 +41,6 @@ function machine({ runner = 'running' as 'running' | 'stopped' | 'none', oldRunn
     home, stateDir, app, plist, config,
     pid: runner === 'running' ? process.pid as number | null : null,
     nextPid: 4242,
-    git: { origin: 'git@github.com:McWestling/factory.git', status: '', head: HEAD, tip: HEAD },
     fail: new Set<string>(),
     calls: [] as string[],
     onSleep: () => {},
@@ -65,20 +57,6 @@ function machine({ runner = 'running' as 'running' | 'stopped' | 'none', oldRunn
       m.calls.push(call);
       const key = [...m.fail].find((part) => call.includes(part));
       if (key) throw error(`${key} broke`);
-      if (file === 'git') {
-        const [, , command, ...rest] = args;
-        if (command === 'remote') return { stdout: m.git.origin };
-        if (command === '--no-optional-locks') return { stdout: m.git.status };
-        if (command === 'rev-parse' && rest[0] === 'HEAD') return { stdout: m.git.head };
-        if (command === 'rev-parse') return { stdout: `tree-${rest[0]!.split('/').pop()}` };
-        if (command === 'ls-remote') return { stdout: `ref: refs/heads/main\tHEAD\n${m.git.tip}\tHEAD\n` };
-      }
-      if (file === 'npx') {
-        const value = JSON.parse(readFileSync(lock, 'utf8'));
-        value.skills['do-implement'].skillFolderHash = 'tree-do-implement';
-        writeFileSync(lock, JSON.stringify(value));
-        return { stdout: '' };
-      }
       if (file === 'sh' && args[1] === '--build-app') { bundle(args[2]!, 'source'); return { stdout: '' }; }
       if (file === '/usr/bin/node') return { stdout: '' };
       if (file === 'launchctl' && args[0] === 'print') {
@@ -96,7 +74,8 @@ function machine({ runner = 'running' as 'running' | 'stopped' | 'none', oldRunn
   };
   const launchctl = () => m.calls.filter((call) => call.startsWith('launchctl') && !call.startsWith('launchctl print'));
   const bundled = () => readFileSync(join(app, 'Contents/Resources/runner/runner.ts'), 'utf8');
-  return { ...m, m, launchctl, bundled, run: () => upkeep(m.deps) };
+  const run = async () => { const result = await updateRunner(m.deps); m.output.push(result.line); return result.ok ? 0 : 1; };
+  return { ...m, m, launchctl, bundled, run };
 }
 
 /** The real Runner's drain handling, sharing the machine's state directory. */
@@ -158,7 +137,7 @@ test('a stale acknowledgment or no acknowledgment refuses without stopping the R
   assert.deepEqual(machineA.launchctl(), []);
 });
 
-test('an open watch keeps the Runner from acknowledging, so upkeep refuses', async () => {
+test('an open watch keeps the Runner from acknowledging, so setup refuses', async () => {
   const machineA = machine();
   const runner = runnerOn(machineA.stateDir);
   runner.release();
@@ -169,34 +148,19 @@ test('an open watch keeps the Runner from acknowledging, so upkeep refuses', asy
   assert.deepEqual(machineA.launchctl(), []);
 });
 
-test('a machine without the Runner app gets skills only', async () => {
+test('a machine without the Runner app is left without one', async () => {
   const machineA = machine({ runner: 'none' });
   assert.equal(await machineA.run(), 0);
-  assert.deepEqual(machineA.m.output, ['source: mcwestling/factory at aaaaaaa.', 'skills: refreshed do-implement to aaaaaaa.',
-    'runner: skipped. No Factory Runner app is installed.']);
-  assert.ok(machineA.m.calls.includes('npx --yes skills update -g -y do-implement'), 'only Factory skills');
-  assert.equal(machineA.m.calls.some((call) => call.startsWith('sh') || call.startsWith('launchctl')), false);
-});
-
-test('a skill failure is reported separately and still fails the run after a successful Runner refresh', async () => {
-  const machineA = machine({ runner: 'stopped' });
-  machineA.m.fail.add('npx');
-  assert.equal(await machineA.run(), 1);
-  assert.match(machineA.m.output[1]!, /^skills: failed\. The skills installer exited with an error \(npx broke\)/);
-  assert.match(machineA.m.output[2]!, /^runner: refreshed and left stopped\./);
-
-  const machineB = machine({ runner: 'none' });
-  machineB.m.deps.exec = ((exec) => async (file: string, args: string[], timeout: number) =>
-    file === 'npx' ? { stdout: '' } : exec(file, args, timeout))(machineB.m.deps.exec);
-  assert.equal(await machineB.run(), 1);
-  assert.match(machineB.m.output[1]!, /^skills: failed\. Still not at aaaaaaa after updating: do-implement\./);
+  assert.deepEqual(machineA.m.output, ['runner: skipped. No Factory Runner app is installed.']);
+  assert.deepEqual(machineA.m.calls.filter((call) => !call.startsWith('launchctl print')), []);
+  assert.equal(existsSync(machineA.app), false);
 });
 
 test('a failed staged build leaves the installed Runner running and unchanged', async () => {
   const machineA = machine();
   machineA.m.fail.add('--build-app');
   assert.equal(await machineA.run(), 1);
-  assert.match(machineA.m.output[2]!, /^runner: failed\. The staged build didn't complete \(--build-app broke\)\. The installed Runner is unchanged\./);
+  assert.match(machineA.m.output[0]!, /^runner: failed\. The staged build didn't complete \(--build-app broke\)\. The installed Runner is unchanged\./);
   assert.deepEqual(machineA.launchctl(), []);
   assert.match(machineA.bundled(), /old/);
   assert.equal(existsSync(`${machineA.app}.staged`), false);
@@ -216,7 +180,7 @@ test('a new Runner that does not start is replaced by the restored previous bund
     return exec(file, args, timeout);
   };
   assert.equal(await machineA.run(), 1);
-  assert.match(machineA.m.output[2]!, /^runner: failed\. The new Runner didn't start, so the previous bundle was restored and restarted \(pid 4242\)/);
+  assert.match(machineA.m.output[0]!, /^runner: failed\. The new Runner didn't start, so the previous bundle was restored and restarted \(pid 4242\)/);
   assert.match(machineA.bundled(), /old/);
 });
 
@@ -226,7 +190,7 @@ test('stopped, paused and login-disabled choices, config and state survive a ref
   writeFileSync(join(machineA.home, '.config/factory-delegator/launches.json'), '{"s":1}');
   const before = readFileSync(machineA.config);
   assert.equal(await machineA.run(), 0);
-  assert.match(machineA.m.output[2]!, /^runner: refreshed and left stopped\./);
+  assert.match(machineA.m.output[0]!, /^runner: refreshed and left stopped\./);
   assert.deepEqual(machineA.launchctl(), [], 'no bootstrap, enable or disable for either agent');
   assert.equal(machineA.m.pid, null);
   assert.ok(existsSync(join(machineA.stateDir, 'paused')));
@@ -249,35 +213,20 @@ test('a stopped Runner with open watches or a live stray process is not refreshe
   const machineA = machine({ runner: 'stopped' });
   writeFileSync(join(machineA.stateDir, 'watching.json'), '{"s":{}}');
   assert.equal(await machineA.run(), 1);
-  assert.match(machineA.m.output[2]!, /^runner: refused\. The stopped Runner has open or unreadable watches/);
+  assert.match(machineA.m.output[0]!, /^runner: refused\. The stopped Runner has open or unreadable watches/);
   assert.match(machineA.bundled(), /old/);
 
   const machineB = machine({ runner: 'stopped' });
   writeFileSync(join(machineB.stateDir, 'status.json'), JSON.stringify({ pid: process.pid, updatedAt: new Date().toISOString() }));
   assert.equal(await machineB.run(), 1);
-  assert.match(machineB.m.output[2]!, /is running outside launchd/);
+  assert.match(machineB.m.output[0]!, /is running outside launchd/);
 });
-
-for (const [label, change, message] of [
-  ['a dirty', (m: ReturnType<typeof machine>) => { m.m.git.status = '?? notes.txt'; }, /uncommitted or untracked changes/],
-  ['an unmerged', (m: ReturnType<typeof machine>) => { m.m.git.head = 'b'.repeat(40); }, /HEAD bbbbbbb isn't origin's main \(aaaaaaa\)\. Check out main and pull it/],
-  ['an untrusted', (m: ReturnType<typeof machine>) => { m.m.git.origin = 'https://github.com/someone/fork.git'; }, /origin isn't mcwestling\/factory/],
-] as const) {
-  test(`${label} checkout refuses before running anything but read-only git`, async () => {
-    const machineA = machine();
-    change(machineA);
-    assert.equal(await machineA.run(), 1);
-    assert.match(machineA.m.output[0]!, message);
-    assert.deepEqual(machineA.m.output.slice(1), ['skills: not run.\nrunner: not run.']);
-    assert.ok(machineA.m.calls.every((call) => /^git -C \S+ (remote get-url|--no-optional-locks status|rev-parse HEAD|ls-remote)/.test(call)));
-  });
-}
 
 test('an incompatible config refuses before the Runner is drained or replaced', async () => {
   const machineA = machine();
   machineA.m.fail.add('--check-config');
   assert.equal(await machineA.run(), 1);
-  assert.match(machineA.m.output[2]!, /^runner: refused\. The installed config doesn't fit the new Runner \(--check-config broke\)/);
+  assert.match(machineA.m.output[0]!, /^runner: refused\. The installed config doesn't fit the new Runner \(--check-config broke\)/);
   assert.deepEqual(machineA.launchctl(), []);
   assert.match(machineA.bundled(), /old/);
 });
@@ -285,17 +234,23 @@ test('an incompatible config refuses before the Runner is drained or replaced', 
 test('an older Runner without drain support refuses with the safe manual procedure', async () => {
   const machineA = machine({ oldRunner: true });
   assert.equal(await machineA.run(), 1);
-  assert.match(machineA.m.output[2]!, /predates safe draining[\s\S]*Pause new work[\s\S]*Stop Runner[\s\S]*Rerun this command[\s\S]*Start Runner/);
+  assert.match(machineA.m.output[0]!, /predates safe draining[\s\S]*Pause new work[\s\S]*Stop Runner[\s\S]*Rerun this command[\s\S]*Start Runner/);
   assert.deepEqual(machineA.launchctl(), []);
   assert.equal(machineA.m.calls.some((call) => call.startsWith('sh')), false);
 });
 
-test('a second upkeep refuses while one is running', async () => {
+test('a second setup refuses while one is running', async () => {
   const machineA = machine({ runner: 'none' });
-  writeFileSync(join(machineA.stateDir, 'upkeep.lock'), String(process.ppid));
-  assert.equal(await machineA.run(), 1);
-  assert.match(machineA.m.output[0]!, /Another upkeep \(pid \d+\) is running/);
-  assert.equal(existsSync(join(machineA.stateDir, 'upkeep.lock')), true, "the other run's lock stays");
+  writeFileSync(join(machineA.stateDir, 'setup.lock'), String(process.ppid));
+  let ran = false;
+  assert.equal(await withLock(machineA.m.deps, async () => { ran = true; return 0; }), 1);
+  assert.equal(ran, false);
+  assert.match(machineA.m.output[0]!, /Another setup \(pid \d+\) is running/);
+  assert.equal(existsSync(join(machineA.stateDir, 'setup.lock')), true, "the other run's lock stays");
+
+  writeFileSync(join(machineA.stateDir, 'setup.lock'), '999999');
+  assert.equal(await withLock(machineA.m.deps, async () => 0), 0, 'a dead pid\'s lock is taken over');
+  assert.equal(existsSync(join(machineA.stateDir, 'setup.lock')), false, 'and released');
 });
 
 test('a stopped Runner started during the staged build is not replaced, and the old backup is kept', async () => {
@@ -309,7 +264,7 @@ test('a stopped Runner started during the staged build is not replaced, and the 
     return result;
   };
   assert.equal(await machineA.run(), 1);
-  assert.match(machineA.m.output[2]!, /^runner: refused\. The stopped Runner was started while upkeep was building\. Nothing was replaced/);
+  assert.match(machineA.m.output[0]!, /^runner: refused\. The stopped Runner was started while setup was building\. Nothing was replaced/);
   assert.match(machineA.bundled(), /old/);
   assert.equal(readFileSync(`${machineA.app}.previous/marker`, 'utf8'), 'earlier backup');
   assert.equal(machineA.m.pid, 5150, 'the started Runner is left running');
@@ -337,7 +292,7 @@ test('a new Runner that never reports and cannot be stopped leaves both bundles 
     return exec(file, args, timeout);
   };
   assert.equal(await machineA.run(), 1);
-  assert.match(machineA.m.output[2]!, /^runner: failed\. The new Runner didn't confirm it started, and it couldn't be stopped, so both bundles were left in place[\s\S]*launchctl bootout gui\/501\//);
+  assert.match(machineA.m.output[0]!, /^runner: failed\. The new Runner didn't confirm it started, and it couldn't be stopped, so both bundles were left in place[\s\S]*launchctl bootout gui\/501\//);
   assert.equal(machineA.bundled(), readFileSync(join(root, 'packages/delegator/runner/runner.ts'), 'utf8'), 'the new bundle stays installed');
   assert.match(readFileSync(`${machineA.app}.previous/Contents/Resources/runner/runner.ts`, 'utf8'), /old/);
   assert.equal(existsSync(`${machineA.app}.failed`), false);

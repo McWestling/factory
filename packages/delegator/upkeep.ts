@@ -1,13 +1,9 @@
-// Factory upkeep: after merging Factory changes, refreshes installed Factory skills and
-// safely updates an existing Runner from this clean checkout of the default branch.
-// It never changes git state, installs anything missing, or restarts a busy Runner.
+// The Runner half of `npm run setup`: safely updates an existing Runner app from this checkout.
+// It never installs a missing Runner or restarts a busy one.
 
-import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
-import { promisify } from 'node:util';
+import { join } from 'node:path';
 
 export type UpkeepDeps = {
   exec: (file: string, args: string[], timeoutMs: number) => Promise<{ stdout: string }>;
@@ -25,72 +21,34 @@ const LABEL = 'com.factory.factory-delegator.runner';
 // Everything the installer bundles from source, checked byte for byte after staging.
 const BUNDLED = ['job.ts', 'parse-issue.ts', 'runner/runner.ts', 'runner/launchd/install.sh',
   'runner/launchd/runner.plist', 'menubar/menubar.plist'];
-const OLD_RUNNER = `The installed Runner predates safe draining, so upkeep won't restart it. Nothing was changed. To update it safely:
+const OLD_RUNNER = `The installed Runner predates safe draining, so setup won't restart it. Nothing was changed. To update it safely:
   1. In the Factory Runner menu, turn on Pause new work.
   2. Wait until the menu shows Paused, with no current job and nothing Waiting for a PR, for at least a minute.
   3. Choose Stop Runner.
   4. Rerun this command. It refreshes the stopped Runner and leaves it stopped.
   5. Choose Start Runner, then turn off Pause new work.`;
 
-type Result = { ok: boolean; line: string };
-const short = (sha: string) => sha.slice(0, 7);
-const lastLine = (error: unknown) =>
+export type Result = { ok: boolean; line: string };
+export const lastLine = (error: unknown) =>
   String((error as { stderr?: unknown }).stderr ?? '').trim().split('\n').pop()?.slice(0, 300) || 'no output';
-const readJson = (path: string): any => { try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return null; } };
-const alive = (pid: unknown) => {
+export const readJson = (path: string): any => { try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return null; } };
+export const alive = (pid: unknown) => {
   if (!Number.isInteger(pid) || (pid as number) <= 0) return false;
   try { process.kill(pid as number, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
 };
 
-/** Checks this is a clean checkout of origin's current default branch; returns HEAD. */
-async function source(deps: UpkeepDeps): Promise<string> {
-  const git = async (...args: string[]) => (await deps.exec('git', ['-C', deps.root, ...args], 30_000)).stdout.trim();
-  const step = async (failure: string, ...args: string[]) => {
-    try { return await git(...args); } catch { throw new Error(failure); }
-  };
-  const origin = await step(`${deps.root} isn't a git checkout with an origin`, 'remote', 'get-url', 'origin');
-  if (!/github\.com[:/]mcwestling\/factory(\.git)?$/i.test(origin)) {
-    throw new Error('origin isn\'t mcwestling/factory. Run upkeep from a Factory checkout.');
-  }
-  if (await step('couldn\'t read the checkout\'s status', '--no-optional-locks', 'status', '--porcelain')) {
-    throw new Error('the checkout has uncommitted or untracked changes. Commit, stash or remove them, then rerun.');
-  }
-  const head = await step('couldn\'t read HEAD', 'rev-parse', 'HEAD');
-  const remote = await step('couldn\'t reach origin to read its default branch', 'ls-remote', '--symref', 'origin', 'HEAD');
-  const branch = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(remote)?.[1];
-  const tip = /^([0-9a-f]{40})\tHEAD$/m.exec(remote)?.[1];
-  if (!branch || !tip) throw new Error('couldn\'t read origin\'s default branch');
-  if (head !== tip) {
-    throw new Error(`HEAD ${short(head)} isn't origin's ${branch} (${short(tip)}). Check out ${branch} and pull it, then rerun.`);
-  }
-  return head;
-}
-
-/** Updates the installed Factory skills with the skills CLI, then checks each matches HEAD. */
-async function skills(deps: UpkeepDeps, head: string): Promise<Result> {
-  const lock = join(deps.home, '.agents', '.skill-lock.json');
-  const installed = () => (readJson(lock)?.skills ?? {}) as Record<string, { source?: unknown; skillFolderHash?: unknown }>;
-  const names = Object.entries(installed())
-    .filter(([, skill]) => String(skill?.source).toLowerCase() === 'mcwestling/factory').map(([name]) => name);
-  if (!names.length) return { ok: true, line: 'skills: skipped. No Factory skills are installed; the README shows how to install them.' };
-  try {
-    await deps.exec('npx', ['--yes', 'skills', 'update', '-g', '-y', ...names], 600_000);
-  } catch (error) {
-    return { ok: false, line: `skills: failed. The skills installer exited with an error (${lastLine(error)}).` };
-  }
-  const after = installed();
-  const stale: string[] = [];
-  for (const name of names) {
-    // The installer records each skill folder's git tree hash.
-    const tree = await deps.exec('git', ['-C', deps.root, 'rev-parse', `${head}:skills/${name}`], 30_000)
-      .then(({ stdout }) => stdout.trim(), () => null);
-    if (!tree || after[name]?.skillFolderHash !== tree) stale.push(name);
-  }
-  if (stale.length) return { ok: false, line: `skills: failed. Still not at ${short(head)} after updating: ${stale.join(', ')}.` };
-  return { ok: true, line: `skills: refreshed ${names.join(', ')} to ${short(head)}.` };
-}
-
 /** Rebuilds an installed Runner app, swapping it in only once the Runner is proven idle. */
+export async function updateRunner(deps: UpkeepDeps): Promise<Result> {
+  try { return await runner(deps); } catch (error) {
+    return { ok: false, line: `runner: failed (${(error as Error).message}). Check ~/Applications for the Factory Runner app.` };
+  } finally {
+    const drain = join(deps.stateDir, 'drain.json');
+    for (const path of [drain, `${drain}.ack`, `${drain}.tmp`, join(deps.home, 'Applications', 'Factory Runner.app.staged')]) {
+      rmSync(path, { recursive: true, force: true });
+    }
+  }
+}
+
 async function runner(deps: UpkeepDeps): Promise<Result> {
   const app = join(deps.home, 'Applications', 'Factory Runner.app');
   const staged = `${app}.staged`, previous = `${app}.previous`, failed = `${app}.failed`;
@@ -131,7 +89,7 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
   }
   /** Why a stopped Runner can't be refreshed now, or null when it's still stopped with nothing outstanding. */
   const stoppedRefusal = async () => {
-    if (await pid() !== null) return fail('refused. The stopped Runner was started while upkeep was building. Nothing was replaced; rerun when it\'s idle.');
+    if (await pid() !== null) return fail('refused. The stopped Runner was started while setup was building. Nothing was replaced; rerun when it\'s idle.');
     const status = readJson(join(deps.stateDir, 'status.json'));
     if (alive(status?.pid) && Date.now() - Date.parse(status.updatedAt) < 30_000) {
       return fail(`refused. A Runner process (pid ${status.pid}) is running outside launchd. Stop it, then rerun.`);
@@ -208,7 +166,7 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
   }
   try { await deps.exec('launchctl', ['bootout', service], 60_000); } catch {}
   if (!await wait(10, async () => await pid() === null)) {
-    return fail(`failed. The new Runner didn't confirm it started, and it couldn't be stopped, so both bundles were left in place: the new one at ${app}, the previous one at ${previous}. To roll back, run \`launchctl bootout ${service}\` until \`launchctl print ${service}\` fails, move the new bundle aside, rename the previous one to ${app}, then choose Start Runner. Don't rerun upkeep first; it replaces the previous bundle.`);
+    return fail(`failed. The new Runner didn't confirm it started, and it couldn't be stopped, so both bundles were left in place: the new one at ${app}, the previous one at ${previous}. To roll back, run \`launchctl bootout ${service}\` until \`launchctl print ${service}\` fails, move the new bundle aside, rename the previous one to ${app}, then choose Start Runner. Don't rerun setup first; it replaces the previous bundle.`);
   }
   rmSync(failed, { recursive: true, force: true });
   renameSync(app, failed);
@@ -217,47 +175,14 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
   return fail(`failed. The new Runner didn't start, so the previous bundle was restored${restored ? ` and restarted (pid ${restored})` : ', but it didn\'t start either; check ~/Library/Logs/factory-delegator'}. The failed bundle is at ${failed}.`);
 }
 
-/** Runs upkeep and returns the exit code: 0 only when every requested step succeeded or was skipped. */
-export async function upkeep(deps: UpkeepDeps): Promise<number> {
+/** Runs `fn` while holding the setup lock, so two setups never update the same machine at once. */
+export async function withLock(deps: Pick<UpkeepDeps, 'stateDir' | 'print'>, fn: () => Promise<number>): Promise<number> {
   mkdirSync(deps.stateDir, { recursive: true, mode: 0o700 });
-  const lock = join(deps.stateDir, 'upkeep.lock');
+  const lock = join(deps.stateDir, 'setup.lock');
   try { writeFileSync(lock, String(process.pid), { flag: 'wx', mode: 0o600 }); } catch {
     const other = Number(readFileSync(lock, 'utf8'));
-    if (alive(other)) { deps.print(`upkeep: refused. Another upkeep (pid ${other}) is running.`); return 1; }
+    if (alive(other)) { deps.print(`setup: refused. Another setup (pid ${other}) is running.`); return 1; }
     writeFileSync(lock, String(process.pid), { mode: 0o600 });
   }
-  const drain = join(deps.stateDir, 'drain.json');
-  const staged = join(deps.home, 'Applications', 'Factory Runner.app.staged');
-  try {
-    let head: string;
-    try { head = await source(deps); } catch (error) {
-      deps.print(`source: refused. ${(error as Error).message}`);
-      deps.print('skills: not run.\nrunner: not run.');
-      return 1;
-    }
-    deps.print(`source: mcwestling/factory at ${short(head)}.`);
-    const results = [await skills(deps, head)];
-    deps.print(results[0]!.line);
-    results.push(await runner(deps).catch((error: Error) =>
-      ({ ok: false, line: `runner: failed (${error.message}). Check ~/Applications for the Factory Runner app.` })));
-    deps.print(results[1]!.line);
-    return results.every((result) => result.ok) ? 0 : 1;
-  } finally {
-    for (const path of [drain, `${drain}.ack`, `${drain}.tmp`, staged, lock]) rmSync(path, { recursive: true, force: true });
-  }
-}
-
-if (import.meta.main) {
-  const run = promisify(execFile);
-  const state = process.env.XDG_STATE_HOME;
-  process.exitCode = await upkeep({
-    exec: (file, args, timeout) => run(file, args, { timeout, maxBuffer: 16 * 1024 * 1024 }),
-    home: homedir(),
-    stateDir: join(state && isAbsolute(state) ? state : join(homedir(), '.local', 'state'), 'factory'),
-    root: resolve(import.meta.dirname, '../..'),
-    node: process.execPath,
-    uid: process.getuid!(),
-    sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
-    print: (line) => console.log(line),
-  });
+  try { return await fn(); } finally { rmSync(lock, { force: true }); }
 }

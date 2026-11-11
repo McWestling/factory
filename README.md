@@ -52,11 +52,14 @@ Factory is built for McWestling, not as a product: there is no support, and anyt
 
 1. Fork this repo. GitHub forks of a public repo stay public; copy the repo instead if you want yours private.
 2. Replace `docs/issue-tracker.md` with your own values.
-3. Install the skills from your fork, selecting your agents when prompted:
+3. Clone your fork and run setup from it:
 
    ```sh
-   npx skills add <you>/factory --skill '*' -g
+   git clone https://github.com/<you>/factory.git && cd factory
+   npm run setup
    ```
+
+   It installs the Factory skills and the supporting skills for each agent CLI it finds, or only the ones you name (`npm run setup -- claude codex`), then checks each agent can reach Linear and see them.
 
 4. Run `/do-repo-setup` in each of your repos. It points the repo’s `AGENTS.md` at your fork’s tracker doc, and offers to install the supporting skills, dev ports and your Tool Stack’s service commands ([example](skills/do-repo-setup/adding-a-repo.example.toml)).
 5. Optionally, [deploy your own Cloud Inbox](packages/delegator/README.md#set-up-your-cloud-inbox) to delegate work from Linear.
@@ -72,9 +75,16 @@ You need Git, Node.js 22.20+ with npm, the [GitHub CLI](https://cli.github.com) 
 
 Linear sends delegations to Cloud Inbox. The Runner claims them over HTTPS and launches Orca on your machine. Cloud Inbox can queue work while that machine sleeps.
 
-## Upkeep
+## Set up or update
 
-After merging Factory changes, run `npm run upkeep` with Node.js 26 from a clean checkout of `main`. It refreshes the installed skills and safely updates an existing Runner; see [what it checks](packages/delegator/README.md#update-after-merging-factory-changes). It currently reads McWestling’s repo, so a fork can’t use it yet. To restart the Runner’s menu bar app, run `npm run menubar`.
+One command sets up or refreshes Factory on a Mac: `npm run setup`, from a clean checkout of your fork’s default branch that matches GitHub. Run it again after merging Factory changes.
+
+- It checks Git, Node.js, the GitHub CLI and your agent CLIs before changing anything, and installs none of them.
+- It installs or refreshes every Factory skill from the checkout’s `origin`, and the supporting skills in each agent’s existing form: the plugin for a new Claude Code or Codex install, the skills CLI otherwise. Agents you didn’t choose are left alone.
+- It safely updates an existing Runner; see [what it checks](packages/delegator/README.md#update-after-merging-factory-changes).
+- It starts each agent fresh to confirm Linear’s MCP `whoami` answers and every skill is discoverable. Cursor’s skills can’t be checked this way, so setup reports Cursor as unverified.
+
+It exits non-zero until every step passes; at a terminal, it waits for each fix and checks again. The Runner is an optional follow-up: [install it](packages/delegator/README.md#install-and-control-the-runner) once, and setup keeps it updated. To restart the Runner’s menu bar app, run `npm run menubar`.
 
 ## Contributing
 

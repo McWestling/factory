@@ -1,0 +1,5 @@
+{
+  "extends": "../delegator/tsconfig.json",
+  "compilerOptions": { "typeRoots": ["../delegator/node_modules/@types"] },
+  "include": ["*.ts"]
+}

@@ -288,21 +288,20 @@ and toggles this flag; it needs no Cloud Inbox access.
 
 ### Update after merging Factory changes
 
-From a clean checkout of `main` that matches GitHub, run:
+From the repo root, on a clean checkout of `main` that matches GitHub, run:
 
 ```sh
-npm run upkeep
+npm run setup
 ```
 
-It refreshes the Factory skills you installed, then updates an existing Runner app
-from this checkout. It prints one line for the skills and one for the Runner, and exits
-non-zero when either fails or refuses. It installs nothing that's missing and never
-changes git state.
+Along with the skills, it updates an existing Runner app from this checkout and prints
+one line for it. It never installs a missing Runner and exits non-zero when the
+update fails or refuses.
 
-- **A running Runner** is asked to drain: upkeep writes `drain.json` in the state
+- **A running Runner** is asked to drain: setup writes `drain.json` in the state
   directory, the Runner stops claiming and checking watches, and writes
   `drain.json.ack` only when no claim, job or open watch remains. Without that
-  acknowledgment within 60 seconds, upkeep refuses and changes nothing. A fresh
+  acknowledgment within 60 seconds, setup refuses and changes nothing. A fresh
   idle `status.json` alone doesn't count.
 - **The new bundle** is built with `install.sh --build-app <dir>`, checked file for
   file against this checkout, and run with `--check-config` against your config
@@ -312,7 +311,7 @@ changes git state.
   config are never touched. Run `npm run menubar` from the repo root to restart the menu bar app on its new version.
 - **A Runner from before draining** is refused, with steps to pause, stop and rerun.
 
-Test it with `node --test upkeep.test.ts` from `packages/delegator`.
+Test it with `node --test upkeep.test.ts` from `packages/delegator`; the rest of setup is in [`packages/setup`](../setup/setup.ts).
 
 ## Security
 
