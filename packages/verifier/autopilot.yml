@@ -1,0 +1,61 @@
+name: factory-autopilot
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+  check_run:
+    types: [completed]
+  status:
+  workflow_run:
+    workflows: ["*"]
+    types: [completed]
+
+permissions:
+  contents: read
+  checks: read
+  pull-requests: write
+  statuses: write
+
+jobs:
+  find:
+    if: >-
+      (github.event_name != 'status' ||
+       (github.event.context != 'autopilot' && github.event.state != 'pending')) &&
+      (github.event_name != 'workflow_run' || github.event.workflow_run.name != 'factory-autopilot')
+    runs-on: ubuntu-latest
+    outputs:
+      prs: ${{ steps.find.outputs.prs }}
+    steps:
+      - uses: actions/github-script@v7
+        id: find
+        with:
+          script: |
+            const e = context.payload;
+            const sha = e.check_run?.head_sha ?? e.workflow_run?.head_sha ?? e.sha;
+            const prs = e.pull_request ? [e.pull_request] :
+              await github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit,
+                { ...context.repo, commit_sha: sha, per_page: 100 });
+            core.setOutput('prs', JSON.stringify([...new Set(prs.map(p => p.number))]));
+  evaluate:
+    needs: find
+    if: needs.find.outputs.prs != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        pr: ${{ fromJSON(needs.find.outputs.prs) }}
+    concurrency:
+      group: factory-autopilot-pr-${{ matrix.pr }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      # Never execute code or config from an untrusted PR in this privileged workflow.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Evaluate hosted checks
+        run: node scripts/autopilot.mjs
+        env:
+          AUTOPILOT_PR: ${{ matrix.pr }}
+          GITHUB_TOKEN: ${{ github.token }}
+          FACTORY_LINEAR_CLIENT_ID: ${{ secrets.FACTORY_LINEAR_CLIENT_ID }}
+          FACTORY_LINEAR_CLIENT_SECRET: ${{ secrets.FACTORY_LINEAR_CLIENT_SECRET }}
