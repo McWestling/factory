@@ -18,7 +18,7 @@ You can use the skills without Delegator. They help with four steps:
 
 Factory connects to and builds upon [Matt Pocock’s skills](https://github.com/mattpocock/skills) for research, design, prototyping and testing.
 
-Each project keeps its settings, such as team names, labels and statuses, in one file in its own repo, so the same skills work in any project.
+Each project keeps its settings, such as team names, labels and statuses, in one file, in its own repo or shared from another, so the same skills work in any project. Planning can run from one home repo and read the others' code.
 
 ## Who it's for
 

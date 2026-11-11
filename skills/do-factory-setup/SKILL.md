@@ -52,7 +52,7 @@ After the step 3 answer, run only the approved route, then recheck the current a
 
 ## 1. Find what exists
 
-1. **Tracker doc path:** if `AGENTS.md` names a tracker doc, use that path. Otherwise use `docs/issue-tracker.md`.
+1. **Tracker doc path:** Find it through `AGENTS.md`, which names either a path in this repo or a doc in another repo (like `docs/issue-tracker.md` in `owner/name`); read another repo's doc from its checkout, found through `orca repo list --json`. If `AGENTS.md` names none, use `docs/issue-tracker.md`.
 2. **Existing doc:** if it exists, read it. Every value already in it is settled: you never overwrite it, only fill gaps and apply [changelog](#changelog) entries. A **gap** is a template heading that is missing or empty, or a line starting `TODO:`.
 3. **AGENTS.md:** note whether it links the tracker doc, and whether it has a `## Scripts` section.
 4. **README:** read `README.md`, if any, and note which parts of the intro it has, using [step 6](#6-readme-intro)'s check.
@@ -256,7 +256,7 @@ The model table and its Checked date are the factory's curated pick. Copy them a
 
 This is {{workspace}}'s config; to adopt, copy it and replace the values.
 
-**Setup version:** 2026-11-10
+**Setup version:** 2026-11-11
 
 The skills hold the procedure. This file holds only the values they look up, under the headings below. Keep the headings stable: skills cite them by name.
 
@@ -392,7 +392,7 @@ Datelines in use:
 
 - **Title:** a plain imperative subject ending with the issue id in parentheses, like `Fix the login redirect bug ({{KEY}}-<number>)`.
 - **Branch:** the issue's Linear branch name (`gitBranchName` from `get_issue`), or the branch the host already made for the issue when its name contains the issue id. Linear builds the prefix for whoever asks, and the prefix shows whether a delegated agent or a person did the work, so keep the host's branch rather than renaming it. Never invent or prefix one yourself.
-- **Review:** no PR autopilot in this repo. PRs open as drafts; the maintainer marks them ready and merges.
+- **Review:** each repo's `AGENTS.md` holds its own review rule: whether it has a PR autopilot, and who marks PRs ready and merges.
 ```
 
 ## Changelog
@@ -467,3 +467,10 @@ Apply each entry newer than the doc's version, in order. Compare with slots fill
 - **Old text:** `https://learn.chatgpt.com/docs/models`
 - **New text:** `https://learn.chatgpt.com/docs/models.md`
 - **Why:** The markdown page loads fully and lists every Codex model in the table.
+
+### 2026-11-11
+
+- **Where:** `## Pull requests`, the **Review** line.
+- **Old text:** `- **Review:** no PR autopilot in this repo. PRs open as drafts; the maintainer marks them ready and merges.`
+- **New text:** ``- **Review:** each repo's `AGENTS.md` holds its own review rule: whether it has a PR autopilot, and who marks PRs ready and merges.``
+- **Why:** a tracker doc can now serve repos other than its own, and each repo reviews its PRs its own way. On a switch, move the doc's old **Review** text into `AGENTS.md` under `## Pull requests`, unless it already says how PRs are reviewed.

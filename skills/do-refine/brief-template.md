@@ -70,6 +70,6 @@ reason: <one clause explaining why this model fits>
 - **Factory-run block, reason:** give one human-readable clause for the model choice. The agent and skill come from the model mapping and Runner config described in the [issue format contract](../../docs/issue-format.md).
 - **Touches:** the directories and files from your code survey. Dispatch compares these lines to batch issues that don't overlap.
 - **Verification:** use the repo's own check command, from its `AGENTS.md` or README.
-- **Lifecycle:** use the status names from **Issue statuses**. If the repo has no PR automation (see **Pull requests**), say who marks the PR ready and merges.
+- **Lifecycle:** use the status names from **Issue statuses**. If the repo has no PR automation (see the review rule in its `AGENTS.md`), say who marks the PR ready and merges.
 
 Decision tickets don't use this template; see the Tickets section of `SKILL.md`.

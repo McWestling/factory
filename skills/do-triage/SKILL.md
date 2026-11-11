@@ -12,7 +12,7 @@ This skill is one of the factory's `do-` skills and expects its siblings to be i
 
 ## Workspace values
 
-This skill holds the procedure. The values (team, statuses, labels, templates, initiatives, routing, dispatch targets, models, views, comment shape) live in the repo's **tracker doc**. Find it through `AGENTS.md`; if `AGENTS.md` doesn't name one, use `docs/issue-tracker.md`. Read it before you touch the tracker. Where this file says "per X", X is a heading in that doc.
+This skill holds the procedure. The values (team, statuses, labels, templates, initiatives, routing, dispatch targets, models, views, comment shape) live in the repo's **tracker doc**. Find it through `AGENTS.md`, which names either a path in this repo or a doc in another repo (like `docs/issue-tracker.md` in `owner/name`); read another repo's doc from its checkout, found through `orca repo list --json`. If `AGENTS.md` names none, use `docs/issue-tracker.md`. Read it before you touch the tracker. Where this file says "per X", X is a heading in that doc.
 
 If a value you need is missing, ask the user, use their answer, then offer to add it to the tracker doc or to run `do-factory-setup`.
 
@@ -40,7 +40,7 @@ For each item, look for related work and current state:
 
 - **Tracker:** related maps, Backlog issues, other Triage items, and issues in the done and canceled statuses from the look-back per **Triage** (a muse may already have shipped or been declined). Search on the item's key terms and filter by its Product label. Keep the sweep bounded: the look-back window, or the top 10 hits per query.
 - **Projects:** search **all** projects by key terms, including finished and abandoned ones and other initiatives. The user may remember a map that never existed, or forget one that did; a distant map can still own the item.
-- **Code:** a quick, bounded check of whether the behavior already exists and where it lives (routes, components, schema fields). Say where you looked, and note the directories and files involved; ready briefs reuse them. This is for routing, not design.
+- **Code:** a quick, bounded check of whether the behavior already exists and where it lives (routes, components, schema fields). Survey the item's repo. When that repo per **Repo routing** isn't the current one, find its checkout in `orca repo list --json` (the entry whose remote is that `owner/name`) and read its `AGENTS.md` first. Read only; never edit another repo's checkout. If it has no checkout there, say so and skip the code check. Say where you looked, and note the directories and files involved; ready briefs reuse them. This is for routing, not design.
 
 ## 3. Propose clusters
 
