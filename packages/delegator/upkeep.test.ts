@@ -297,3 +297,50 @@ test('a second upkeep refuses while one is running', async () => {
   assert.match(machineA.m.output[0]!, /Another upkeep \(pid \d+\) is running/);
   assert.equal(existsSync(join(machineA.stateDir, 'upkeep.lock')), true, "the other run's lock stays");
 });
+
+test('a stopped Runner started during the staged build is not replaced, and the old backup is kept', async () => {
+  const machineA = machine({ runner: 'stopped' });
+  mkdirSync(`${machineA.app}.previous`);
+  writeFileSync(`${machineA.app}.previous/marker`, 'earlier backup');
+  const exec = machineA.m.deps.exec;
+  machineA.m.deps.exec = async (file, args, timeout) => {
+    const result = await exec(file, args, timeout);
+    if (args[1] === '--build-app') machineA.m.pid = 5150;
+    return result;
+  };
+  assert.equal(await machineA.run(), 1);
+  assert.match(machineA.m.output[2]!, /^runner: refused\. The stopped Runner was started while upkeep was building\. Nothing was replaced/);
+  assert.match(machineA.bundled(), /old/);
+  assert.equal(readFileSync(`${machineA.app}.previous/marker`, 'utf8'), 'earlier backup');
+  assert.equal(machineA.m.pid, 5150, 'the started Runner is left running');
+  assert.deepEqual(machineA.launchctl(), []);
+});
+
+test('a new Runner that never reports and cannot be stopped leaves both bundles in place', async () => {
+  const machineA = machine();
+  const runner = runnerOn(machineA.stateDir);
+  runner.release();
+  await runner.claiming;
+  machineA.m.onSleep = () => acknowledgeDrain(runner.deps);
+  const exec = machineA.m.deps.exec;
+  let bootouts = 0;
+  machineA.m.deps.exec = async (file, args, timeout) => {
+    if (file === 'launchctl' && args[0] === 'bootstrap') {
+      machineA.m.calls.push('launchctl bootstrap (no heartbeat)');
+      machineA.m.pid = machineA.m.nextPid++;
+      return { stdout: '' };
+    }
+    if (file === 'launchctl' && args[0] === 'bootout' && ++bootouts > 1) {
+      machineA.m.calls.push('launchctl bootout (fails)');
+      throw Object.assign(new Error('exit 1'), { stderr: 'Boot-out failed' });
+    }
+    return exec(file, args, timeout);
+  };
+  assert.equal(await machineA.run(), 1);
+  assert.match(machineA.m.output[2]!, /^runner: failed\. The new Runner didn't confirm it started, and it couldn't be stopped, so both bundles were left in place[\s\S]*launchctl bootout gui\/501\//);
+  assert.equal(machineA.bundled(), readFileSync(join(root, 'packages/delegator/runner/runner.ts'), 'utf8'), 'the new bundle stays installed');
+  assert.match(readFileSync(`${machineA.app}.previous/Contents/Resources/runner/runner.ts`, 'utf8'), /old/);
+  assert.equal(existsSync(`${machineA.app}.failed`), false);
+  assert.equal(machineA.m.pid, 4242, 'the service is still running');
+  assert.equal(machineA.m.calls.filter((call) => call.startsWith('launchctl bootstrap')).length, 1, 'no restart of the previous bundle');
+});

@@ -129,7 +129,9 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
   if (running && !readFileSync(join(app, 'Contents/Resources/runner/runner.ts'), 'utf8').includes('DRAIN_PROTOCOL = 1')) {
     return fail(`refused. ${OLD_RUNNER}`);
   }
-  if (running === null) {
+  /** Why a stopped Runner can't be refreshed now, or null when it's still stopped with nothing outstanding. */
+  const stoppedRefusal = async () => {
+    if (await pid() !== null) return fail('refused. The stopped Runner was started while upkeep was building. Nothing was replaced; rerun when it\'s idle.');
     const status = readJson(join(deps.stateDir, 'status.json'));
     if (alive(status?.pid) && Date.now() - Date.parse(status.updatedAt) < 30_000) {
       return fail(`refused. A Runner process (pid ${status.pid}) is running outside launchd. Stop it, then rerun.`);
@@ -138,7 +140,9 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
     if (!watches || typeof watches !== 'object' || Object.keys(watches).length) {
       return fail('refused. The stopped Runner has open or unreadable watches. Start it, let Waiting for a PR clear, then rerun.');
     }
-  }
+    return null;
+  };
+  if (running === null) { const refusal = await stoppedRefusal(); if (refusal) return refusal; }
 
   rmSync(staged, { recursive: true, force: true });
   try {
@@ -178,6 +182,8 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
     }
   }
 
+  // The build takes a while; a stopped Runner may have been started meanwhile.
+  if (running === null) { const refusal = await stoppedRefusal(); if (refusal) return refusal; }
   const stoppedAt = Date.now();
   rmSync(previous, { recursive: true, force: true });
   try {
@@ -201,7 +207,9 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
     return { ok: true, line: `runner: refreshed and restarted (pid ${running} → ${started}).${reopen}` };
   }
   try { await deps.exec('launchctl', ['bootout', service], 60_000); } catch {}
-  await wait(10, async () => await pid() === null);
+  if (!await wait(10, async () => await pid() === null)) {
+    return fail(`failed. The new Runner didn't confirm it started, and it couldn't be stopped, so both bundles were left in place: the new one at ${app}, the previous one at ${previous}. To roll back, run \`launchctl bootout ${service}\` until \`launchctl print ${service}\` fails, move the new bundle aside, rename the previous one to ${app}, then choose Start Runner. Don't rerun upkeep first; it replaces the previous bundle.`);
+  }
   rmSync(failed, { recursive: true, force: true });
   renameSync(app, failed);
   renameSync(previous, app);
