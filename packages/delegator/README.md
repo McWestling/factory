@@ -227,8 +227,11 @@ the config to have mode `600`. Both installation paths run the copy bundled in
 The default command builds the app before updating the Runner LaunchAgent.
 
 After launch, the Runner checks for completion every 45 seconds, independently of
-new job pickup. When a GitHub pull request appears on the issue in Linear, it adds
-the PR link to the agent session and posts "Opened <PR URL>." This final response
+new job pickup. Cloud Inbox checks attached PRs against GitHub metadata and accepts
+only a PR whose base repository, head repository and exact head branch match the
+recorded launch. Attachment order does not establish ownership; an already-existing
+matching PR is valid for resumed work. The Runner adds the verified PR link to the
+agent session and posts "Opened <PR URL>." This final response
 ends Linear's "Working…" state; it does not mark the issue Done or merge the PR.
 If there is no PR after 24 hours, it replies "No PR after 24 h; check the Orca worktree."
 Completed, errored and stopped sessions are dropped without another reply.
@@ -236,11 +239,19 @@ Completed, errored and stopped sessions are dropped without another reply.
 Open watches are saved in `${XDG_STATE_HOME:-~/.local/state}/factory/watching.json`
 with owner-only permissions and atomic replacement. Keep this file private: it holds
 claim authority, not Linear credentials. The Runner also recovers this machine's
-still-open launched jobs from Cloud Inbox, including launches made before completion
-watching was available. Network failures are retried; an accepted final response is
+still-open launched jobs and their repository/branch evidence from Cloud Inbox.
+Legacy launches without that evidence remain watched but cannot report PR success.
+Network failures are retried; an accepted final response is
 not queued twice. Deploy Cloud Inbox before upgrading the Runner so its recovery
 endpoint is available. PR detection requires Linear's GitHub integration to attach
-the PR to the issue; there is no GitHub CLI fallback.
+the PR to the issue. Cloud Inbox rechecks ownership before linking and accepting an
+"Opened" response. Missing or failed metadata never establishes ownership; the
+existing 24-hour timeout and terminal-session handling still apply.
+
+GitHub metadata reads currently use the unauthenticated public REST API, with no
+GitHub CLI fallback. Private PRs, rate limits and API outages leave watches retryable
+until the timeout. Deploy Cloud Inbox first, then upgrade the Runner to record launch
+evidence; old launches are never backfilled from the issue's current branch.
 
 The menu bar app's contract is `status.json` beside `watching.json`, in
 `${XDG_STATE_HOME:-~/.local/state}/factory/` (a relative `XDG_STATE_HOME` is ignored).

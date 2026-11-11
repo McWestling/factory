@@ -86,6 +86,7 @@ test('a launched job keeps its claim for completion watching after a restart', a
   assert.equal(saved.claimId, claim.claimId);
   assert.equal(saved.issueId, claim.issueId);
   assert.equal(saved.ready, true);
+  assert.deepEqual(saved.launch, { repo: 'owner/repo', branch: goodTask.branchName });
 });
 
 async function watching() {
@@ -330,7 +331,10 @@ function realInbox() {
   const links: string[] = [];
   let sessionStatus = 'active';
   let pullRequests: string[] = [];
-  const linear: typeof fetch = async (_, init) => {
+  const linear: typeof fetch = async (input, init) => {
+    if (String(input).startsWith('https://api.github.com/')) return Response.json({
+      base: { repo: { full_name: 'owner/repo' } }, head: { ref: goodTask.branchName, repo: { full_name: 'owner/repo' } },
+    });
     const { query, variables } = JSON.parse(String(init?.body));
     if (query.includes('agentActivityCreate')) {
       if (variables.input.content.type === 'thought') thoughts.push(variables.input.content.body);
@@ -408,7 +412,7 @@ test('a final response accepted before a lost acknowledgement is not queued twic
   assert.deepEqual(JSON.parse(readFileSync(f.deps.watches, 'utf8')), {});
 });
 
-test('an upgraded Runner recovers an old launched job and posts its PR once', async () => {
+test('an upgraded Runner retains a legacy watch without evidence and never posts a contextual PR', async () => {
   const inbox = realInbox();
   await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
   const old = await inbox.queue.claim();
@@ -422,7 +426,8 @@ test('an upgraded Runner recovers an old launched job and posts its PR once', as
   await resumeWatches(config, f.deps);
   await watchJobs(config, f.deps);
   await inbox.queue.deliver();
-  assert.deepEqual(inbox.responses, ['Opened https://github.com/owner/repo/pull/7.']);
+  assert.deepEqual(inbox.responses, []);
+  assert.ok(JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1']);
   assert.deepEqual(f.argv, []);
 });
 
@@ -870,4 +875,35 @@ test('new registrations are read on the next job without reloading config', asyn
   assert.equal(await handleJob(config, f.deps, claim), 'refused-repo');
   repos = [registeredRepo];
   assert.equal(await handleJob(config, f.deps, claim), 'launched');
+});
+
+test('a PR losing ownership after linking stays watched without a success response', async () => {
+  const f = await watching();
+  f.status.pullRequests = ['https://github.com/owner/repo/pull/7'];
+  const fetch = f.deps.fetch;
+  f.deps.fetch = async (input, init) => {
+    const response = await fetch(input, init);
+    if (String(input).includes('/pull-request')) f.status.pullRequests = [];
+    return response;
+  };
+  await watchJobs(config, f.deps);
+  assert.deepEqual(f.updates, []);
+  assert.ok(JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1']);
+});
+
+test('restart recovery accepts only the matching PR after contextual attachments', async () => {
+  const inbox = realInbox();
+  await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
+  const f = fakes();
+  f.deps.fetch = inbox.fetch;
+  await poll(config, f.deps);
+  // Lose all local watches; Cloud Inbox must recover launch evidence itself.
+  writeFileSync(f.deps.watches, '{}');
+  inbox.prs(['https://github.com/other/repo/pull/9', 'https://github.com/owner/repo/pull/7']);
+  await resumeWatches(config, { ...f.deps });
+  assert.deepEqual(JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1'].launch,
+    { repo: 'owner/repo', branch: goodTask.branchName });
+  await watchJobs(config, { ...f.deps });
+  await inbox.queue.deliver();
+  assert.deepEqual(inbox.responses, ['Opened https://github.com/owner/repo/pull/7.']);
 });
