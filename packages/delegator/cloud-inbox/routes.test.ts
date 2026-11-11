@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { MachineAuth, type Config, type Storage } from './auth.ts';
@@ -52,7 +53,9 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void) {
   // Every other request goes to `answer`, which reads and edits `world`, and is kept in `requests`.
   const world = fakeWorld();
   const requests: { query: string; variables: Record<string, any> }[] = [];
-  const linear = { failNext: 0, refreshFails: false, attempts: 0, hold, world, requests, answer: (q: string, v: Record<string, any>) => answer(world, q, v) };
+  const linear = { github: (_url: string, _init?: RequestInit): Response | Promise<Response> => Response.json({
+    base: { repo: { full_name: 'owner/repo' } }, head: { ref: 'launch-branch', repo: { full_name: 'owner/repo' } },
+  }), failNext: 0, refreshFails: false, attempts: 0, hold, world, requests, answer: (q: string, v: Record<string, any>) => answer(world, q, v) };
   let held: { reached: () => void; released: Promise<void> } | undefined;
   function hold() {
     let release!: () => void;
@@ -72,6 +75,10 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void) {
     if (String(input) === 'https://api.linear.app/oauth/token') {
       if (linear.refreshFails) return new Response(null, { status: 500 });
       return Response.json({ access_token: 'access-refreshed', refresh_token: 'refresh-2', expires_in: 86400, scope: 'read write app:assignable' });
+    }
+    if (String(input).startsWith('https://api.github.com/')) {
+      assert.equal(new Headers(init?.headers).get('Authorization'), null);
+      return linear.github(String(input), init);
     }
     assert.equal(String(input), 'https://api.linear.app/graphql');
     linear.attempts++;
@@ -153,7 +160,7 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void) {
     runner('POST', `/jobs/${sessionId}/${outcome}?claimId=${claimId}`);
   return {
     clock, posts, linear, alarms, rows, send, deliver, flush, rebuild, created, createdPayload, stoppedPayload,
-    runner, claim, claimed, report, data, machines: () => queue,
+    runner, claim, claimed, report, data, sql, storage, machines: () => queue,
   };
 }
 
@@ -1182,29 +1189,41 @@ test('a row cancelled in flight neither deletes nor blocks newer activity', asyn
   assert.deepEqual(h.rows().outbox, []);
 });
 
-test('watch returns the session status and only GitHub pull request links', async () => {
+test('watch returns the session status and only verified GitHub pull request links', async () => {
   const h = await claimedJob();
+  await call(h, 'POST', 'launched', h.claimId, { repo: 'owner/repo', branch: 'launch-branch' });
   h.linear.world.issues['issue-1']!.attachments = [
     'https://example.com/doc', 'https://github.com/owner/repo/issues/3', 'https://github.com/owner/repo/pull/7',
     'https://github.com/owner/repo/pull/8/files', 'https://github.com.evil.example/owner/repo/pull/9',
   ];
-  h.linear.world.sessions['session-1'] = { creatorId: 'user-creator', status: 'complete', links: [] };
+  h.linear.world.sessions['session-1'] = { creatorId: 'user-creator', status: 'active', links: [] };
   const res = await h.runner('GET', `/jobs/session-1/watch?claimId=${h.claimId}&issueId=issue-2`);
   assert.deepEqual(await res.json(), {
-    sessionStatus: 'complete',
+    sessionStatus: 'active',
     pullRequests: ['https://github.com/owner/repo/pull/7', 'https://github.com/owner/repo/pull/8/files'],
   });
   assert.deepEqual(h.linear.requests.map((r) => r.variables), [{ issue: 'issue-1', session: 'session-1' }]);
 });
 
-test("pull-request links the issue's first pull request on the job session, and 409 without one", async () => {
+test("pull-request links the first verified pull request on the job session, and 409 without one", async () => {
   const h = await claimedJob();
   assert.equal((await call(h, 'POST', 'pull-request', h.claimId)).status, 409);
+  await call(h, 'POST', 'launched', h.claimId, { repo: 'owner/repo', branch: 'launch-branch' });
   h.linear.world.issues['issue-1']!.attachments = ['https://github.com/owner/repo/pull/7', 'https://github.com/owner/repo/pull/8'];
   const res = await call(h, 'POST', 'pull-request', h.claimId, { url: 'https://evil.example', session: 'session-2' });
   assert.deepEqual(await res.json(), { url: 'https://github.com/owner/repo/pull/7' });
   assert.deepEqual(h.linear.world.sessions['session-1']!.links, ['https://github.com/owner/repo/pull/7']);
   assert.deepEqual(h.linear.requests.at(-1)!.variables, { session: 'session-1', url: 'https://github.com/owner/repo/pull/7' });
+});
+
+test('legacy launch evidence cannot turn an attached contextual PR into success', async () => {
+  const h = await claimedJob();
+  await call(h, 'POST', 'launched', h.claimId);
+  h.linear.world.issues['issue-1']!.attachments = ['https://github.com/owner/repo/pull/7'];
+  const watched = await call(h, 'GET', 'watch', h.claimId);
+  assert.deepEqual((await watched.json() as { pullRequests: string[] }).pullRequests, []);
+  assert.equal((await call(h, 'POST', 'pull-request', h.claimId)).status, 409);
+  assert.deepEqual(h.linear.world.sessions['session-1']!.links, []);
 });
 
 test('Runner operations never log task content, activity bodies or tokens', async (t) => {
@@ -1217,4 +1236,164 @@ test('Runner operations never log task content, activity bodies or tokens', asyn
   const output = logged.mock.calls.map((c) => String(c.arguments[0])).join('\n');
   assert.doesNotMatch(output, /Task for|secret-body|access-example|bbbbbbbb/);
   assert.match(output, /"event":"task"/);
+});
+
+test('ownership survives restart and ignores contextual attachments before a matching pre-existing PR', async () => {
+  const h = await claimedJob();
+  await call(h, 'POST', 'launched', h.claimId, { repo: 'Owner/Repo', branch: 'launch-branch' });
+  h.rebuild();
+  h.linear.world.issues['issue-1']!.attachments = [
+    'https://github.com/other/repo/pull/1', 'https://github.com/owner/repo/pull/2', 'https://github.com/owner/repo/pull/7',
+  ];
+  h.linear.github = (url) => Response.json({ base: { repo: { full_name: 'owner/repo' } },
+    head: { ref: url.endsWith('/2') ? 'context-branch' : 'launch-branch', repo: { full_name: 'owner/repo' } } });
+  const recovery = await (await h.runner('GET', '/jobs/watching')).json() as { launch: unknown }[];
+  assert.deepEqual(recovery[0]!.launch, { repo: 'Owner/Repo', branch: 'launch-branch' });
+  assert.deepEqual(await (await call(h, 'POST', 'pull-request', h.claimId)).json(), { url: 'https://github.com/owner/repo/pull/7' });
+});
+
+for (const failure of ['missing', 'failed', 'network', 'wrong-repo', 'wrong-branch', 'fork']) {
+  test(`unverifiable ownership (${failure}) is retryable and rechecked before completion`, async () => {
+    const h = await claimedJob();
+    await call(h, 'POST', 'launched', h.claimId, { repo: 'owner/repo', branch: 'launch-branch' });
+    h.linear.world.issues['issue-1']!.attachments = ['https://github.com/owner/repo/pull/7'];
+    const good = h.linear.github;
+    // Verify once, then change the authoritative evidence before linking/completing.
+    assert.equal((await call(h, 'GET', 'watch', h.claimId)).status, 200);
+    h.linear.github = () => {
+      if (failure === 'network') throw new TypeError('unreachable');
+      return failure === 'failed' ? new Response(null, { status: 503 }) : Response.json(
+      failure === 'missing' ? {} : { base: { repo: { full_name: failure === 'wrong-repo' ? 'other/repo' : 'owner/repo' } },
+        head: { ref: failure === 'wrong-branch' ? 'context' : 'launch-branch', repo: { full_name: failure === 'fork' ? 'other/repo' : 'owner/repo' } } });
+    };
+    assert.equal((await call(h, 'POST', 'pull-request', h.claimId)).status, 409);
+    assert.equal((await update(h, h.claimId, 'response', 'Opened https://github.com/owner/repo/pull/7.')).status, 409);
+    assert.equal((await (await h.runner('GET', '/jobs/watching')).json() as unknown[]).length, 1);
+    h.linear.github = good;
+    assert.equal((await call(h, 'POST', 'pull-request', h.claimId)).status, 200);
+  });
+}
+
+for (const interrupt of ['stop', 'replace']) {
+  test(`a ${interrupt} during GitHub verification cannot link or complete the old claim`, async () => {
+    const h = await claimedJob();
+    await call(h, 'POST', 'launched', h.claimId, { repo: 'owner/repo', branch: 'launch-branch' });
+    h.linear.world.issues['issue-1']!.attachments = ['https://github.com/owner/repo/pull/7'];
+    const good = h.linear.github;
+    let release!: () => void;
+    let reached!: () => void;
+    const waiting = new Promise<void>((resolve) => { reached = resolve; });
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    h.linear.github = async (url) => { reached(); await blocked; return good(url); };
+    const linking = call(h, 'POST', 'pull-request', h.claimId);
+    await waiting;
+    if (interrupt === 'stop') await h.send(h.stoppedPayload('session-1'));
+    else await h.created('session-2');
+    release();
+    assert.equal((await linking).status, 409);
+    assert.deepEqual(h.linear.world.sessions['session-1']!.links, []);
+  });
+}
+
+test('terminal sessions reject PR success responses even with matching ownership', async () => {
+  const h = await claimedJob();
+  await call(h, 'POST', 'launched', h.claimId, { repo: 'owner/repo', branch: 'launch-branch' });
+  h.linear.world.issues['issue-1']!.attachments = ['https://github.com/owner/repo/pull/7'];
+  h.linear.world.sessions['session-1'] = { creatorId: 'user-creator', status: 'complete', links: [] };
+  assert.equal((await update(h, h.claimId, 'response', 'Opened https://github.com/owner/repo/pull/7.')).status, 409);
+});
+
+for (const launch of [{ repo: 'owner/repo' }, { repo: 'https://example.com/repo', branch: 'launch' }, { repo: 'owner/repo', branch: '../context' }]) {
+  test(`malformed launch evidence is refused: ${JSON.stringify(launch)}`, async () => {
+    const h = await claimedJob();
+    assert.equal((await call(h, 'POST', 'launched', h.claimId, launch)).status, 400);
+    assert.equal((await call(h, 'POST', 'launched', h.claimId, { repo: 'owner/repo', branch: 'launch-branch' })).status, 204);
+  });
+}
+
+
+test('Worker launch acknowledgement forwards evidence through Machine into durable recovery', async () => {
+  // Only the Cloudflare runtime base class is replaced; all production adapters run.
+  const hooks = registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (specifier === 'cloudflare:workers') return {
+        url: `data:text/javascript,${encodeURIComponent('export class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }')}`,
+        shortCircuit: true,
+      };
+      return nextResolve(specifier, context);
+    },
+  });
+  let worker;
+  try {
+    const path = new URL('./worker.ts', import.meta.url).href;
+    worker = await import(path);
+  } finally { hooks.deregister(); }
+  const h = setup();
+  await h.created('session-1');
+  const kv = new Map();
+  const env = { LINEAR_ORG_ID: config.orgId, ADMIN_SECRET: config.adminSecret, MACHINES: JSON.stringify(config.machines),
+    MACHINE: { idFromName: (name: string) => name, get: () => machine } };
+  const machine = new worker.Machine({ storage: { ...h.storage, sql: h.sql,
+    kv: { get: (key: string) => kv.get(key), put: (key: string, value: unknown) => kv.set(key, value) },
+    setAlarm: async () => {},
+  } }, env);
+  const request = (method: string, path: string, body?: unknown) => worker.default.fetch(
+    new Request(`https://cloud-inbox.example/delegator${path}`, { method,
+      headers: { Authorization: `Bearer ${BEARER}` }, body: body === undefined ? undefined : JSON.stringify(body) }), env);
+  const claim = await (await request('POST', '/jobs/claim')).json();
+  const launch = { repo: 'owner/repo', branch: 'launch-branch' };
+  assert.equal((await request('POST', `/jobs/session-1/launched?claimId=${claim.claimId}`, launch)).status, 204);
+  const recovered = await (await request('GET', '/jobs/watching')).json();
+  assert.deepEqual(recovered[0].launch, launch);
+});
+
+for (const status of ['complete', 'error', 'stopped']) {
+  test(`a ${status} session returns before any GitHub metadata read`, async () => {
+    const h = await claimedJob();
+    await call(h, 'POST', 'launched', h.claimId, { repo: 'owner/repo', branch: 'launch-branch' });
+    h.linear.world.issues['issue-1']!.attachments = ['https://github.com/owner/repo/pull/7'];
+    h.linear.world.sessions['session-1'] = { creatorId: 'user-creator', status, links: [] };
+    let reads = 0;
+    h.linear.github = () => { reads++; throw new Error('GitHub unavailable'); };
+    assert.deepEqual(await (await call(h, 'GET', 'watch', h.claimId)).json(), { sessionStatus: status, pullRequests: [] });
+    assert.equal(reads, 0);
+  });
+}
+
+test('several slow metadata reads share one deadline and leave the watch retryable', async (t) => {
+  const h = await claimedJob();
+  await call(h, 'POST', 'launched', h.claimId, { repo: 'owner/repo', branch: 'launch-branch' });
+  h.linear.world.issues['issue-1']!.attachments = [7, 8, 9, 10].map((n) => `https://github.com/owner/repo/pull/${n}`);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  // Node's native AbortSignal.timeout does not use mock timers.
+  t.mock.method(AbortSignal, 'timeout', (ms: number) => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), ms);
+    return controller.signal;
+  });
+  let firstStarted!: () => void;
+  let secondStarted!: () => void;
+  const first = new Promise<void>((resolve) => { firstStarted = resolve; });
+  const second = new Promise<void>((resolve) => { secondStarted = resolve; });
+  const signals: AbortSignal[] = [];
+  h.linear.github = (_url, init) => new Promise<Response>((resolve, reject) => {
+    const signal = init!.signal!;
+    signals.push(signal);
+    signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    setTimeout(() => resolve(new Response(null, { status: 503 })), 4_000);
+    if (signals.length === 1) firstStarted();
+    else secondStarted();
+  });
+  const watching = call(h, 'GET', 'watch', h.claimId);
+  await first;
+  t.mock.timers.tick(4_000);
+  await second;
+  t.mock.timers.tick(1_000);
+  assert.equal(signals[1]!.aborted, true);
+  assert.deepEqual(await (await watching).json(), { sessionStatus: 'active', pullRequests: [] });
+  assert.equal(signals.length, 2);
+  assert.equal((await (await h.runner('GET', '/jobs/watching')).json() as unknown[]).length, 1);
+  h.linear.github = () => Response.json({ base: { repo: { full_name: 'owner/repo' } },
+    head: { ref: 'launch-branch', repo: { full_name: 'owner/repo' } } });
+  assert.equal((await call(h, 'POST', 'pull-request', h.claimId)).status, 200);
 });

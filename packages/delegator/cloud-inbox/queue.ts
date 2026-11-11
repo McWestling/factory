@@ -2,7 +2,7 @@
 // that machine's Durable Object. Runs under Node for tests, so SQL goes through `Sql`,
 // which both Cloudflare's SqlStorage and a node:sqlite adapter satisfy.
 
-import type { Claim } from '../job.ts';
+import type { Claim, LaunchEvidence } from '../job.ts';
 import type { MachineAuth } from './auth.ts';
 import { log } from './routes.ts';
 
@@ -10,6 +10,8 @@ const GRAPHQL_URL = 'https://api.linear.app/graphql';
 const LEASE_MS = 10 * 60_000;
 const HISTORY_MS = 30 * 24 * 60 * 60_000;
 const POST_TIMEOUT_MS = 10_000;
+// Leave room for Linear reads and linking within the Runner's 30-second deadline.
+const METADATA_TIMEOUT_MS = 5_000;
 const RETRY_MAX_MS = 60 * 60_000;
 /** The longest status update a machine may post, in characters. */
 export const MAX_UPDATE_CHARS = 2000;
@@ -144,6 +146,11 @@ export class MachineQueue {
     if (!sql.exec('PRAGMA table_info(jobs)').toArray().some((column) => column.name === 'claim_id')) {
       sql.exec('ALTER TABLE jobs ADD COLUMN claim_id TEXT');
     }
+    for (const column of ['launch_repo', 'launch_branch']) {
+      if (!sql.exec('PRAGMA table_info(jobs)').toArray().some((row) => row.name === column)) {
+        sql.exec(`ALTER TABLE jobs ADD COLUMN ${column} TEXT`);
+      }
+    }
     sql.exec('CREATE TABLE IF NOT EXISTS seen (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     sql.exec('CREATE TABLE IF NOT EXISTS seen_activities (id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     sql.exec('CREATE TABLE IF NOT EXISTS ended (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
@@ -221,12 +228,12 @@ export class MachineQueue {
    * clearing a failed job's delegate. False unless it's the job's current claim and its
    * lease hasn't expired.
    */
-  async finish(id: string, claimId: string, outcome: Outcome): Promise<boolean> {
+  async finish(id: string, claimId: string, outcome: Outcome, launch?: LaunchEvidence): Promise<boolean> {
     const now = this.#now();
     const [row] = this.#sql.exec(
-      `UPDATE jobs SET state = ?, lease_until = NULL, updated_at = ?
+      `UPDATE jobs SET state = ?, lease_until = NULL, updated_at = ?, launch_repo = ?, launch_branch = ?
        WHERE id = ? AND state = 'claimed' AND claim_id = ? AND lease_until > ? RETURNING issue_id`,
-      outcome, now, id, claimId, now).toArray();
+      outcome, now, launch?.repo ?? null, launch?.branch ?? null, id, claimId, now).toArray();
     if (!row) return false;
     this.#enqueue(id, outcome === 'launched' ? 'launch' : 'release', String(row.issue_id), now);
     this.#wake();
@@ -234,11 +241,12 @@ export class MachineQueue {
   }
 
   /** Recover completion watches after an upgrade or loss of the machine's local state. */
-  async watching(): Promise<(Claim & { at: number })[]> {
-    return this.#sql.exec(`SELECT id, issue_id, claim_id, updated_at FROM jobs WHERE state = 'launched'
+  async watching(): Promise<(Claim & { at: number; launch?: LaunchEvidence })[]> {
+    return this.#sql.exec(`SELECT id, issue_id, claim_id, updated_at, launch_repo, launch_branch FROM jobs WHERE state = 'launched'
       AND claim_id IS NOT NULL AND id NOT IN (SELECT session_id FROM ended)
       AND id NOT IN (SELECT session_id FROM superseded)`).toArray().map((row) => ({
       sessionId: String(row.id), issueId: String(row.issue_id), claimId: String(row.claim_id), at: Number(row.updated_at),
+      ...(row.launch_repo && row.launch_branch ? { launch: { repo: String(row.launch_repo), branch: String(row.launch_branch) } } : {}),
     }));
   }
 
@@ -273,6 +281,14 @@ export class MachineQueue {
    * `response` or `error` ends the session, so later updates are refused.
    */
   async update(id: string, claimId: string, type: UpdateType, body: string): Promise<'queued' | Refusal> {
+    // Older Runners use the same completion message; they must pass ownership checks too.
+    if (type === 'response' && body.startsWith('Opened ')) {
+      const found = await this.watch(id, claimId);
+      if (typeof found === 'string') return found;
+      if (['complete', 'error', 'stopped'].includes(found.sessionStatus)) return 'ended';
+      if (!['pending', 'active', 'awaitingInput', 'stale'].includes(found.sessionStatus)) return 'linear';
+      if (!found.pullRequests.some((url) => body === `Opened ${url}.`)) return 'no-pr';
+    }
     if (!this.#held(id, claimId)) return 'not-claimed';
     // No await from here on, so a stop can't land between the check and the write.
     if (this.#sql.exec('SELECT 1 FROM ended WHERE session_id = ?', id).toArray().length) return 'ended';
@@ -283,21 +299,56 @@ export class MachineQueue {
     return 'queued';
   }
 
-  /** The session's status and the issue's GitHub pull request links, oldest first. */
+  /** Only attachments whose authoritative repository and head match the recorded launch. */
   async watch(id: string, claimId: string): Promise<Watch | Refusal> {
     const issueId = this.#held(id, claimId);
     if (!issueId) return 'not-claimed';
     const data = await this.#read<WatchData>(WATCH, { issue: issueId, session: id });
     const status = data?.agentSession?.status;
-    if (!status || !data?.issue) return 'linear';
+    if (!status) return 'linear';
+    if (['complete', 'error', 'stopped'].includes(status)) {
+      if (this.#held(id, claimId) !== issueId) return 'not-claimed';
+      return { sessionStatus: status, pullRequests: [] };
+    }
+    if (!data?.issue) return 'linear';
     const urls = (data.issue.attachments?.nodes ?? []).map((a) => a.url ?? '');
-    return { sessionStatus: status, pullRequests: urls.filter((url) => PULL_REQUEST.test(url)) };
+    const [launch] = this.#sql.exec('SELECT launch_repo, launch_branch FROM jobs WHERE id = ? AND claim_id = ?', id, claimId).toArray();
+    const pullRequests: string[] = [];
+    if (launch?.launch_repo && launch.launch_branch) {
+      const metadataSignal = AbortSignal.timeout(METADATA_TIMEOUT_MS);
+      for (const url of urls.filter((url) => PULL_REQUEST.test(url))) {
+        if (metadataSignal.aborted) break;
+        const path = new URL(url).pathname.split('/');
+        if (`${path[1]}/${path[2]}`.toLowerCase() !== String(launch.launch_repo).toLowerCase()) continue;
+        try {
+          // shortcut: public metadata only, add GitHub credentials when private PR detection is required.
+          const response = await this.#fetch(`https://api.github.com/repos/${path[1]}/${path[2]}/pulls/${path[4]}`, {
+            headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'factory-delegator' },
+            signal: metadataSignal, redirect: 'error',
+          });
+          if (!response.ok) continue;
+          const pr = await response.json() as { base?: { repo?: { full_name?: string } }; head?: { ref?: string; repo?: { full_name?: string } } };
+          metadataSignal.throwIfAborted();
+          const repo = String(launch.launch_repo).toLowerCase();
+          if (pr.base?.repo?.full_name?.toLowerCase() === repo && pr.head?.repo?.full_name?.toLowerCase() === repo
+            && pr.head?.ref === launch.launch_branch) pullRequests.push(url);
+        } catch { /* Unverifiable ownership stays watched. */ }
+      }
+    }
+    // A stop, replacement or reclaim may have landed during metadata reads.
+    if (this.#held(id, claimId) !== issueId) return 'not-claimed';
+    if (this.#sql.exec('SELECT 1 FROM superseded WHERE session_id = ?', id).toArray().length) return 'not-claimed';
+    if (this.#sql.exec('SELECT 1 FROM ended WHERE session_id = ?', id).toArray().length) {
+      return { sessionStatus: 'complete', pullRequests: [] };
+    }
+    return { sessionStatus: status, pullRequests };
   }
 
-  /** Links the issue's first GitHub pull request on the session as "Pull request". */
+  /** Links the first verified launch pull request on the session as "Pull request". */
   async linkPullRequest(id: string, claimId: string): Promise<{ url: string } | Refusal> {
     const found = await this.watch(id, claimId);
     if (typeof found === 'string') return found;
+    if (['complete', 'error', 'stopped'].includes(found.sessionStatus)) return 'ended';
     const url = found.pullRequests[0];
     if (!url) return 'no-pr';
     const data = await this.#read<{ agentSessionUpdate?: { success?: boolean } }>(LINK, { session: id, url });

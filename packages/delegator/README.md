@@ -133,7 +133,8 @@ Copy [config.example.json](config.example.json) to
 `~/.config/factory-delegator/config.json`, fill it in and `chmod 600` it. The Runner
 refuses to start without it, with a looser mode, or with any key missing or empty;
 nothing has a default except `skill` (`do-implement`). `machine` is the Linear app's
-name, used in messages. Each `models` key is an exact Preferred models name.
+name, used in messages. Each `models` key is a Preferred models name. The required
+`levels` map names a configured model for each of `light`, `standard` and `deep`.
 Repos come from Orca at pickup; an old `repos` config key is ignored and can be removed.
 
 ```sh
@@ -143,9 +144,10 @@ npm run runner
 Every 15 s it claims one job and checks it with what Cloud Inbox returns. Delegation
 by a user on `allowedCreatorIds` is the approval to launch. It drops a job whose issue
 is no longer delegated to the app, and refuses an unlisted or missing creator, an issue
-that fails the [issue format](../../docs/issue-format.md), or a model not in
-its config. It runs `orca open --json`, resolves the repo using `orca repo list --json`,
-then runs the documented
+that fails the [issue format](../../docs/issue-format.md).
+It uses a matched model pin or the level's model, posting a fallback thought when a
+pin is unknown or ambiguous. It runs `orca open --json`, resolves the repo using
+`orca repo list --json`, then runs the documented
 `orca worktree create`, retrying once if Orca's runtime is unavailable, then posts
 "Started …" and reports `launched`; Cloud Inbox sets the status, `Orca` label and
 assignee. Any failure posts one `error` and reports `failed`, which clears the delegate.
@@ -227,8 +229,11 @@ the config to have mode `600`. Both installation paths run the copy bundled in
 The default command builds the app before updating the Runner LaunchAgent.
 
 After launch, the Runner checks for completion every 45 seconds, independently of
-new job pickup. When a GitHub pull request appears on the issue in Linear, it adds
-the PR link to the agent session and posts "Opened <PR URL>." This final response
+new job pickup. Cloud Inbox checks attached PRs against GitHub metadata and accepts
+only a PR whose base repository, head repository and exact head branch match the
+recorded launch. Attachment order does not establish ownership; an already-existing
+matching PR is valid for resumed work. The Runner adds the verified PR link to the
+agent session and posts "Opened <PR URL>." This final response
 ends Linear's "Working…" state; it does not mark the issue Done or merge the PR.
 If there is no PR after 24 hours, it replies "No PR after 24 h; check the Orca worktree."
 Completed, errored and stopped sessions are dropped without another reply.
@@ -236,11 +241,19 @@ Completed, errored and stopped sessions are dropped without another reply.
 Open watches are saved in `${XDG_STATE_HOME:-~/.local/state}/factory/watching.json`
 with owner-only permissions and atomic replacement. Keep this file private: it holds
 claim authority, not Linear credentials. The Runner also recovers this machine's
-still-open launched jobs from Cloud Inbox, including launches made before completion
-watching was available. Network failures are retried; an accepted final response is
+still-open launched jobs and their repository/branch evidence from Cloud Inbox.
+Legacy launches without that evidence remain watched but cannot report PR success.
+Network failures are retried; an accepted final response is
 not queued twice. Deploy Cloud Inbox before upgrading the Runner so its recovery
 endpoint is available. PR detection requires Linear's GitHub integration to attach
-the PR to the issue; there is no GitHub CLI fallback.
+the PR to the issue. Cloud Inbox rechecks ownership before linking and accepting an
+"Opened" response. Missing or failed metadata never establishes ownership; the
+existing 24-hour timeout and terminal-session handling still apply.
+
+GitHub metadata reads currently use the unauthenticated public REST API, with no
+GitHub CLI fallback. Private PRs, rate limits and API outages leave watches retryable
+until the timeout. Deploy Cloud Inbox first, then upgrade the Runner to record launch
+evidence; old launches are never backfilled from the issue's current branch.
 
 The menu bar app's contract is `status.json` beside `watching.json`, in
 `${XDG_STATE_HOME:-~/.local/state}/factory/` (a relative `XDG_STATE_HOME` is ignored).

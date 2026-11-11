@@ -117,7 +117,7 @@ function runnerOn(stateDir: string) {
     drain: join(stateDir, 'drain.json'),
   };
   const config = { inboxUrl: 'https://inbox.example', bearerSecret: 'b', machine: 'm', allowedCreatorIds: ['u'],
-    models: { M: { agent: 'claude', model: 'm' } }, skill: 'do-implement' } as RunnerConfig;
+    models: { M: { agent: 'claude', model: 'm' } }, levels: { light: 'M', standard: 'M', deep: 'M' }, skill: 'do-implement' } as RunnerConfig;
   return { deps, release, claiming: poll(config, deps) };
 }
 
