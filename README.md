@@ -1,6 +1,6 @@
 # Factory
 
-Factory is the thing that makes our things.  It turns ideas into finished software changes, with coding agents doing the building and a human making the decisions.
+Factory is the thing that makes our things.  It turns ideas into finished software changes, with coding agents doing the building and a human making the decisions.
 
 ## What it does
 
@@ -18,7 +18,7 @@ You can use the skills without Delegator. They help with four steps:
 
 Factory connects to and builds upon [Matt Pocock’s skills](https://github.com/mattpocock/skills) for research, design, prototyping and testing.
 
-Each project keeps its settings, such as team names, labels and statuses, in one file, in its own repo or shared from another, so the same skills work in any project. Planning can run from one home repo and read the others' code.
+This repo is McWestling’s own setup and home repo, published openly. It holds the settings file, such as team names, labels and statuses, that every McWestling repo points to, and planning runs from here.
 
 ## Who it's for
 
@@ -26,117 +26,56 @@ People who plan their work in Linear and want coding agents to do more of the bu
 
 ## Learn more
 
-- [Install the skills](#install-the-skills)
-- [Adopt Factory in your own project](#adopting)
+- [Build your own](#build-your-own)
 - [Delegator architecture and Cloud Inbox setup](packages/delegator/README.md#where-it-runs)
 - [McWestling's settings file, a worked example](docs/issue-tracker.md)
 - [License](LICENSE)
 
 ---
 
-## Layout
+## Skills
 
-```text
-.
-├── AGENTS.md              # Rules for agents working in this repo
-├── docs/
-│   └── issue-tracker.md   # McWestling's tracker values; the worked example
-├── packages/
-│   ├── verifier/         # Canonical check core, tests and skill bundle tooling
-│   └── delegator/
-│       ├── cloud-inbox/  # Application: runs on Cloudflare
-│       ├── runner/       # Local process: picks up jobs and launches Orca
-│       ├── wrangler.toml # Cloud Inbox deployment and storage configuration
-│       └── *.ts          # Shared job types, issue parser and tests
-├── skills/
-│   └── <name>/            # One folder per skill: SKILL.md, agents/openai.yaml
-└── tools/
-    └── orca/              # The dev-port convention (script ships with do-factory-setup)
-```
+| Skill           | What it does                                                                         |
+| --------------- | ------------------------------------------------------------------------------------ |
+| `do-post-its`   | Turns photos of Post-its, or dictated notes, into Triage issues                      |
+| `do-triage`     | Works the Triage queue with you and routes each item                                 |
+| `do-refine`     | Charts maps, resolves decision tickets, and slices implementation issues             |
+| `do-implement`  | Takes one implementation issue to a verified draft PR                                |
+| `do-closeout`   | Checks a thread is good to close and finishes the issue's closeout                   |
+| `do-repo-setup` | Points a repo at its home repo's tracker doc, writes its rules, installs dev ports   |
 
-Folders describe what the code belongs to; they do not all represent applications.
-`skills/` holds agent instructions, `packages/` currently holds both the Delegator
-application and shared code, `tools/` holds tool configuration, and `docs/` holds
-contracts. The Runner lives in `packages/delegator/runner/` and runs manually;
-automatic background startup is not built yet.
+Planning (`do-post-its`, `do-triage`, `do-refine`) runs from your home repo’s checkout and reads the other repos’ code. Build work (`do-implement`, `do-closeout`) runs in each product repo.
+
+## Build your own
+
+Factory is built for McWestling, not as a product: there is no support, and anything may change. To stand up the same thing for yourself, fork it and make the fork your home repo.
+
+1. Fork this repo. GitHub forks of a public repo stay public; copy the repo instead if you want yours private.
+2. Replace `docs/issue-tracker.md` with your own values.
+3. Install the skills from your fork, selecting your agents when prompted:
+
+   ```sh
+   npx skills add <you>/factory --skill '*' -g
+   ```
+
+4. Run `/do-repo-setup` in each of your repos. It points the repo’s `AGENTS.md` at your fork’s tracker doc, and offers to install the supporting skills, dev ports and your Tool Stack’s service commands ([example](skills/do-repo-setup/adding-a-repo.example.toml)).
+5. Optionally, [deploy your own Cloud Inbox](packages/delegator/README.md#set-up-your-cloud-inbox) to delegate work from Linear.
+
+You need Git, Node.js 22.20+ with npm, the [GitHub CLI](https://cli.github.com) signed in with `gh auth login`, and [Linear’s MCP server](https://linear.app/docs/mcp) connected to your agent. Python 3.11+ enables service setup; a POSIX shell and `nc` enable dev ports. [Orca](https://onorca.dev/download) is recommended for parallel agent workspaces. Delegator development requires Node.js 26.
 
 ## Software and where it runs
 
-| Component | Runtime | Status and setup |
+| Component | Runtime | Setup |
 | --- | --- | --- |
-| Cloud Inbox | Your Cloudflare account: Worker plus per-machine Durable Object storage and alarms | Implemented. [Deploy and configure it](packages/delegator/README.md#set-up-your-cloud-inbox). |
-| Runner | Your machine, alongside Orca | Available to run manually. [Configure and run it](packages/delegator/README.md#run-the-runner). Automatic background startup is not built yet. |
-| Shared Delegator code | Imported by the components that use it | Job types and issue parser in `packages/delegator/`; no separate process or deployment. |
+| Cloud Inbox | Your Cloudflare account: Worker plus per-machine Durable Object storage and alarms | [Deploy and configure it](packages/delegator/README.md#set-up-your-cloud-inbox). |
+| Runner | Your Mac, alongside Orca, as a LaunchAgent with a menu bar app | [Install and control it](packages/delegator/README.md#install-and-control-the-runner). |
 
-Linear sends delegations to Cloud Inbox. The Runner claims them over HTTPS and
-launches Orca on your machine. Cloud Inbox can queue work while that machine sleeps.
-See the [Delegator runtime and setup guide](packages/delegator/README.md#where-it-runs)
-for credentials, testing, deployment and day-to-day operation.
+Linear sends delegations to Cloud Inbox. The Runner claims them over HTTPS and launches Orca on your machine. Cloud Inbox can queue work while that machine sleeps.
 
-## Skills
+## Upkeep
 
-| Skill              | What it does                                                                        |
-| ------------------ | ----------------------------------------------------------------------------------- |
-| `do-post-its`      | Turns photos of Post-its, or dictated notes, into Triage issues                     |
-| `do-triage`        | Works the Triage queue with you and routes each item                                |
-| `do-refine`        | Charts maps, resolves decision tickets, and slices implementation issues            |
-| `do-implement`     | Takes one implementation issue to a verified draft PR                               |
-| `do-closeout`      | Checks a thread is good to close and finishes the issue's closeout                  |
-| `do-factory-setup` | Writes a repo's tracker doc and scripts rule, runs setup blocks, installs dev ports |
-
-## Install the skills
-
-```sh
-npx skills add mcwestling/factory --skill '*' -g
-```
-
-Run this in your terminal and select your agents when prompted. Install all the skills; they work together.
-
-You need Git, Node.js 22.20+ with npm, the [GitHub CLI](https://cli.github.com), and [Linear’s MCP server](https://linear.app/docs/mcp) connected to your agent. Run `gh auth login` to sign in to GitHub. Python 3.11+ enables service setup; a POSIX shell and `nc` enable dev ports. [Orca](https://onorca.dev/download) is recommended for parallel agent workspaces.
-
-Delegator development requires Node.js 26.
-
-After merging Factory changes, one upkeep command refreshes installed skills and
-safely updates an existing Runner. Run it with Node.js 26 from a clean checkout of `main`:
-
-```sh
-npm run upkeep
-```
-
-See [what it checks before restarting the Runner](packages/delegator/README.md#update-after-merging-factory-changes).
-To restart the Runner's menu bar app, for example after an update, run `npm run menubar`.
-
-Delegator is a separate, optional service. It requires deploying Cloud Inbox to your
-own Cloudflare account; installing the skills does not deploy it. Cloud Inbox and
-the manually run Runner are implemented; pairing and automatic background startup
-are not built yet. See [where Delegator runs and how to set up Cloud Inbox](packages/delegator/README.md#where-it-runs)
-and [how to configure and run the Runner](packages/delegator/README.md#run-the-runner).
-
-## Adopting
-
-After [installing the skills](#install-the-skills), run this in your agent, in each repo:
-
-```text
-/do-factory-setup
-```
-
-Setup writes the repo’s tracker settings, links them from `AGENTS.md`, and offers to install missing supporting skills. It prefers [Matt’s plugin](https://github.com/mattpocock/skills#installation-30-second-setup) where supported, with a skills-CLI fallback. Both routes supply the full upstream set, including sibling dependencies.
-
-Use one upstream installation form per agent. The CLI’s shared store can expose skills to other agents too, so resolve duplication with plugin installs before proceeding. If newly installed skills aren’t discovered, start a fresh agent session and rerun setup; setup remains pending until they’re usable.
-
-Setup also adds [dev ports](tools/orca/README.md) for repos with a dev server, fills missing README intro sections, and offers approved service commands from your Tool Stack’s Linear pages. To define those commands, start with the [Adding a repo example](skills/do-factory-setup/adding-a-repo.example.toml).
-
-For manual adoption, copy [McWestling’s tracker settings](docs/issue-tracker.md) and replace the values. See the [setup skill](skills/do-factory-setup/SKILL.md) for the full procedure.
-
-## Verifier development
-
-[Verifier source and tests](packages/verifier/README.md) live in `packages/verifier`.
-The setup skill carries a generated, self-contained delivery bundle; regenerate it
-with `node packages/verifier/bundle.ts` and verify with
-`node packages/verifier/bundle.ts --check`. Run core and isolated delivery tests
-with `python3 packages/verifier/factory-verifier.test.py` (Python 3.11+), and bundle
-tests with `node --test packages/verifier/bundle.test.ts`. The hosted workflow ships in that bundle; full setup installation remains planned.
+After merging Factory changes, run `npm run upkeep` with Node.js 26 from a clean checkout of `main`. It refreshes the installed skills and safely updates an existing Runner; see [what it checks](packages/delegator/README.md#update-after-merging-factory-changes). It currently reads McWestling’s repo, so a fork can’t use it yet. To restart the Runner’s menu bar app, run `npm run menubar`.
 
 ## Contributing
 
-Contributions are accepted under this repo's [MIT license](LICENSE) (inbound=outbound).
+Contributions are accepted under this repo's [MIT license](LICENSE) (inbound=outbound). [Verifier](packages/verifier/README.md) and [Delegator](packages/delegator/README.md) development notes live in their package READMEs, and [`AGENTS.md`](AGENTS.md) says where things go.

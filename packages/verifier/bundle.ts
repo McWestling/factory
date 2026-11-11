@@ -4,7 +4,7 @@ if (process.argv.length > 3 || (process.argv[2] && process.argv[2] !== '--check'
   console.error('Usage: node packages/verifier/bundle.ts [--check]');
   process.exit(2);
 }
-const bundle = new URL('../../skills/do-factory-setup/verifier/', import.meta.url);
+const bundle = new URL('../../skills/do-repo-setup/verifier/', import.meta.url);
 for (const name of ['factory-verifier', 'factory-verifier.yml', 'autopilot.mjs', 'autopilot.yml']) {
   const source = new URL(name, import.meta.url);
   const target = new URL(name, bundle);

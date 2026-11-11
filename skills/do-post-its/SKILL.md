@@ -19,7 +19,7 @@ The procedure lives here; the workspace values live in the repo's tracker doc. F
 - **Labels:** the Product labels, and the Bug label that marks a defect; a Triage item without it is a muse.
 - **Repo routing:** which product maps to which repo, to tell which product the repo you're in belongs to. When it isn't any product's repo, ask which product the notes belong to instead of inferring it.
 
-Use only what the doc says. Where a value you need is missing (no doc, no team, no Product labels), ask the user, use the answer for this run, and offer to add it to the doc or to run `do-factory-setup`.
+Use only what the doc says. Where a value you need is missing (no doc, no team, no Product labels), ask the user, use the answer for this run, and offer to add it to the doc or to run `do-repo-setup`.
 
 Reach the tracker only through the access the doc's **Tracker** section names. If that access is unavailable or unauthorized, stop and say so; don't fall back to a browser, the desktop app or the raw API.
 

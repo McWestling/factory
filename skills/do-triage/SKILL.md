@@ -14,7 +14,7 @@ This skill is one of the factory's `do-` skills and expects its siblings to be i
 
 This skill holds the procedure. The values (team, statuses, labels, templates, initiatives, routing, dispatch targets, models, views, comment shape) live in the repo's **tracker doc**. Find it through `AGENTS.md`, which names either a path in this repo or a doc in another repo (like `docs/issue-tracker.md` in `owner/name`); read another repo's doc from its checkout, found through `orca repo list --json`. If `AGENTS.md` names none, use `docs/issue-tracker.md`. Read it before you touch the tracker. Where this file says "per X", X is a heading in that doc.
 
-If a value you need is missing, ask the user, use their answer, then offer to add it to the tracker doc or to run `do-factory-setup`.
+If a value you need is missing, ask the user, use their answer, then offer to add it to the tracker doc or to run `do-repo-setup`.
 
 Read and write the tracker only through the access the tracker doc's **Tracker** heading allows. If that access is unavailable or unauthorized, stop and say so; don't fall back to a browser, desktop app or raw API.
 

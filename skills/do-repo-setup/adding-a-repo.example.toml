@@ -2,7 +2,7 @@
 #
 # Put a block like this on a service's own page, a Linear document linked
 # directly from your Tool Stack document: the first ```toml code block under
-# a heading that reads exactly "## Adding a repo". do-factory-setup finds it,
+# a heading that reads exactly "## Adding a repo". do-repo-setup finds it,
 # asks before running it, and runs it with adopt.py beside this file.
 #
 # Commands run through the shell from the repo root, with two variables added:

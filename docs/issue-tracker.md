@@ -1,8 +1,8 @@
 # Issue tracker
 
-This is McWestling's config; to adopt, copy it and replace the values.
+This is McWestling's config. Other repos point to it from their `AGENTS.md` instead of keeping a copy.
 
-**Setup version:** 2026-11-11
+**Setup version:** 2026-11-11.2
 
 The skills hold the procedure. This file holds only the values they look up, under the headings below. Keep the headings stable: skills cite them by name.
 

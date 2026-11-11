@@ -340,7 +340,7 @@ class FactoryVerifierTests(unittest.TestCase):
 
     def test_isolated_skill_delivery_and_repeatable_update(self):
         installed = self.root.parent / "installed-skill"
-        shutil.copytree(SCRIPT.parents[2] / "skills/do-factory-setup", installed)
+        shutil.copytree(SCRIPT.parents[2] / "skills/do-repo-setup", installed)
         self.assertFalse((installed.parent / "packages").exists())
         bundled = installed / "verifier/factory-verifier"
         delivered = self.root / "scripts/factory-verifier"

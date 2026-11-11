@@ -1,5 +1,5 @@
 #!/bin/sh
-# Self-check for dev-port: sh skills/do-factory-setup/dev-port.test.sh
+# Self-check for dev-port: sh skills/do-repo-setup/dev-port.test.sh
 # Uses a temporary XDG_STATE_HOME and temporary git repos. Assumes nothing
 # else on this machine is listening on 55000-55020.
 set -eu

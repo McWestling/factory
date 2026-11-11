@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Self-check for adopt.py: python3 skills/do-factory-setup/adopt.test.py
+"""Self-check for adopt.py: python3 skills/do-repo-setup/adopt.test.py
 Uses a temporary git repo with a fake origin remote."""
 
 import atexit
