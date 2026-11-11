@@ -309,7 +309,7 @@ changes git state.
   before anything is replaced. A Runner that doesn't come back is swapped for the
   previous bundle and restarted.
 - **A stopped Runner** is refreshed and stays stopped. Pause, **Start at login** and
-  config are never touched. Quit and reopen the menu bar app to load its new version.
+  config are never touched. Run `npm run menubar` from the repo root to restart the menu bar app on its new version.
 - **A Runner from before draining** is refused, with steps to pause, stop and rerun.
 
 Test it with `node --test upkeep.test.ts` from `packages/delegator`.
