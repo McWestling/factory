@@ -10,9 +10,9 @@ This skill is one of the factory's `do-` skills and expects its siblings to be i
 
 ## Workspace values
 
-This skill holds the procedure. The tracker values (statuses, labels, repo routing, dispatch targets, comment shape, PR rules) live in the repo's **tracker doc**. Find it through `AGENTS.md`; if `AGENTS.md` doesn't name one, use `docs/issue-tracker.md`. Read it before you touch the tracker. Where this file says "per X", X is a heading in that doc.
+This skill holds the procedure. The tracker values (statuses, labels, repo routing, dispatch targets, comment shape, PR rules) live in the repo's **tracker doc**. Find it through `AGENTS.md`, which names either a path in this repo or a doc in another repo (like `docs/issue-tracker.md` in `owner/name`); read another repo's doc from its checkout, found through `orca repo list --json`. If `AGENTS.md` names none, use `docs/issue-tracker.md`. Read it before you touch the tracker. Where this file says "per X", X is a heading in that doc.
 
-Repo commands (typecheck, tests, the full check or preflight, how to run the app and sign in, the PR template) live in the repo's `AGENTS.md` and the docs it links. So do the repo's own rules for the code: playbooks the change must follow, files never to edit.
+Repo commands (typecheck, tests, the full check or preflight, how to run the app and sign in, the PR template) live in the repo's `AGENTS.md` and the docs it links. So do its review rule (whether it has a PR autopilot) and the repo's own rules for the code: playbooks the change must follow, files never to edit.
 
 If a value or command you need is missing, ask the user, use their answer, then offer to add it to the tracker doc or `AGENTS.md`, or to run `do-factory-setup`.
 
@@ -54,7 +54,7 @@ A small, reversible call inside the brief's requirements is yours to make. Note 
 
 ## 4. Build
 
-1. **Branch.** If the current branch was made by the host for this issue and its name already contains the issue id, in any case (for example a Runner's `<prefix>/abc-123-…`), keep it: don't rename it or switch away. The prefix shows whether a delegated agent or a person did the work. Otherwise name it per **Pull requests**; if the doc is silent, use the branch name the tracker gives the issue. If that branch already exists, locally or on `origin`, switch to it. Otherwise, if the current branch is a fresh one the host made for this workspace (no commits beyond the default branch), rename it (`git branch -m <name>`); orchestrators often create their own prefixed branches. Otherwise create the branch from the latest default branch. Never rename the default branch, or a branch holding another issue's commits. A host that must choose its own branch name (for example a Cursor Cloud agent) keeps it. If the repo's PR autopilot needs a label for that branch, per **Pull requests**, apply it when you open the PR.
+1. **Branch.** If the current branch was made by the host for this issue and its name already contains the issue id, in any case (for example a Runner's `<prefix>/abc-123-…`), keep it: don't rename it or switch away. The prefix shows whether a delegated agent or a person did the work. Otherwise name it per **Pull requests**; if the doc is silent, use the branch name the tracker gives the issue. If that branch already exists, locally or on `origin`, switch to it. Otherwise, if the current branch is a fresh one the host made for this workspace (no commits beyond the default branch), rename it (`git branch -m <name>`); orchestrators often create their own prefixed branches. Otherwise create the branch from the latest default branch. Never rename the default branch, or a branch holding another issue's commits. A host that must choose its own branch name (for example a Cursor Cloud agent) keeps it. If the repo's PR autopilot needs a label for that branch, per its `AGENTS.md`, apply it when you open the PR.
 2. **Test first.** Where the change has a testable seam:
    - **Agree the seam.** In a delegated run, the accepted brief's seams count as agreed; if none are named, pick an existing public seam consistent with the brief and record the choice and reason under **Questions along the way**. In an interactive run, confirm seams with the user before writing tests.
    - **Load TDD.** Select advertised `mattpocock-skills:tdd`, otherwise bare `tdd`. Use the Skill tool if present; otherwise read the advertised `SKILL.md`, then search installed-skill locations if needed. Stop only if the skill can't be located or read: report what was tried and failed, release per step 3, and name `do-factory-setup` as the next step.
@@ -89,7 +89,7 @@ Make a careful pass by hand over the diff against the default branch. Fix what i
 
 Wait for the checks with the host's PR monitor if it has one, otherwise `gh pr checks <number> --watch`.
 
-- **PR autopilot** (per **Pull requests**): it posts a verdict for each head commit. On "ready", stop and report the PR and its verdict. On "needs a fix", follow its hand-back steps in order.
+- **PR autopilot** (per the repo's review rule in `AGENTS.md`): it posts a verdict for each head commit. On "ready", stop and report the PR and its verdict. On "needs a fix", follow its hand-back steps in order.
 - **No PR autopilot:** when every check passes, stop and report the PR. The maintainer reviews, marks it ready and merges.
 - **A failure:** reproduce it locally, fix its cause, then repeat step 7 and push. If the PR's Summary, Evidence or Merge Danger no longer match the change, update them.
 - After **three** fix rounds that still fail, stop. Comment on the PR and the issue with what is still failing and what you tried.

@@ -2,7 +2,7 @@
 
 This is McWestling's config; to adopt, copy it and replace the values.
 
-**Setup version:** 2026-11-10
+**Setup version:** 2026-11-11
 
 The skills hold the procedure. This file holds only the values they look up, under the headings below. Keep the headings stable: skills cite them by name.
 
@@ -148,4 +148,4 @@ Datelines in use:
 
 - **Title:** a plain imperative subject ending with the issue id in parentheses, like `Fix the login redirect bug (DO-<number>)`.
 - **Branch:** the issue's Linear branch name (`gitBranchName` from `get_issue`), or the branch the host already made for the issue when its name contains the issue id. Linear builds the prefix for whoever asks, and the prefix shows whether a delegated agent or a person did the work, so keep the host's branch rather than renaming it. Never invent or prefix one yourself.
-- **Review:** no PR autopilot in this repo. PRs open as drafts; the maintainer marks them ready and merges.
+- **Review:** each repo's `AGENTS.md` holds its own review rule: whether it has a PR autopilot, and who marks PRs ready and merges.

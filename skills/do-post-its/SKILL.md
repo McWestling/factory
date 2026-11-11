@@ -11,13 +11,13 @@ This skill is one of the factory's `do-` skills and expects its siblings to be i
 
 ## The tracker doc
 
-The procedure lives here; the workspace values live in the repo's tracker doc. Find it through the repo's `AGENTS.md`; if `AGENTS.md` doesn't name one, use `docs/issue-tracker.md`. Read it before filing. This skill uses these headings:
+The procedure lives here; the workspace values live in the repo's tracker doc. Find it through `AGENTS.md`, which names either a path in this repo or a doc in another repo (like `docs/issue-tracker.md` in `owner/name`); read another repo's doc from its checkout, found through `orca repo list --json`. If `AGENTS.md` names none, use `docs/issue-tracker.md`. Read it before filing. This skill uses these headings:
 
 - **Tracker:** the tool, and how to reach it.
 - **Team:** the team the muses go to.
 - **Issue statuses:** the names for Triage and Backlog.
 - **Labels:** the Product labels, and the Bug label that marks a defect; a Triage item without it is a muse.
-- **Repo routing:** which product maps to which repo, to tell which product the repo you're in belongs to.
+- **Repo routing:** which product maps to which repo, to tell which product the repo you're in belongs to. When it isn't any product's repo, ask which product the notes belong to instead of inferring it.
 
 Use only what the doc says. Where a value you need is missing (no doc, no team, no Product labels), ask the user, use the answer for this run, and offer to add it to the doc or to run `do-factory-setup`.
 
@@ -33,7 +33,7 @@ Put ❓ on anything you can't read or can't place: an illegible word, an unknown
 
 ### 2. Ground it
 
-Take a short, bounded look at the codebase to narrow down what each note could mean: grep for quoted copy or labels, list the pages or routes a note names, check whether something the note implies already exists. The point is sharper questions and one line of context per issue. Don't read deeply and don't propose fixes.
+Take a short, bounded look at the product's codebase (another repo's checkout is in `orca repo list --json`; read it, never edit it) to narrow down what each note could mean: grep for quoted copy or labels, list the pages or routes a note names, check whether something the note implies already exists. The point is sharper questions and one line of context per issue. Don't read deeply and don't propose fixes.
 
 ### 3. Show your reading, then ask
 

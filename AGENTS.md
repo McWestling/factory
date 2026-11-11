@@ -6,6 +6,14 @@ Factory holds workflow skills and, later, the code, contracts and configs behind
 
 The workspace values the skills read are in [`docs/issue-tracker.md`](docs/issue-tracker.md).
 
+## Planning sessions
+
+Planning sessions (`do-post-its`, `do-triage`, `do-refine`) can run here for any repo the tracker routes to. Find another repo's checkout through `orca repo list --json`, matching its remote, and read its `AGENTS.md` before surveying its code. Read other checkouts only; never edit them.
+
+## Pull requests
+
+- **Review:** no PR autopilot in this repo. PRs open as drafts; the maintainer marks them ready and merges.
+
 ## Tool stack
 
 The tool stack and its defaults live in Linear. [`docs/issue-tracker.md`](docs/issue-tracker.md#tool-stack) links the document.

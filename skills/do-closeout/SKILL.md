@@ -10,7 +10,7 @@ This skill is one of the factory's `do-` skills and expects its siblings to be i
 
 ## Workspace values
 
-This skill holds the procedure. The tracker values (statuses, views, repo routing, comment shape, PR rules) live in the repo's **tracker doc**. Find it through `AGENTS.md`; if `AGENTS.md` doesn't name one, use `docs/issue-tracker.md`. Read it before you touch the tracker. Where this file says "per X", X is a heading in that doc.
+This skill holds the procedure. The tracker values (statuses, views, repo routing, comment shape, PR rules) live in the repo's **tracker doc**. Find it through `AGENTS.md`, which names either a path in this repo or a doc in another repo (like `docs/issue-tracker.md` in `owner/name`); read another repo's doc from its checkout, found through `orca repo list --json`. If `AGENTS.md` names none, use `docs/issue-tracker.md`. Read it before you touch the tracker. Where this file says "per X", X is a heading in that doc.
 
 Read and write the tracker only through the access the tracker doc's **Tracker** heading allows. If that access is unavailable, say so, skip the tracker check and mark it open in the verdict.
 
