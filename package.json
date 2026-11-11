@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "scripts": {
+    "upkeep": "node packages/delegator/upkeep.ts"
+  }
+}

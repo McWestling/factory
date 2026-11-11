@@ -278,7 +278,7 @@ and toggles this flag; it needs no Cloud Inbox access.
 From a clean checkout of `main` that matches GitHub, run:
 
 ```sh
-node packages/delegator/upkeep.ts
+npm run upkeep
 ```
 
 It refreshes the Factory skills you installed, then updates an existing Runner app

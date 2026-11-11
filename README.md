@@ -100,7 +100,7 @@ After merging Factory changes, one upkeep command refreshes installed skills and
 safely updates an existing Runner. Run it with Node.js 26 from a clean checkout of `main`:
 
 ```sh
-node packages/delegator/upkeep.ts
+npm run upkeep
 ```
 
 See [what it checks before restarting the Runner](packages/delegator/README.md#update-after-merging-factory-changes).
