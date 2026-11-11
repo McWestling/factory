@@ -3,6 +3,7 @@
 // /webhook and the Runner API are handled in routes.ts.
 
 import { DurableObject } from 'cloudflare:workers';
+import type { LaunchEvidence } from '../job.ts';
 import { isAdmin, MachineAuth, readConfig, type InstallResult } from './auth.ts';
 import { MachineQueue, type AgentEvent, type Outcome, type UpdateType } from './queue.ts';
 import { BASE_PATH, handleRunner, handleWebhook, log, text, underBasePath, type Machines } from './routes.ts';
@@ -39,7 +40,7 @@ export default {
       return {
         webhook: (event) => stub.webhook(name, event),
         claim: () => stub.claim(name),
-        finish: (id, claimId, outcome) => stub.finish(name, id, claimId, outcome),
+        finish: (id, claimId, outcome, launch) => stub.finish(name, id, claimId, outcome, launch),
         task: (id, claimId) => stub.task(name, id, claimId),
         update: (id, claimId, type, body) => stub.update(name, id, claimId, type, body),
         watch: (id, claimId) => stub.watch(name, id, claimId),
@@ -138,8 +139,8 @@ export class Machine extends DurableObject<Env> {
     return this.#queueFor(machine).claim();
   }
 
-  finish(machine: string, id: string, claimId: string, outcome: Outcome) {
-    return this.#queueFor(machine).finish(id, claimId, outcome);
+  finish(machine: string, id: string, claimId: string, outcome: Outcome, launch?: LaunchEvidence) {
+    return this.#queueFor(machine).finish(id, claimId, outcome, launch);
   }
 
   task(machine: string, id: string, claimId: string) {
