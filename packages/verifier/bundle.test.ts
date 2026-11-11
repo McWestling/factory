@@ -15,7 +15,7 @@ test('bundle copies executable source and rejects stale content or permissions',
     assert.notEqual(run('--check').status, 0);
     assert.equal(run().status, 0);
     assert.equal(run('--check').status, 0);
-    const bundle = join(root, 'skills/do-factory-setup/verifier/factory-verifier');
+    const bundle = join(root, 'skills/do-repo-setup/verifier/factory-verifier');
     writeFileSync(bundle, 'stale');
     assert.notEqual(run('--check').status, 0);
     assert.equal(run().status, 0);
@@ -24,7 +24,7 @@ test('bundle copies executable source and rejects stale content or permissions',
     assert.equal(run().status, 0);
     assert.equal(run('--check').status, 0);
     assert.deepEqual(readFileSync(bundle), readFileSync(new URL('factory-verifier', source)));
-    const workflow = join(root, 'skills/do-factory-setup/verifier/factory-verifier.yml');
+    const workflow = join(root, 'skills/do-repo-setup/verifier/factory-verifier.yml');
     assert.deepEqual(readFileSync(workflow), readFileSync(new URL('factory-verifier.yml', source)));
     writeFileSync(workflow, 'stale');
     assert.notEqual(run('--check').status, 0);

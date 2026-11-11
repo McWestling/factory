@@ -60,13 +60,17 @@ _Avoid_: path filters, watch paths
 
 ## Setup
 
+**Home repo**:
+The repo that holds your tracker doc and where planning sessions run; every other repo's `AGENTS.md` points to it. For McWestling it is this repo; someone building their own uses their fork.
+_Avoid_: hub repo, main repo
+
 **Factory-run block**:
 The fenced `factory-run` block in an implementation issue's **Next** section. It names the planned target, exact Preferred models name and human-readable reason; see [`docs/issue-format.md`](docs/issue-format.md).
 
 **Machine check**:
-The check `do-factory-setup` runs first on the computer it's on: it stops if `gh` isn't signed in, and mentions a missing Orca when it finishes.
+The check `do-repo-setup` runs first on the computer it's on: it stops if `gh` isn't signed in, and mentions a missing Orca when it finishes.
 _Avoid_: preflight, which is Factory Verifier's term
 
 **Adding a repo block**:
-The first `toml` code block under an exact `## Adding a repo` heading on a service page linked from a workspace's Tool Stack document. It lists the commands and maintainer steps that set a repo up for that service; `do-factory-setup` runs it through `adopt.py`. Format: `skills/do-factory-setup/adding-a-repo.example.toml`.
+The first `toml` code block under an exact `## Adding a repo` heading on a service page linked from a workspace's Tool Stack document. It lists the commands and maintainer steps that set a repo up for that service; `do-repo-setup` runs it through `adopt.py`. Format: `skills/do-repo-setup/adding-a-repo.example.toml`.
 _Avoid_: setup script, onboarding steps

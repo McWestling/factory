@@ -12,7 +12,7 @@ Every map points at a **destination**: a feature to ship, a decision to lock in,
 
 ## Supporting skills
 
-For upstream skill names below (`grilling`, `domain-modeling`, `research`, `prototype`), use the advertised `mattpocock-skills:<name>` when available, otherwise the advertised bare `<name>` from the skills CLI. Invoke through the agent's skill mechanism (the Skill tool where available, otherwise read the advertised SKILL.md). Pass the resolved name and this rule to research subagents. If neither form is available, stop and ask the user to run `do-factory-setup`; do not substitute upstream `wayfinder` for this workflow.
+For upstream skill names below (`grilling`, `domain-modeling`, `research`, `prototype`), use the advertised `mattpocock-skills:<name>` when available, otherwise the advertised bare `<name>` from the skills CLI. Invoke through the agent's skill mechanism (the Skill tool where available, otherwise read the advertised SKILL.md). Pass the resolved name and this rule to research subagents. If neither form is available, stop and ask the user to run `do-repo-setup`; do not substitute upstream `wayfinder` for this workflow.
 
 ## Rules for every session
 
@@ -26,7 +26,7 @@ For upstream skill names below (`grilling`, `domain-modeling`, `research`, `prot
 
 This skill holds the procedure. The values (team, statuses, labels, templates, routing, models, views, comment shape) live in the repo's **tracker doc**. Find it through `AGENTS.md`, which names either a path in this repo or a doc in another repo (like `docs/issue-tracker.md` in `owner/name`); read another repo's doc from its checkout, found through `orca repo list --json`. If `AGENTS.md` names none, use `docs/issue-tracker.md`. Read it before you touch the tracker. Where this file says "per X", X is a heading in that doc.
 
-If a value you need is missing, ask the user, use their answer, then offer to add it to the tracker doc or to run `do-factory-setup`.
+If a value you need is missing, ask the user, use their answer, then offer to add it to the tracker doc or to run `do-repo-setup`.
 
 Read and write the tracker only through the access the tracker doc's **Tracker** heading allows. If that access is unavailable or unauthorized, stop and say so; don't fall back to a browser, desktop app or raw API.
 

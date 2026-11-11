@@ -4,7 +4,7 @@ Verifier selects and runs checks declared in `.factory/verifier.toml`. The core
 requires Python 3.11+ and Git and uses only the Python standard library.
 
 Edit `factory-verifier` and its tests here. The setup skill carries a generated
-bundle at `skills/do-factory-setup/verifier/` so an installed skill
+bundle at `skills/do-repo-setup/verifier/` so an installed skill
 can deliver the executable and hosted workflow without a Factory checkout. Never
 edit those generated copies.
 

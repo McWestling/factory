@@ -1,0 +1,5 @@
+interface:
+  display_name: "Do Repo Setup"
+  short_description: "Point a repo at its home tracker doc, or write one, and install dev ports"
+policy:
+  allow_implicit_invocation: false

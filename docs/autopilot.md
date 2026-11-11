@@ -8,7 +8,7 @@ and tells the agent, through the Linear ticket, what to fix.
 ## Turning it on
 
 Nothing installs autopilot for you yet. The setup skill ships the two files in
-`skills/do-factory-setup/verifier/`; copy them by hand.
+`skills/do-repo-setup/verifier/`; copy them by hand.
 
 1. Install [Factory Verifier](../packages/verifier/README.md) in the repo first.
    Autopilot waits on its `verifier` check.
