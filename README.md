@@ -96,6 +96,15 @@ You need Git, Node.js 22.20+ with npm, the [GitHub CLI](https://cli.github.com),
 
 Delegator development requires Node.js 26.
 
+After merging Factory changes, one upkeep command refreshes installed skills and
+safely updates an existing Runner. Run it with Node.js 26 from a clean checkout of `main`:
+
+```sh
+npm run upkeep
+```
+
+See [what it checks before restarting the Runner](packages/delegator/README.md#update-after-merging-factory-changes).
+
 Delegator is a separate, optional service. It requires deploying Cloud Inbox to your
 own Cloudflare account; installing the skills does not deploy it. Cloud Inbox and
 the manually run Runner are implemented; pairing and automatic background startup

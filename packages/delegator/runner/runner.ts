@@ -49,6 +49,8 @@ export type Deps = {
   watches: string;
   status: string;
   paused: string;
+  /** Upkeep's drain request; the acknowledgment is written beside it as `<drain>.ack`. */
+  drain?: string;
   now?: () => number;
 };
 
@@ -102,7 +104,40 @@ function writeStatus(deps: Deps) {
 
 export function startStatusHeartbeat(deps: Deps) {
   writeStatus(deps);
-  return setInterval(() => writeStatus(deps), 10_000);
+  return setInterval(() => { writeStatus(deps); acknowledgeDrain(deps); }, 10_000);
+}
+
+/** Upkeep reads this from the installed bundle to know the Runner can drain. */
+export const DRAIN_PROTOCOL = 1;
+const active = new WeakMap<Deps, number>();
+
+/** Counts claim and watch work, so a drain is acknowledged only between operations. */
+async function busy<T>(deps: Deps, work: () => Promise<T>): Promise<T> {
+  active.set(deps, (active.get(deps) ?? 0) + 1);
+  try { return await work(); }
+  finally { active.set(deps, active.get(deps)! - 1); acknowledgeDrain(deps); }
+}
+
+/** An unexpired upkeep request's nonce. While it stands, no claim or watch check starts. */
+function drainRequest(deps: Deps): string | null {
+  if (!deps.drain) return null;
+  try {
+    const value: unknown = JSON.parse(readFileSync(deps.drain, 'utf8'));
+    return isObject(value) && isText(value.nonce) && typeof value.until === 'number'
+      && value.until > (deps.now ?? Date.now)() ? value.nonce : null;
+  } catch { return null; }
+}
+
+/** Acknowledges a drain only with nothing in flight: no claim, job, watch check or open watch. */
+export function acknowledgeDrain(deps: Deps) {
+  const nonce = drainRequest(deps);
+  if (!nonce || active.get(deps) || status(deps).current) return;
+  try { if (Object.keys(readWatches(deps)).length) return; } catch { return; }
+  try {
+    rmSync(`${deps.drain}.ack.tmp`, { force: true });
+    writeFileSync(`${deps.drain}.ack.tmp`, JSON.stringify({ nonce, pid: process.pid }), { mode: 0o600, flag: 'wx' });
+    renameSync(`${deps.drain}.ack.tmp`, `${deps.drain}.ack`);
+  } catch { deps.log({ event: 'drain', outcome: 'drain-ack-failed' }); }
 }
 
 // Flag-like or shell-like values never reach argv, even though there's no shell.
@@ -380,6 +415,12 @@ export async function resumeWatches(config: RunnerConfig, deps: Deps): Promise<v
   finally { writeStatus(deps); }
 }
 
+/** Watch recovery then completion checks, held off while upkeep drains the Runner. */
+export async function checkWatches(config: RunnerConfig, deps: Deps): Promise<void> {
+  if (drainRequest(deps)) return;
+  await busy(deps, async () => { await resumeWatches(config, deps); await watchJobs(config, deps); });
+}
+
 /** One completion check per saved job; transient failures leave it for the next check. */
 export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void> {
   let watches: Watches;
@@ -618,20 +659,23 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
 export async function poll(config: RunnerConfig, deps: Deps): Promise<boolean> {
   writeStatus(deps);
   const value = status(deps);
-  if (value.paused) return false;
-  let claim: Claim | null;
-  try {
-    claim = await inbox(config, deps).claim();
-    value.inbox = { status: 'ok', lastOkAt: time(deps) };
-  } catch (error) {
-    value.inbox.status = 'unreachable';
-    const message = (error as Error).message;
-    value.lastError = { identifier: null, outcome: /^cloud-inbox-(\d{3}|claim)$/.test(message) ? message : 'unreachable', time: time(deps) };
-    throw error;
-  } finally { writeStatus(deps); }
-  if (!claim) return false;
-  await handleJob(config, deps, claim);
-  return true;
+  // Checked and counted with no await between, so a drain can't slip in before the claim.
+  if (value.paused || drainRequest(deps)) return false;
+  return busy(deps, async () => {
+    let claim: Claim | null;
+    try {
+      claim = await inbox(config, deps).claim();
+      value.inbox = { status: 'ok', lastOkAt: time(deps) };
+    } catch (error) {
+      value.inbox.status = 'unreachable';
+      const message = (error as Error).message;
+      value.lastError = { identifier: null, outcome: /^cloud-inbox-(\d{3}|claim)$/.test(message) ? message : 'unreachable', time: time(deps) };
+      throw error;
+    } finally { writeStatus(deps); }
+    if (!claim) return false;
+    await handleJob(config, deps, claim);
+    return true;
+  });
 }
 
 if (import.meta.main) {
@@ -642,6 +686,8 @@ if (import.meta.main) {
     console.error(`factory-runner: ${(error as Error).message}`);
     process.exit(1);
   }
+  // Upkeep checks a staged bundle against the installed config this way.
+  if (process.argv[2] === '--check-config') process.exit(0);
   const run = promisify(execFile);
   const stateDir = join(isAbsolute(process.env.XDG_STATE_HOME ?? '') ? process.env.XDG_STATE_HOME!
     : join(homedir(), '.local', 'state'), 'factory');
@@ -653,6 +699,7 @@ if (import.meta.main) {
     watches: join(stateDir, 'watching.json'),
     status: join(stateDir, 'status.json'),
     paused: join(stateDir, 'paused'),
+    drain: join(stateDir, 'drain.json'),
   };
   startStatusHeartbeat(deps);
   deps.log({ event: 'start', outcome: 'ok' });
@@ -660,7 +707,7 @@ if (import.meta.main) {
   const check = async () => {
     if (checking) return;
     checking = true;
-    try { await resumeWatches(config, deps); await watchJobs(config, deps); }
+    try { await checkWatches(config, deps); }
     finally { checking = false; }
   };
   void check();

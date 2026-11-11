@@ -286,6 +286,34 @@ resume on the next poll. In-flight work continues, as do watch recovery and PR
 checks. Pausing leaves jobs queued in Cloud Inbox. The menu bar app reads status
 and toggles this flag; it needs no Cloud Inbox access.
 
+### Update after merging Factory changes
+
+From a clean checkout of `main` that matches GitHub, run:
+
+```sh
+npm run upkeep
+```
+
+It refreshes the Factory skills you installed, then updates an existing Runner app
+from this checkout. It prints one line for the skills and one for the Runner, and exits
+non-zero when either fails or refuses. It installs nothing that's missing and never
+changes git state.
+
+- **A running Runner** is asked to drain: upkeep writes `drain.json` in the state
+  directory, the Runner stops claiming and checking watches, and writes
+  `drain.json.ack` only when no claim, job or open watch remains. Without that
+  acknowledgment within 60 seconds, upkeep refuses and changes nothing. A fresh
+  idle `status.json` alone doesn't count.
+- **The new bundle** is built with `install.sh --build-app <dir>`, checked file for
+  file against this checkout, and run with `--check-config` against your config
+  before anything is replaced. A Runner that doesn't come back is swapped for the
+  previous bundle and restarted.
+- **A stopped Runner** is refreshed and stays stopped. Pause, **Start at login** and
+  config are never touched. Quit and reopen the menu bar app to load its new version.
+- **A Runner from before draining** is refused, with steps to pause, stop and rerun.
+
+Test it with `node --test upkeep.test.ts` from `packages/delegator`.
+
 ## Security
 
 Cloud Inbox is the middleman between Linear and your machines. It requests

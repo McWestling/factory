@@ -47,3 +47,13 @@ if HOME="$tmp/home" PATH="$tmp/bin:$PATH" FACTORY_LAUNCHD_RENDER_ONLY=1   sh "$r
   exit 1
 fi
 cmp "$plist" "$tmp/before.plist"
+
+# A staged build writes only the staging directory.
+rm -f "$tmp/bin/swiftc"
+staged="$tmp/staged.app"
+HOME="$tmp/home" PATH="$tmp/bin:$PATH" sh "$root/packages/delegator/runner/launchd/install.sh" --build-app "$staged"
+for file in runner/runner.ts runner/launchd/install.sh runner/launchd/runner.plist menubar/menubar.plist job.ts parse-issue.ts; do
+  cmp "$staged/Contents/Resources/$file" "$root/packages/delegator/$file"
+done
+[ -x "$staged/Contents/MacOS/FactoryRunnerMenuBar" ]
+cmp "$plist" "$tmp/before.plist"

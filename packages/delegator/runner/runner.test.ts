@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import type { MachineAuth } from '../cloud-inbox/auth.ts';
 import { MachineQueue } from '../cloud-inbox/queue.ts';
 import { handleRunner } from '../cloud-inbox/routes.ts';
-import { startStatusHeartbeat, handleJob, launchArgs, loadConfig, NOT_ALLOWED, poll, resumeWatches, watchJobs, type Deps, type RunnerConfig, type Task } from './runner.ts';
+import { acknowledgeDrain, checkWatches, startStatusHeartbeat, handleJob, launchArgs, loadConfig, NOT_ALLOWED, poll, resumeWatches, watchJobs, type Deps, type RunnerConfig, type Task } from './runner.ts';
 
 const example = new URL('../config.example.json', import.meta.url);
 const config: RunnerConfig = {
@@ -913,6 +913,54 @@ test('new registrations are read on the next job without reloading config', asyn
   assert.equal(await handleJob(config, f.deps, claim), 'refused-repo');
   repos = [registeredRepo];
   assert.equal(await handleJob(config, f.deps, claim), 'launched');
+});
+
+const requestDrain = (deps: Deps, nonce: string, until = Date.now() + 60_000) =>
+  writeFileSync(deps.drain!, JSON.stringify({ nonce, until }));
+const ack = (deps: Deps) => { try { return JSON.parse(readFileSync(`${deps.drain}.ack`, 'utf8')); } catch { return null; } };
+
+test('a drain is not acknowledged while a claim is in flight behind a fresh idle heartbeat', async () => {
+  const f = fakes(null);
+  f.deps.drain = join(dirname(f.deps.status), 'drain.json');
+  let release!: () => void;
+  const fetch = f.deps.fetch;
+  f.deps.fetch = async (input, init) => {
+    if (new URL(String(input)).pathname.endsWith('/jobs/claim')) await new Promise<void>((resolve) => { release = resolve; });
+    return fetch(input, init);
+  };
+  const polling = poll(config, f.deps);
+  requestDrain(f.deps, 'n1');
+  const timer = startStatusHeartbeat(f.deps);
+  clearInterval(timer);
+  const idle = JSON.parse(readFileSync(f.deps.status, 'utf8'));
+  assert.equal(idle.current, null);
+  acknowledgeDrain(f.deps);
+  assert.equal(ack(f.deps), null, 'an idle-looking status is not quiescence');
+  release();
+  await polling;
+  acknowledgeDrain(f.deps);
+  assert.deepEqual(ack(f.deps), { nonce: 'n1', pid: process.pid });
+  f.requests.length = 0;
+  assert.equal(await poll(config, f.deps), false);
+  await checkWatches(config, f.deps);
+  assert.deepEqual(f.requests, [], 'nothing new starts while drained');
+});
+
+test('open watches, a stale request or a corrupt request are never acknowledged', async () => {
+  const f = fakes();
+  f.deps.drain = join(dirname(f.deps.status), 'drain.json');
+  await handleJob(config, f.deps, claim);
+  requestDrain(f.deps, 'busy');
+  acknowledgeDrain(f.deps);
+  assert.equal(ack(f.deps), null);
+  writeFileSync(f.deps.watches, '{}');
+  requestDrain(f.deps, 'old', Date.now() - 1);
+  acknowledgeDrain(f.deps);
+  assert.equal(ack(f.deps), null);
+  writeFileSync(f.deps.drain, '{"nonce":');
+  acknowledgeDrain(f.deps);
+  assert.equal(ack(f.deps), null);
+  assert.equal(await poll(config, f.deps), true, 'an expired or corrupt request holds nothing off');
 });
 
 test('a PR losing ownership after linking stays watched without a success response', async () => {
