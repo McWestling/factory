@@ -93,15 +93,17 @@ The label records where the work was dispatched from, not where the session runs
 
 **Checked:** 2026-11-10, against the vendor pages under Sources. Re-check when this date is over 90 days old or a listed model retires.
 
-| Model            | Level      | Use it for                                                                     |
-| ---------------- | ---------- | ------------------------------------------------------------------------------ |
-| Claude Opus 5.5  | `deep`     | Judgment-heavy, cross-cutting or ambiguous work; the maintainer in the session |
-| Claude Fable 5.2 | `deep`     | Long-horizon or hardest work, when Opus 5.5 at higher effort falls short       |
-| GPT-6 Astra      | `deep`     | Hardest end-to-end work in Codex, when GPT-6.1 Sol falls short                 |
-| GPT-6.1 Sol      | `standard` | Complex implementation and agentic work                                        |
-| GPT-6 Luna       | `light`    | Focused, pattern-following tickets; always use at least `high` effort                |
-| Composer 2.5     | `light`    | Mechanical changes, as a Cursor Cloud agent                                    |
-| Grok 4.7         | `light`    | Mechanical changes, as a Cursor Cloud agent                                    |
+| Model            | Level      | Effort          | Use it for                                                                     |
+| ---------------- | ---------- | --------------- | ------------------------------------------------------------------------------ |
+| Claude Opus 5.5  | `deep`     |                 | Judgment-heavy, cross-cutting or ambiguous work; the maintainer in the session |
+| Claude Fable 5.2 | `deep`     |                 | Long-horizon or hardest work, when Opus 5.5 at higher effort falls short       |
+| GPT-6 Astra      | `deep`     |                 | Hardest end-to-end work in Codex, when GPT-6.1 Sol falls short                 |
+| GPT-6.1 Sol      | `standard` |                 | Complex implementation and agentic work                                        |
+| GPT-6 Luna       | `light`    | `high` or above | Focused, pattern-following tickets                                             |
+| Composer 2.5     | `light`    |                 | Mechanical changes, as a Cursor Cloud agent                                    |
+| Grok 4.7         | `light`    |                 | Mechanical changes, as a Cursor Cloud agent                                    |
+
+A blank effort means the agent's default. One model can serve two levels at different efforts; see Runner config in the [issue format contract](issue-format.md#runner-config).
 
 **Sources:**
 

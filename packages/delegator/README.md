@@ -133,8 +133,9 @@ Copy [config.example.json](config.example.json) to
 `~/.config/factory-delegator/config.json`, fill it in and `chmod 600` it. The Runner
 refuses to start without it, with a looser mode, or with any key missing or empty;
 nothing has a default except `skill` (`do-implement`). `machine` is the Linear app's
-name, used in messages. Each `models` key is a Preferred models name. The required
-`levels` map names a configured model for each of `light`, `standard` and `deep`.
+name, used in messages. Each `models` key is a Preferred models name, with an effort
+suffix when one model runs at several efforts. The required `levels` map names a
+configured model for each of `light`, `standard` and `deep`.
 Repos come from Orca at pickup; an old `repos` config key is ignored and can be removed.
 
 ```sh
