@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { loadConfig } from '../delegator/runner/runner.ts';
+import { BUNDLED } from '../delegator/upkeep.ts';
 import { claudeVerdict, codexVerdict, setup, type SetupDeps } from './setup.ts';
 
 const HEAD = 'b'.repeat(40);
@@ -29,6 +30,14 @@ function codexRun({ items = [{ type: 'mcp_tool_call', server: 'linear', tool: 'w
 }
 
 /** A disposable Mac: a fixture fork checkout and a temp home, with every CLI faked. */
+/** Writes a complete Runner app bundle, as a finished install leaves it. */
+const installApp = (home: string) => {
+  for (const file of BUNDLED) {
+    mkdirSync(join(home, 'Applications/Factory Runner.app/Contents/Resources', file, '..'), { recursive: true });
+    writeFileSync(join(home, 'Applications/Factory Runner.app/Contents/Resources', file), '');
+  }
+};
+
 function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'setup-'));
   const root = join(home, 'factory');
@@ -93,8 +102,12 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) 
       if (file === 'swiftc' || call === 'git --version') return { stdout: 'ok' };
       if (call === 'orca --version') { if (!m.orca) throw fail('orca: command not found'); return { stdout: '1.4.0' }; }
       if (file === 'sh' && args.length === 1 && args[0] === join(root, 'packages/delegator/runner/launchd/install.sh')) {
+        // Like build_app: the bundle's folders exist before swiftc runs, so a failed compile leaves them behind.
+        mkdirSync(join(home, 'Applications/Factory Runner.app/Contents/MacOS'), { recursive: true });
         if (m.installFails) throw fail('swiftc failed');
-        mkdirSync(join(home, 'Applications/Factory Runner.app'), { recursive: true });
+        installApp(home);
+        mkdirSync(join(home, 'Library/LaunchAgents'), { recursive: true });
+        writeFileSync(join(home, 'Library/LaunchAgents/com.factory.factory-delegator.runner.plist'), '');
         m.loaded = true;
         const now = new Date().toISOString();
         mkdirSync(m.deps.stateDir, { recursive: true });
@@ -202,7 +215,7 @@ test('missing prerequisites refuse before anything changes', async () => {
 
 test('an existing Runner needs its build tools checked too', async () => {
   const mac = machine();
-  mkdirSync(join(mac.home, 'Applications/Factory Runner.app'), { recursive: true });
+  installApp(mac.home);
   mac.m.deps.nodeVersion = '24.1.0';
   assert.equal(await mac.run(), 1);
   assert.match(mac.m.output.join('\n'), /Runner needs Node 26/);
@@ -515,9 +528,33 @@ for (const [label, change, message] of [
   });
 }
 
-test('an existing Runner takes the update path with no question and keeps its config', async () => {
+test('a first install that failed partway resumes on rerun: installs the Runner agent and checks Cloud Inbox', async () => {
   const mac = machine();
-  mkdirSync(join(mac.home, 'Applications/Factory Runner.app'), { recursive: true });
+  mac.m.installFails = true;
+  answer(mac, ['y', 'e', `${DEPLOYED.origin}/delegator`, BEARER, 'Factory laptop', ...RUNNER_ANSWERS]);
+  assert.equal(await mac.run(), 1);
+  assert.ok(mac.m.output.some((line) => /^runner: install failed \(swiftc failed\)/.test(line)));
+  assert.ok(existsSync(join(mac.home, 'Applications/Factory Runner.app')), 'the failed install left a partial app');
+
+  mac.m.installFails = false;
+  mac.m.output.length = 0;
+  answer(mac, ['y']);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.ok(!mac.m.calls.some((call) => call.includes('--build-app')), 'installs instead of updating');
+  assert.ok(existsSync(join(mac.home, 'Library/LaunchAgents/com.factory.factory-delegator.runner.plist')), 'installs the Runner agent');
+  assert.match(runnerLine(mac.m.output)!, /^runner: installed and connected \(pid 4242\); Cloud Inbox answered at /);
+});
+
+for (const [label, arrange] of [
+  ['an app-only Runner', (home: string) => installApp(home)],
+  ['a Runner whose agent is installed', (home: string) => {
+    mkdirSync(join(home, 'Applications/Factory Runner.app'), { recursive: true });
+    mkdirSync(join(home, 'Library/LaunchAgents'), { recursive: true });
+    writeFileSync(join(home, 'Library/LaunchAgents/com.factory.factory-delegator.runner.plist'), '');
+  }],
+] as const) test(`${label} takes the update path with no question and keeps its config`, async () => {
+  const mac = machine();
+  arrange(mac.home);
   mkdirSync(join(mac.home, '.config/factory-delegator'), { recursive: true });
   writeFileSync(runnerConfig(mac.home), 'kept', { mode: 0o600 });
   answer(mac, []);

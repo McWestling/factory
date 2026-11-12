@@ -7,7 +7,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { promisify } from 'node:util';
 import { loadConfig } from '../delegator/runner/runner.ts';
-import { lastLine, readJson, updateRunner, withLock, type Result, type UpkeepDeps } from '../delegator/upkeep.ts';
+import { BUNDLED, lastLine, readJson, updateRunner, withLock, type Result, type UpkeepDeps } from '../delegator/upkeep.ts';
 
 export type SetupDeps = UpkeepDeps & {
   platform: string;
@@ -345,8 +345,12 @@ export async function setup(deps: SetupDeps): Promise<number> {
   return withLock(deps, async () => {
     const found = deps.agents.length ? deps.agents
       : (await Promise.all(Object.entries(AGENTS).map(([name, agent]) => deps.exec(agent.bin, ['--version'], 30_000).then(() => name, () => null)))).filter((name) => name !== null);
-    // A `.previous` bundle alone is an update interrupted mid-swap, which the updater restores.
-    const runner = ['Factory Runner.app', 'Factory Runner.app.previous'].some((app) => existsSync(join(deps.home, 'Applications', app)));
+    // A `.previous` bundle alone is an update interrupted mid-swap, which the updater restores. An app missing
+    // bundled files with no Runner agent is a first install that failed partway, so the install is offered again.
+    const app = join(deps.home, 'Applications', 'Factory Runner.app');
+    const runner = existsSync(`${app}.previous`) || (existsSync(app)
+      && (existsSync(join(deps.home, 'Library/LaunchAgents/com.factory.factory-delegator.runner.plist'))
+        || BUNDLED.every((file) => existsSync(join(app, 'Contents/Resources', file)))));
     const problems = found.length ? await prerequisites(deps, found, runner)
       : ['No agent CLI found. Install Claude Code (claude), Codex (codex) or Cursor (agent), then rerun.'];
     if (problems.length) {
