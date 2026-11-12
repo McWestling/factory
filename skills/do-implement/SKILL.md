@@ -50,6 +50,8 @@ When the brief leaves a product or design fork open, or its acceptance criteria 
 
 Default calls cover these product and design questions and the test-seam choices in Build. Every other stop in this skill still holds in a delegated run: a failed dispatch gate, the wrong repo, a failed tracker probe or missing permissions (see [Workspace values](#workspace-values)), a testing skill that cannot be located or read after the Build lookup, verification that won't pass, three failed fix rounds, and the [Boundaries](#boundaries). When one stops a delegated run, comment per **Comment shape** with what stopped it, what comes next, and "undelegate to release", if the tracker still answers; write no fields. Only a non-delegated run that stops after claiming and before a PR exists releases the issue as [Claim](#2-claim) says. Then stop.
 
+**Before ending a run,** check that you have either a verified draft PR matching the issue or an evidenced stop this skill explicitly permits. If neither is true, take the next available step. An unread comment, a test not yet run, an environment signal not yet checked, or any other prerequisite you haven't attempted is work remaining, not a blocker. Verify a suspected blocker with the available tool before claiming it.
+
 A small, reversible call inside the brief's requirements is yours to make. Note it in the PR's Summary only if it matters to a reviewer.
 
 ## 4. Build
@@ -111,3 +113,4 @@ To close out, run the sibling [`do-closeout`](../do-closeout/SKILL.md) skill on 
 - Never set priority beyond what **Priority** says.
 - Never push unverified work without the maintainer's say-so for that push.
 - When the brief leaves a product decision open, stop and ask if someone is in the session; in a delegated run, make the default call and list it ([step 3](#3-ask-before-guessing)).
+- Never end a run without a verified draft PR or a permitted stop; see the completion check in [step 3](#3-ask-before-guessing).
