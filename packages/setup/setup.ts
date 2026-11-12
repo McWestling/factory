@@ -135,7 +135,7 @@ async function support(deps: SetupDeps, name: string, forms: Awaited<ReturnType<
     if (plugin && hasCli) {
       const provided = forms.pluginSkills(name);
       const extra = bare.map(({ name: skill }) => skill).filter((skill) => !provided.includes(skill));
-      const command = `npx --yes skills remove ${bare.map(({ name: skill }) => `'${skill.replaceAll("'", "'\\''")}'`).join(' ')} -g -a ${name === 'codex' ? "'*'" : AGENTS[name]!.id} -y`;
+      const command = `npx --yes skills remove ${bare.map(({ name: skill }) => `'${skill.replaceAll("'", "'\\''")}'`).join(' ')} -g${name === 'codex' ? '' : ` -a ${AGENTS[name]!.id}`} -y`;
       return failed(`both the ${PLUGIN} plugin and bare skills from the skills CLI are installed. Remove the CLI copies, then rerun:\n${command}\n${name === 'codex' ? 'Codex reads the shared CLI copies, so this removes these skills for all agents. ' : ''}${provided.length ? (extra.length ? `The plugin doesn't provide: ${extra.join(', ')}. Removing the CLI copies would lose these skills.` : 'No CLI-only skills would be lost.') : `Could not read the plugin skill list. Check these skills before removing: ${extra.join(', ')}.`} Nothing was changed.`);
     }
     if (plugin && name === 'claude') { await run('claude', 'plugin', 'update', plugin); return done(`refreshed the ${plugin} plugin`); }
