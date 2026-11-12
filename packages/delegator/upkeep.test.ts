@@ -3,7 +3,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, wr
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
-import { acknowledgeDrain, poll, type Deps, type RunnerConfig } from './runner/runner.ts';
+import { acknowledgeDrain, poll, watchJobs, type Deps, type RunnerConfig } from './runner/runner.ts';
 import { updateRunner, withLock, type UpkeepDeps } from './upkeep.ts';
 
 const root = resolve(import.meta.dirname, '../..');
@@ -82,8 +82,10 @@ function machine({ runner = 'running' as 'running' | 'stopped' | 'none', oldRunn
 function runnerOn(stateDir: string) {
   let release = () => {};
   const held = new Promise<void>((done) => { release = done; });
+  const requests: string[] = [];
   const deps: Deps = {
     fetch: async (input) => {
+      requests.push(new URL(String(input)).pathname);
       if (new URL(String(input)).pathname.endsWith('/claim')) { await held; return new Response(null, { status: 204 }); }
       return new Response(null, { status: 204 });
     },
@@ -97,7 +99,7 @@ function runnerOn(stateDir: string) {
   };
   const config = { inboxUrl: 'https://inbox.example', bearerSecret: 'b', machine: 'm', allowedCreatorIds: ['u'],
     models: { M: { agent: 'claude', model: 'm' } }, levels: { light: 'M', standard: 'M', deep: 'M' }, skill: 'do-implement' } as RunnerConfig;
-  return { deps, release, claiming: poll(config, deps) };
+  return { deps, config, requests, release, claiming: poll(config, deps) };
 }
 
 test('a claim in flight behind an idle heartbeat blocks the swap until the Runner acknowledges quiescence', async () => {
@@ -137,15 +139,25 @@ test('a stale acknowledgment or no acknowledgment refuses without stopping the R
   assert.deepEqual(machineA.launchctl(), []);
 });
 
-test('an open watch keeps the Runner from acknowledging, so setup refuses', async () => {
+test('saved watches don\'t block an update, and the new Runner resumes them', async () => {
   const machineA = machine();
   const runner = runnerOn(machineA.stateDir);
   runner.release();
   await runner.claiming;
-  writeFileSync(runner.deps.watches, JSON.stringify({ s: { sessionId: 's', issueId: 'i', claimId: 'c', at: 1, ready: true } }));
+  const saved = JSON.stringify({ s: { sessionId: 's', issueId: 'i', claimId: 'c', at: 1, ready: true } });
+  writeFileSync(runner.deps.watches, saved);
   machineA.m.onSleep = () => acknowledgeDrain(runner.deps);
-  assert.equal(await machineA.run(), 1);
-  assert.deepEqual(machineA.launchctl(), []);
+  assert.equal(await machineA.run(), 0);
+  assert.match(machineA.m.output.join('\n'), /runner: refreshed and restarted/);
+  assert.equal(readFileSync(runner.deps.watches, 'utf8'), saved, 'the update leaves saved watches alone');
+
+  const restarted = runnerOn(machineA.stateDir);
+  restarted.release();
+  await restarted.claiming;
+  restarted.requests.length = 0;
+  await watchJobs(restarted.config, restarted.deps);
+  assert.deepEqual(restarted.requests, ['/jobs/s/watch'], 'the new Runner checks the saved watch');
+  assert.equal(readFileSync(restarted.deps.watches, 'utf8'), saved, 'a failed check keeps it for the next one');
 });
 
 test('a machine without the Runner app is left without one', async () => {
@@ -209,12 +221,23 @@ test('stopped, paused and login-disabled choices, config and state survive a ref
   assert.equal(running.launchctl().some((call) => / (enable|disable) /.test(call)), false);
 });
 
-test('a stopped Runner with open watches or a live stray process is not refreshed', async () => {
+test('a stopped Runner with saved watches is refreshed, and they stay for the new Runner', async () => {
   const machineA = machine({ runner: 'stopped' });
-  writeFileSync(join(machineA.stateDir, 'watching.json'), '{"s":{}}');
-  assert.equal(await machineA.run(), 1);
-  assert.match(machineA.m.output[0]!, /^runner: refused\. The stopped Runner has open or unreadable watches/);
-  assert.match(machineA.bundled(), /old/);
+  const saved = JSON.stringify({ s: { sessionId: 's', issueId: 'i', claimId: 'c', at: 1, ready: true } });
+  writeFileSync(join(machineA.stateDir, 'watching.json'), saved);
+  assert.equal(await machineA.run(), 0);
+  assert.match(machineA.m.output[0]!, /^runner: refreshed and left stopped\./);
+  assert.equal(readFileSync(join(machineA.stateDir, 'watching.json'), 'utf8'), saved);
+});
+
+test('a stopped Runner with unreadable watches or a live stray process is not refreshed', async () => {
+  for (const contents of ['{"s":', '[]', '{"s":{}}']) {
+    const machineA = machine({ runner: 'stopped' });
+    writeFileSync(join(machineA.stateDir, 'watching.json'), contents);
+    assert.equal(await machineA.run(), 1, contents);
+    assert.match(machineA.m.output[0]!, /^runner: refused\. The stopped Runner's saved watches are unreadable/);
+    assert.match(machineA.bundled(), /old/);
+  }
 
   const machineB = machine({ runner: 'stopped' });
   writeFileSync(join(machineB.stateDir, 'status.json'), JSON.stringify({ pid: process.pid, updatedAt: new Date().toISOString() }));

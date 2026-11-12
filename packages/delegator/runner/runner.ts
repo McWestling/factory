@@ -128,11 +128,11 @@ function drainRequest(deps: Deps): string | null {
   } catch { return null; }
 }
 
-/** Acknowledges a drain only with nothing in flight: no claim, job, watch check or open watch. */
+/** Acknowledges a drain only with nothing in flight: no claim, job or watch check. Saved watches resume after a restart. */
 export function acknowledgeDrain(deps: Deps) {
   const nonce = drainRequest(deps);
   if (!nonce || active.get(deps) || status(deps).current) return;
-  try { if (Object.keys(readWatches(deps)).length) return; } catch { return; }
+  try { readWatches(deps); } catch { return; }
   try {
     rmSync(`${deps.drain}.ack.tmp`, { force: true });
     writeFileSync(`${deps.drain}.ack.tmp`, JSON.stringify({ nonce, pid: process.pid }), { mode: 0o600, flag: 'wx' });
@@ -381,7 +381,8 @@ async function hasWorktree(deps: Deps, launch: Launch): Promise<boolean> {
 type Watching = Claim & { at: number; ready: boolean; launch?: LaunchEvidence; identifier?: string };
 type Watches = Record<string, Watching>;
 
-function readWatches(deps: Deps): Watches {
+/** The saved watches, or a throw when the file can't be trusted. Setup checks a stopped Runner's file with it. */
+export function readWatches(deps: Pick<Deps, 'watches'>): Watches {
   try {
     const value: unknown = JSON.parse(readFileSync(deps.watches, 'utf8'));
     if (!isObject(value) || !Object.entries(value).every(([id, entry]) => isObject(entry)

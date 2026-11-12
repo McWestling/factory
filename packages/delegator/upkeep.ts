@@ -4,6 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { readWatches } from './runner/runner.ts';
 
 export type UpkeepDeps = {
   exec: (file: string, args: string[], timeoutMs: number) => Promise<{ stdout: string }>;
@@ -23,7 +24,7 @@ const BUNDLED = ['job.ts', 'parse-issue.ts', 'runner/runner.ts', 'runner/launchd
   'runner/launchd/runner.plist', 'menubar/menubar.plist'];
 const OLD_RUNNER = `The installed Runner predates safe draining, so setup won't restart it. Nothing was changed. To update it safely:
   1. In the Factory Runner menu, turn on Pause new work.
-  2. Wait until the menu shows Paused, with no current job and nothing Waiting for a PR, for at least a minute.
+  2. Wait until the menu shows Paused, with no current job, for at least a minute.
   3. Choose Stop Runner.
   4. Rerun this command. It refreshes the stopped Runner and leaves it stopped.
   5. Choose Start Runner, then turn off Pause new work.`;
@@ -87,16 +88,16 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
   if (running && !readFileSync(join(app, 'Contents/Resources/runner/runner.ts'), 'utf8').includes('DRAIN_PROTOCOL = 1')) {
     return fail(`refused. ${OLD_RUNNER}`);
   }
-  /** Why a stopped Runner can't be refreshed now, or null when it's still stopped with nothing outstanding. */
+  /** Why a stopped Runner can't be refreshed now, or null when it's still stopped with readable state. */
   const stoppedRefusal = async () => {
     if (await pid() !== null) return fail('refused. The stopped Runner was started while setup was building. Nothing was replaced; rerun when it\'s idle.');
     const status = readJson(join(deps.stateDir, 'status.json'));
     if (alive(status?.pid) && Date.now() - Date.parse(status.updatedAt) < 30_000) {
       return fail(`refused. A Runner process (pid ${status.pid}) is running outside launchd. Stop it, then rerun.`);
     }
-    const watches = existsSync(join(deps.stateDir, 'watching.json')) ? readJson(join(deps.stateDir, 'watching.json')) : {};
-    if (!watches || typeof watches !== 'object' || Object.keys(watches).length) {
-      return fail('refused. The stopped Runner has open or unreadable watches. Start it, let Waiting for a PR clear, then rerun.');
+    // Saved watches resume after a restart, but only if the new Runner can read them.
+    try { readWatches({ watches: join(deps.stateDir, 'watching.json') }); } catch {
+      return fail('refused. The stopped Runner\'s saved watches are unreadable. Nothing was changed; check ~/Library/Logs/factory-delegator, then rerun.');
     }
     return null;
   };
@@ -132,7 +133,7 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
       return ack?.nonce === nonce && ack.pid === running;
     });
     if (!acked || await pid() !== running) {
-      return fail('refused. The Runner is busy (a claim, job or watch is in progress) or didn\'t confirm it was idle within 60 s. Nothing was changed; rerun when the menu shows nothing in progress or Waiting for a PR.');
+      return fail('refused. The Runner is busy (a claim, job or watch check is in progress) or didn\'t confirm it was idle within 60 s. Nothing was changed; rerun when the menu shows nothing in progress. A Runner installed before saved watches stopped blocking updates also waits for Waiting for a PR to clear; to update it now, choose Stop Runner and rerun.');
     }
     try { await deps.exec('launchctl', ['bootout', service], 60_000); } catch {}
     if (!await wait(10, async () => await pid() === null)) {
