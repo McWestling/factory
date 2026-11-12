@@ -308,6 +308,9 @@ Node 26, `swiftc` and `orca`, then:
 - **Install:** setup runs the default `install.sh`, then waits up to 60 seconds for the
   Runner's `status.json` to show the new process reaching Cloud Inbox. Only then does it
   report the Runner installed and connected; otherwise it fails and names the logs.
+  Until then the install stays pending, and the next `npm run setup` finishes it without
+  asking: it reruns `install.sh` only when no Runner is running, and otherwise waits
+  for the running one to report Cloud Inbox, so it never restarts work in progress.
 
 The config holds the Inbox URL and this machine's bearer secret, never Linear tokens
 or the Inbox's owner and app credentials. Setup prints no secrets.

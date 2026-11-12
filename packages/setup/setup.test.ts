@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { loadConfig } from '../delegator/runner/runner.ts';
-import { BUNDLED } from '../delegator/upkeep.ts';
 import { claudeVerdict, codexVerdict, setup, type SetupDeps } from './setup.ts';
 
 const HEAD = 'b'.repeat(40);
@@ -30,13 +29,13 @@ function codexRun({ items = [{ type: 'mcp_tool_call', server: 'linear', tool: 'w
 }
 
 /** A disposable Mac: a fixture fork checkout and a temp home, with every CLI faked. */
-/** Writes a complete Runner app bundle, as a finished install leaves it. */
+/** Writes an installed Runner app bundle whose runner supports safe draining. */
 const installApp = (home: string) => {
-  for (const file of BUNDLED) {
-    mkdirSync(join(home, 'Applications/Factory Runner.app/Contents/Resources', file, '..'), { recursive: true });
-    writeFileSync(join(home, 'Applications/Factory Runner.app/Contents/Resources', file), '');
-  }
+  mkdirSync(join(home, 'Applications/Factory Runner.app/Contents/Resources/runner'), { recursive: true });
+  writeFileSync(join(home, 'Applications/Factory Runner.app/Contents/Resources/runner/runner.ts'), 'const DRAIN_PROTOCOL = 1;\n');
 };
+const PLIST = 'Library/LaunchAgents/com.factory.factory-delegator.runner.plist';
+const PENDING = '.local/state/factory/runner-install-pending';
 
 function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'setup-'));
@@ -53,7 +52,7 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) 
   const m = {
     home, root, lock, installed,
     /** The Runner side of the Mac: Orca, the launchd agent, and what the started Runner writes to status.json. */
-    orca: true, loaded: false, inboxOk: true, installFails: false,
+    orca: true, loaded: false, inboxOk: true, installFails: '' as '' | 'compile' | 'render' | 'bootstrap' | 'menu',
     /** Whether Cloud Inbox's status check reports it connected to Linear. */
     connected: false,
     /** What each interactive Cloud Inbox CLI action does; returns whether it exited 0. */
@@ -71,6 +70,7 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) 
     codex: codexRun(),
     codexSkills: ['do-a', 'do-b', ...SUPPORT.map((name) => `mattpocock-skills:${name}`)],
     calls: [] as string[],
+    installs: 0,
     output: [] as string[],
     answers: [] as string[],
     deps: undefined as unknown as SetupDeps,
@@ -102,20 +102,29 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) 
       if (file === 'swiftc' || call === 'git --version') return { stdout: 'ok' };
       if (call === 'orca --version') { if (!m.orca) throw fail('orca: command not found'); return { stdout: '1.4.0' }; }
       if (file === 'sh' && args.length === 1 && args[0] === join(root, 'packages/delegator/runner/launchd/install.sh')) {
-        // Like build_app: the bundle's folders exist before swiftc runs, so a failed compile leaves them behind.
+        // The installer's steps in order, failing where installFails says: build_app (whose folders exist before
+        // swiftc runs), render_runner, then bootstrapping the Runner and the menu bar app.
+        m.installs++;
         mkdirSync(join(home, 'Applications/Factory Runner.app/Contents/MacOS'), { recursive: true });
-        if (m.installFails) throw fail('swiftc failed');
+        if (m.installFails === 'compile') throw fail('swiftc failed');
         installApp(home);
+        if (m.installFails === 'render') throw fail('orca is not on PATH');
         mkdirSync(join(home, 'Library/LaunchAgents'), { recursive: true });
-        writeFileSync(join(home, 'Library/LaunchAgents/com.factory.factory-delegator.runner.plist'), '');
+        writeFileSync(join(home, PLIST), '');
+        if (m.installFails === 'bootstrap') throw fail('Bootstrap failed: 5: Input/output error');
         m.loaded = true;
+        if (m.installFails === 'menu') throw fail('Bootstrap failed: 37: Operation already in progress');
+        return { stdout: '' };
+      }
+      if (file === 'launchctl' && args[0] === 'print') {
+        if (!m.loaded) throw fail('Could not find service');
+        // A running Runner rewrites its status every few seconds.
         const now = new Date().toISOString();
         mkdirSync(m.deps.stateDir, { recursive: true });
         writeFileSync(join(m.deps.stateDir, 'status.json'), JSON.stringify({ version: 1, pid: 4242, updatedAt: now,
           inbox: m.inboxOk ? { status: 'ok', lastOkAt: now } : { status: 'unreachable', lastOkAt: null } }));
-        return { stdout: '' };
+        return { stdout: '\tpid = 4242\n' };
       }
-      if (file === 'launchctl' && args[0] === 'print') { if (!m.loaded) throw fail('Could not find service'); return { stdout: '\tpid = 4242\n' }; }
       if (file === '/usr/bin/node' && args.at(-1) === 'status') return { stdout: m.connected ? 'Connected: workspace and app identity verified against Linear.\n' : 'Disconnected. Run connect.\n' };
       if (file === 'gh') { if (!m.gh) throw fail('You are not logged into any GitHub hosts.'); return { stdout: '' }; }
       if (file === 'git') {
@@ -516,7 +525,7 @@ for (const [label, change, message] of [
       return exec(file, args, timeout);
     })(mac.m.deps.exec);
   }, /installed, but it didn't start within 60 s/],
-  ['a failed install', (mac: ReturnType<typeof machine>) => { mac.m.installFails = true; }, /^runner: install failed \(swiftc failed\)/],
+  ['a failed install', (mac: ReturnType<typeof machine>) => { mac.m.installFails = 'compile'; }, /^runner: install failed \(swiftc failed\)/],
 ] as const) {
   test(`${label} fails setup instead of reporting a working Runner`, async () => {
     const mac = machine();
@@ -528,39 +537,86 @@ for (const [label, change, message] of [
   });
 }
 
-test('a first install that failed partway resumes on rerun: installs the Runner agent and checks Cloud Inbox', async () => {
-  const mac = machine();
-  mac.m.installFails = true;
-  answer(mac, ['y', 'e', `${DEPLOYED.origin}/delegator`, BEARER, 'Factory laptop', ...RUNNER_ANSWERS]);
-  assert.equal(await mac.run(), 1);
-  assert.ok(mac.m.output.some((line) => /^runner: install failed \(swiftc failed\)/.test(line)));
-  assert.ok(existsSync(join(mac.home, 'Applications/Factory Runner.app')), 'the failed install left a partial app');
+const EXISTING_INBOX = ['y', 'e', `${DEPLOYED.origin}/delegator`, BEARER, 'Factory laptop', ...RUNNER_ANSWERS];
 
-  mac.m.installFails = false;
+for (const [step, error] of [
+  ['compile', 'swiftc failed'],
+  ['render', 'orca is not on PATH'],
+  ['bootstrap', 'Bootstrap failed: 5: Input/output error'],
+] as const) {
+  test(`a first install that failed at ${step} is finished on rerun, with a fresh Cloud Inbox check`, async () => {
+    const mac = machine();
+    mac.m.installFails = step;
+    answer(mac, [...EXISTING_INBOX]);
+    assert.equal(await mac.run(), 1);
+    assert.ok(mac.m.output.some((line) => line.startsWith(`runner: install failed (${error})`)), mac.m.output.join('\n'));
+    assert.ok(existsSync(join(mac.home, PENDING)), 'remembers the install is unfinished');
+
+    mac.m.installFails = '';
+    mac.m.output.length = 0;
+    answer(mac, []);
+    assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+    assert.deepEqual(mac.m.questions.slice(EXISTING_INBOX.length), [], 'asks nothing more');
+    assert.equal(mac.m.installs, 2, 'reruns the installer');
+    assert.ok(!mac.m.calls.some((call) => call.includes('--build-app')), 'installs instead of updating');
+    assert.ok(existsSync(join(mac.home, PLIST)), 'installs the Runner agent');
+    assert.match(runnerLine(mac.m.output.filter((line) => !line.includes('finishing')))!, /^runner: installed and connected \(pid 4242\); Cloud Inbox answered at /);
+    assert.ok(!existsSync(join(mac.home, PENDING)));
+  });
+}
+
+test('a pending install whose Runner already started is only checked, never reinstalled or restarted', async () => {
+  const mac = machine();
+  mac.m.installFails = 'menu';
+  answer(mac, [...EXISTING_INBOX]);
+  assert.equal(await mac.run(), 1);
+  assert.ok(mac.m.loaded && existsSync(join(mac.home, PENDING)), 'the Runner runs, but the install never proved itself');
+  const calls = mac.m.calls.length;
+  const touched = () => mac.m.calls.slice(calls).filter((call) => /install\.sh|launchctl (bootout|bootstrap|kickstart|kill)/.test(call));
+
+  mac.m.inboxOk = false;
+  answer(mac, []);
+  assert.equal(await mac.run(), 1);
+  assert.ok(mac.m.output.some((line) => /^runner: installed, but it didn't reach Cloud Inbox/.test(line)));
+  assert.ok(existsSync(join(mac.home, PENDING)), 'stays pending until Cloud Inbox answers');
+
+  mac.m.inboxOk = true;
   mac.m.output.length = 0;
-  answer(mac, ['y']);
+  answer(mac, []);
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
-  assert.ok(!mac.m.calls.some((call) => call.includes('--build-app')), 'installs instead of updating');
-  assert.ok(existsSync(join(mac.home, 'Library/LaunchAgents/com.factory.factory-delegator.runner.plist')), 'installs the Runner agent');
-  assert.match(runnerLine(mac.m.output)!, /^runner: installed and connected \(pid 4242\); Cloud Inbox answered at /);
+  assert.match(runnerLine(mac.m.output.filter((line) => !line.includes('finishing')))!, /^runner: installed and connected \(pid 4242\)/);
+  assert.deepEqual(touched(), [], 'never reruns the installer or stops the Runner');
+  assert.equal(mac.m.installs, 1);
+  assert.ok(!existsSync(join(mac.home, PENDING)));
 });
 
 for (const [label, arrange] of [
-  ['an app-only Runner', (home: string) => installApp(home)],
-  ['a Runner whose agent is installed', (home: string) => {
-    mkdirSync(join(home, 'Applications/Factory Runner.app'), { recursive: true });
-    mkdirSync(join(home, 'Library/LaunchAgents'), { recursive: true });
-    writeFileSync(join(home, 'Library/LaunchAgents/com.factory.factory-delegator.runner.plist'), '');
+  ['an app-only Runner', (mac: ReturnType<typeof machine>) => installApp(mac.home)],
+  ['a stopped Runner', (mac: ReturnType<typeof machine>) => {
+    installApp(mac.home);
+    mkdirSync(join(mac.home, 'Library/LaunchAgents'), { recursive: true });
+    writeFileSync(join(mac.home, PLIST), '');
+  }],
+  ['a running Runner', (mac: ReturnType<typeof machine>) => {
+    installApp(mac.home);
+    mkdirSync(join(mac.home, 'Library/LaunchAgents'), { recursive: true });
+    writeFileSync(join(mac.home, PLIST), '');
+    mac.m.loaded = true;
+  }],
+  ['an update interrupted mid-swap', (mac: ReturnType<typeof machine>) => {
+    installApp(mac.home);
+    renameSync(join(mac.home, 'Applications/Factory Runner.app'), join(mac.home, 'Applications/Factory Runner.app.previous'));
   }],
 ] as const) test(`${label} takes the update path with no question and keeps its config`, async () => {
   const mac = machine();
-  arrange(mac.home);
+  arrange(mac);
   mkdirSync(join(mac.home, '.config/factory-delegator'), { recursive: true });
   writeFileSync(runnerConfig(mac.home), 'kept', { mode: 0o600 });
   answer(mac, []);
   await mac.run();
   assert.ok(!mac.m.questions.some(({ question }) => /Runner|Cloud Inbox/.test(question)));
   assert.ok(mac.m.calls.some((call) => call.endsWith('install.sh --build-app ' + join(mac.home, 'Applications/Factory Runner.app.staged'))), 'stages an update');
+  assert.equal(mac.m.installs, 0, 'never runs the plain installer');
   assert.equal(readFileSync(runnerConfig(mac.home), 'utf8'), 'kept');
   assert.ok(!mac.m.calls.some((call) => call.startsWith('interact ')));
 });

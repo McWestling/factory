@@ -19,7 +19,7 @@ export type UpkeepDeps = {
 
 const LABEL = 'com.factory.factory-delegator.runner';
 // Everything the installer bundles from source, checked byte for byte after staging.
-export const BUNDLED = ['job.ts', 'parse-issue.ts', 'runner/runner.ts', 'runner/launchd/install.sh',
+const BUNDLED = ['job.ts', 'parse-issue.ts', 'runner/runner.ts', 'runner/launchd/install.sh',
   'runner/launchd/runner.plist', 'menubar/menubar.plist'];
 const OLD_RUNNER = `The installed Runner predates safe draining, so setup won't restart it. Nothing was changed. To update it safely:
   1. In the Factory Runner menu, turn on Pause new work.

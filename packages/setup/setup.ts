@@ -7,7 +7,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { promisify } from 'node:util';
 import { loadConfig } from '../delegator/runner/runner.ts';
-import { BUNDLED, lastLine, readJson, updateRunner, withLock, type Result, type UpkeepDeps } from '../delegator/upkeep.ts';
+import { lastLine, readJson, updateRunner, withLock, type Result, type UpkeepDeps } from '../delegator/upkeep.ts';
 
 export type SetupDeps = UpkeepDeps & {
   platform: string;
@@ -232,6 +232,8 @@ async function verify(deps: SetupDeps, name: string): Promise<Result> {
 }
 
 const DELEGATOR = 'packages/delegator';
+/** In the state dir while a first Runner install hasn't yet proven it connects. */
+const PENDING = 'runner-install-pending';
 /** The Linear app name Cloud Inbox setup's prefilled registration gives a machine. */
 const appName = (machine: string) => `Factory ${machine}`;
 
@@ -264,12 +266,15 @@ async function provisionInbox(deps: SetupDeps, ask: NonNullable<SetupDeps['ask']
   return { url: `${state.origin}/delegator`, secret: state.config?.machines?.[state.machine]?.bearerSecret, machine: appName(state.machine) };
 }
 
+/** The running Runner's pid from launchd, or 0 when it isn't loaded or isn't running. */
+const runnerPid = (deps: SetupDeps) => deps.exec('launchctl', ['print', `gui/${deps.uid}/com.factory.factory-delegator.runner`], 30_000)
+  .then(({ stdout }) => Number(/^\s*pid = (\d+)$/m.exec(stdout)?.[1] ?? 0), () => 0);
+
 /** Waits for the newly installed Runner to start and reach Cloud Inbox, as launchd and its status.json report it. */
 async function started(deps: SetupDeps, since: number): Promise<Result> {
-  const service = `gui/${deps.uid}/com.factory.factory-delegator.runner`;
   let pid = 0;
   for (let second = 0; second <= 60; second++) {
-    pid = await deps.exec('launchctl', ['print', service], 30_000).then(({ stdout }) => Number(/^\s*pid = (\d+)$/m.exec(stdout)?.[1] ?? 0), () => 0);
+    pid = await runnerPid(deps);
     const status = readJson(join(deps.stateDir, 'status.json'));
     if (pid && status?.pid === pid && Date.parse(status.updatedAt) >= since - 1000 && status.inbox?.status === 'ok') {
       return { ok: true, line: `runner: installed and connected (pid ${pid}); Cloud Inbox answered at ${status.inbox.lastOkAt}.` };
@@ -283,9 +288,11 @@ async function started(deps: SetupDeps, since: number): Promise<Result> {
 /** Offers a first Runner install: reuses a valid config or writes one for an existing or new Cloud Inbox, then proves it connects. */
 async function offerRunner(deps: SetupDeps): Promise<Result> {
   const stop = (ok: boolean, why: string) => ({ ok, line: `runner: not installed. ${why}` });
-  const ask = deps.ask;
-  if (!ask) return stop(true, 'Run npm run setup at a terminal to install it.');
-  if (!/^y/i.test((await ask('Install the Factory Runner, so this Mac takes work delegated in Linear? [y/N] ')).trim())) return stop(true, 'You can install it on a later run.');
+  const ask = deps.ask, pending = join(deps.stateDir, PENDING);
+  // A first install that didn't prove itself connected is finished without asking again.
+  if (existsSync(pending)) deps.print('runner: finishing the install an earlier setup started.');
+  else if (!ask) return stop(true, 'Run npm run setup at a terminal to install it.');
+  else if (!/^y/i.test((await ask('Install the Factory Runner, so this Mac takes work delegated in Linear? [y/N] ')).trim())) return stop(true, 'You can install it on a later run.');
   const has = (file: string, args: string[]) => deps.exec(file, args, 30_000).then(() => true, () => false);
   const missing = [
     !atLeast(deps.nodeVersion, 26) && `The Runner needs Node 26; this is Node ${deps.nodeVersion}.`,
@@ -296,6 +303,7 @@ async function offerRunner(deps: SetupDeps): Promise<Result> {
 
   const path = join(deps.home, '.config/factory-delegator/config.json');
   if (!existsSync(path)) {
+    if (!ask) return stop(false, 'Its config is missing. Rerun npm run setup at a terminal.');
     let inbox: Result | { url: string; secret: string; machine: string };
     if (existsSync(join(deps.root, DELEGATOR, '.cloud-inbox.local.json'))) inbox = await provisionInbox(deps, ask);
     else {
@@ -330,13 +338,20 @@ async function offerRunner(deps: SetupDeps): Promise<Result> {
   try { loadConfig(path); } catch (error) {
     return stop(false, `The existing config isn't valid (${(error as Error).message}). Fix it to match config.example.json, or move it aside, then rerun. Setup never overwrites it.`);
   }
+  // Cleared only once a fresh status shows Cloud Inbox answering, so any earlier failure resumes here.
+  writeFileSync(pending, '', { mode: 0o600 });
   const since = Date.now();
-  try {
-    await deps.exec('sh', [join(deps.root, DELEGATOR, 'runner/launchd/install.sh')], 600_000);
-  } catch (error) {
-    return { ok: false, line: `runner: install failed (${lastLine(error)}). Fix that, then rerun.` };
+  // The plain installer restarts a running Runner without draining it, so a Runner an earlier try started is only checked.
+  if (!await runnerPid(deps)) {
+    try {
+      await deps.exec('sh', [join(deps.root, DELEGATOR, 'runner/launchd/install.sh')], 600_000);
+    } catch (error) {
+      return { ok: false, line: `runner: install failed (${lastLine(error)}). Fix that, then rerun to finish it.` };
+    }
   }
-  return started(deps, since);
+  const result = await started(deps, since);
+  if (result.ok) rmSync(pending, { force: true });
+  return result;
 }
 
 /** Runs setup and returns the exit code: 0 only when every step and every chosen agent's verification passed. */
@@ -345,12 +360,10 @@ export async function setup(deps: SetupDeps): Promise<number> {
   return withLock(deps, async () => {
     const found = deps.agents.length ? deps.agents
       : (await Promise.all(Object.entries(AGENTS).map(([name, agent]) => deps.exec(agent.bin, ['--version'], 30_000).then(() => name, () => null)))).filter((name) => name !== null);
-    // A `.previous` bundle alone is an update interrupted mid-swap, which the updater restores. An app missing
-    // bundled files with no Runner agent is a first install that failed partway, so the install is offered again.
-    const app = join(deps.home, 'Applications', 'Factory Runner.app');
-    const runner = existsSync(`${app}.previous`) || (existsSync(app)
-      && (existsSync(join(deps.home, 'Library/LaunchAgents/com.factory.factory-delegator.runner.plist'))
-        || BUNDLED.every((file) => existsSync(join(app, 'Contents/Resources', file)))));
+    // A `.previous` bundle alone is an update interrupted mid-swap, which the updater restores.
+    // A pending first install isn't an installation yet, whatever it left behind; offerRunner finishes it.
+    const runner = !existsSync(join(deps.stateDir, PENDING))
+      && ['Factory Runner.app', 'Factory Runner.app.previous'].some((app) => existsSync(join(deps.home, 'Applications', app)));
     const problems = found.length ? await prerequisites(deps, found, runner)
       : ['No agent CLI found. Install Claude Code (claude), Codex (codex) or Cursor (agent), then rerun.'];
     if (problems.length) {
