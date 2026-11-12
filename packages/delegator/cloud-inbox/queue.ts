@@ -324,15 +324,22 @@ export class MachineQueue {
           // shortcut: public metadata only, add GitHub credentials when private PR detection is required.
           const response = await this.#fetch(`https://api.github.com/repos/${path[1]}/${path[2]}/pulls/${path[4]}`, {
             headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'factory-delegator' },
-            signal: metadataSignal, redirect: 'error',
+            // Workers' fetch throws on `redirect: 'error'`; a redirect stays unverified as a non-2xx.
+            signal: metadataSignal, redirect: 'manual',
           });
-          if (!response.ok) continue;
+          if (!response.ok) {
+            log({ event: 'watch', session: id, outcome: `pr-metadata-${response.status}` });
+            continue;
+          }
           const pr = await response.json() as { base?: { repo?: { full_name?: string } }; head?: { ref?: string; repo?: { full_name?: string } } };
           metadataSignal.throwIfAborted();
           const repo = String(launch.launch_repo).toLowerCase();
           if (pr.base?.repo?.full_name?.toLowerCase() === repo && pr.head?.repo?.full_name?.toLowerCase() === repo
             && pr.head?.ref === launch.launch_branch) pullRequests.push(url);
-        } catch { /* Unverifiable ownership stays watched. */ }
+        } catch {
+          // Unverifiable ownership stays watched.
+          log({ event: 'watch', session: id, outcome: 'pr-metadata-failed' });
+        }
       }
     }
     // A stop, replacement or reclaim may have landed during metadata reads.

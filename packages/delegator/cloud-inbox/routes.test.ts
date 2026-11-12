@@ -78,6 +78,8 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void) {
     }
     if (String(input).startsWith('https://api.github.com/')) {
       assert.equal(new Headers(init?.headers).get('Authorization'), null);
+      // As in Workers, whose fetch throws on `redirect: 'error'`.
+      if (init?.redirect === 'error') throw new TypeError('Invalid redirect value, must be one of "follow" or "manual"');
       return linear.github(String(input), init);
     }
     assert.equal(String(input), 'https://api.linear.app/graphql');

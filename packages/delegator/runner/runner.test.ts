@@ -339,9 +339,13 @@ function realInbox() {
   let sessionStatus = 'active';
   let pullRequests: string[] = [];
   const linear: typeof fetch = async (input, init) => {
-    if (String(input).startsWith('https://api.github.com/')) return Response.json({
-      base: { repo: { full_name: 'owner/repo' } }, head: { ref: goodTask.branchName, repo: { full_name: 'owner/repo' } },
-    });
+    if (String(input).startsWith('https://api.github.com/')) {
+      // As in Workers, whose fetch throws on `redirect: 'error'`.
+      if (init?.redirect === 'error') throw new TypeError('Invalid redirect value, must be one of "follow" or "manual"');
+      return Response.json({
+        base: { repo: { full_name: 'owner/repo' } }, head: { ref: goodTask.branchName, repo: { full_name: 'owner/repo' } },
+      });
+    }
     const { query, variables } = JSON.parse(String(init?.body));
     if (query.includes('agentActivityCreate')) {
       if (variables.input.content.type === 'thought') thoughts.push(variables.input.content.body);
@@ -1022,4 +1026,37 @@ test('restart recovery accepts only the matching PR after contextual attachments
   await watchJobs(config, { ...f.deps });
   await inbox.queue.deliver();
   assert.deepEqual(inbox.responses, ['Opened https://github.com/owner/repo/pull/7.']);
+});
+
+test("a matching PR completes its watch through Cloud Inbox's Workers fetch", async () => {
+  const inbox = realInbox();
+  await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
+  const f = fakes();
+  f.deps.fetch = inbox.fetch;
+  await poll(config, f.deps);
+  inbox.prs(['https://github.com/owner/repo/pull/7']);
+  await watchJobs(config, f.deps);
+  await inbox.queue.deliver();
+  assert.deepEqual(inbox.links, ['https://github.com/owner/repo/pull/7']);
+  assert.deepEqual(inbox.responses, ['Opened https://github.com/owner/repo/pull/7.']);
+  assert.deepEqual(JSON.parse(readFileSync(f.deps.watches, 'utf8')), {});
+});
+
+test('a watch left open logs its session and why', async () => {
+  const f = await watching();
+  const lines: Record<string, string>[] = [];
+  f.deps.log = (fields) => lines.push(fields);
+  await watchJobs(config, f.deps);
+  f.status.pullRequests = ['https://github.com/owner/repo/pull/7'];
+  const fetch = f.deps.fetch;
+  f.deps.fetch = async (input, init) => {
+    const response = await fetch(input, init);
+    if (String(input).includes('/pull-request')) f.status.pullRequests = [];
+    return response;
+  };
+  await watchJobs(config, f.deps);
+  assert.deepEqual(lines, [
+    { event: 'watch', session: 'session-1', outcome: 'no-pr-yet' },
+    { event: 'watch', session: 'session-1', outcome: 'pr-unconfirmed' },
+  ]);
 });
