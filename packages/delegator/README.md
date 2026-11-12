@@ -133,8 +133,9 @@ Copy [config.example.json](config.example.json) to
 `~/.config/factory-delegator/config.json`, fill it in and `chmod 600` it. The Runner
 refuses to start without it, with a looser mode, or with any key missing or empty;
 nothing has a default except `skill` (`do-implement`). `machine` is the Linear app's
-name, used in messages. Each `models` key is a Preferred models name. The required
-`levels` map names a configured model for each of `light`, `standard` and `deep`.
+name, used in messages. Each `models` key is a Preferred models name, with an effort
+suffix when one model runs at several efforts. The required `levels` map names a
+configured model for each of `light`, `standard` and `deep`.
 Repos come from Orca at pickup; an old `repos` config key is ignored and can be removed.
 
 ```sh
@@ -332,14 +333,16 @@ one line for it, with no question asked. It exits non-zero when the update fails
 
 - **A running Runner** is asked to drain: setup writes `drain.json` in the state
   directory, the Runner stops claiming and checking watches, and writes
-  `drain.json.ack` only when no claim, job or open watch remains. Without that
-  acknowledgment within 60 seconds, setup refuses and changes nothing. A fresh
-  idle `status.json` alone doesn't count.
+  `drain.json.ack` only when no claim, job or watch check is in flight. Saved
+  watches don't block it: they stay in `watching.json` and the new Runner resumes
+  them. Without that acknowledgment within 60 seconds, setup refuses and changes
+  nothing. A fresh idle `status.json` alone doesn't count.
 - **The new bundle** is built with `install.sh --build-app <dir>`, checked file for
   file against this checkout, and run with `--check-config` against your config
   before anything is replaced. A Runner that doesn't come back is swapped for the
   previous bundle and restarted.
-- **A stopped Runner** is refreshed and stays stopped. Pause, **Start at login** and
+- **A stopped Runner** is refreshed and stays stopped, unless its `watching.json` is
+  unreadable. Pause, **Start at login** and
   config are never touched. Run `npm run menubar` from the repo root to restart the menu bar app on its new version.
 - **A Runner from before draining** is refused, with steps to pause, stop and rerun.
 

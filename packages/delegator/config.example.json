@@ -4,13 +4,14 @@
   "machine": "<this machine's Linear app name>",
   "allowedCreatorIds": ["<Linear user id allowed to delegate>"],
   "models": {
-    "Claude Opus 5.5": { "agent": "claude", "model": "<model id>", "effort": "high" },
-    "GPT-6 Luna": { "agent": "codex", "model": "<model id>" }
+    "Claude Opus 5.5 medium": { "agent": "claude", "model": "<model id>", "effort": "medium" },
+    "Claude Opus 5.5 low": { "agent": "claude", "model": "<model id>", "effort": "low" },
+    "GPT-6 Luna": { "agent": "codex", "model": "<model id>", "effort": "high" }
   },
   "levels": {
     "light": "GPT-6 Luna",
-    "standard": "Claude Opus 5.5",
-    "deep": "Claude Opus 5.5"
+    "standard": "Claude Opus 5.5 low",
+    "deep": "Claude Opus 5.5 medium"
   },
   "skill": "do-implement"
 }

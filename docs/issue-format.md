@@ -43,6 +43,10 @@ Each machine keeps a `models` map from model names to agent, model identifier an
 }
 ```
 
+To run one model at more than one effort, give it one `models` entry per effort under free-form names, such as `"Claude Opus 5.5 medium"` with effort `medium` for `deep` and `"Claude Opus 5.5 low"` with effort `low` for `standard`. A `[model=]` pin must then name the full entry: pins match names by normalized substring, so `[model=opus]` or `[model=Claude Opus 5.5]` matches both entries, is ambiguous, and falls back to the level.
+
+Luna always launches with at least `high` effort, including when pinned: missing or lower effort is raised to `high`; `xhigh` and `max` are preserved. This minimum applies regardless of level.
+
 All three keys are required, and every value must name a key in `models`. Invalid mappings stop the Runner at config load. See `packages/delegator/config.example.json` for a complete example.
 
 The skill is not part of the issue format. Runner config's optional `skill` key selects it and defaults to `do-implement`; its value must match `^[a-z0-9-]+$`. Delegator prompts Codex with `$<skill> <issue id>` and other agents with `/<skill> <issue id>`, followed by the delegated-run line. Orca setup runs only for `do-implement` and is skipped for other skills. The configured skill decides what it accepts; a `wayfinder:` label is not a Delegator gate.

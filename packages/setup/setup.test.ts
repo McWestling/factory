@@ -411,7 +411,7 @@ test('with nobody at the terminal, a missing Runner is left alone', async () => 
 });
 
 /** The answers after choosing a Cloud Inbox: Linear user id, then a model id for each model in config.example.json. */
-const RUNNER_ANSWERS = ['user-id', 'claude-model', 'codex-model'];
+const RUNNER_ANSWERS = ['user-id', 'claude-model', 'claude-model', 'codex-model'];
 const secretsIn = (text: string) => ['admin-secret-value', 'client-secret-value', 'webhook-secret-value', BEARER].filter((secret) => text.includes(secret));
 
 test('a new Cloud Inbox is set up through its own CLI, then the Runner is installed, configured and shown connected', async () => {
@@ -427,7 +427,7 @@ test('a new Cloud Inbox is set up through its own CLI, then the Runner is instal
   assert.equal(config.bearerSecret, BEARER);
   assert.equal(config.machine, 'Factory mac');
   assert.deepEqual(config.allowedCreatorIds, ['user-id']);
-  assert.deepEqual(Object.values(config.models).map((model) => model.model), ['claude-model', 'codex-model']);
+  assert.deepEqual(Object.values(config.models).map((model) => model.model), ['claude-model', 'claude-model', 'codex-model']);
   assert.deepEqual(secretsIn(readFileSync(path, 'utf8')), [BEARER], 'holds the machine secret only, never app or owner credentials');
   assert.match(runnerLine(mac.m.output.filter((line) => !line.includes('saved its config')))!, /^runner: installed and connected \(pid 4242\); Cloud Inbox answered at /);
   assert.deepEqual(secretsIn(mac.m.output.join('\n')), [], 'prints no secret');

@@ -22,6 +22,8 @@ For upstream skill names below (`grilling`, `domain-modeling`, `research`, `prot
 - **Others are editing too.** Several sessions may work one map at once. Re-read an issue before you change it if time has passed, and patch descriptions instead of rewriting them.
 - **Real references only.** Write cross-references with real ids. A placeholder such as `ABC-<n>` links to some other issue or to nothing.
 
+**Asking.** Ask with AskUserQuestion where the client has it (multiSelect when picking several items, up to 4 questions per call), otherwise in chat.
+
 ## Workspace values
 
 This skill holds the procedure. The values (team, statuses, labels, templates, routing, models, views, comment shape) live in the repo's **tracker doc**. Find it through `AGENTS.md`, which names either a path in this repo or a doc in another repo (like `docs/issue-tracker.md` in `owner/name`); read another repo's doc from its checkout, found through `orca repo list --json`. If `AGENTS.md` names none, use `docs/issue-tracker.md`. Read it before you touch the tracker. Where this file says "per X", X is a heading in that doc.

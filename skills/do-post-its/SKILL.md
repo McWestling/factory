@@ -9,6 +9,8 @@ Get it right before getting it done. A misread filed as an issue costs more than
 
 This skill is one of the factory's `do-` skills and expects its siblings to be installed alongside it.
 
+**Asking.** Ask with AskUserQuestion where the client has it (multiSelect when picking several items, up to 4 questions per call), otherwise in chat.
+
 ## The tracker doc
 
 The procedure lives here; the workspace values live in the repo's tracker doc. Find it through `AGENTS.md`, which names either a path in this repo or a doc in another repo (like `docs/issue-tracker.md` in `owner/name`); read another repo's doc from its checkout, found through `orca repo list --json`. If `AGENTS.md` names none, use `docs/issue-tracker.md`. Read it before filing. This skill uses these headings:

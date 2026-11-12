@@ -219,10 +219,18 @@ test('Codex uses a dollar prefix for do-implement', () => {
   assert.ok(args.includes('--prompt=$do-implement ABC-123\nDelegated run: nobody is watching this session.'));
 });
 
-test('a skill other than do-implement skips setup, and a model without effort omits it', () => {
+test('Luna launches at high effort minimum and preserves higher effort', () => {
+  for (const effort of [undefined, 'low', 'medium', 'high', 'xhigh', 'max']) {
+    const settings = { ...config.models['GPT-6 Luna']!, effort };
+    const args = launchArgs({ ...config, models: { ...config.models, 'GPT-6 Luna': settings } }, '/repos/repo', 'GPT-6 Luna', goodTask);
+    assert.equal(args[args.indexOf('--effort') + 1], effort === 'xhigh' || effort === 'max' ? effort : 'high');
+  }
+});
+
+test('a skill other than do-implement skips setup and Luna still gets high effort', () => {
   const args = launchArgs({ ...config, skill: 'do-refine' }, '/repos/repo', 'GPT-6 Luna', goodTask);
   assert.deepEqual(args, ['worktree', 'create', '--name', 'abc-123-do-the-thing', '--repo', 'path:/repos/repo',
-    '--branch', 'someone/abc-123-do-the-thing', '--agent', 'codex', '--model', 'gpt-6-luna', '--prompt=$do-refine ABC-123\nDelegated run: nobody is watching this session.',
+    '--branch', 'someone/abc-123-do-the-thing', '--agent', 'codex', '--model', 'gpt-6-luna', '--effort', 'high', '--prompt=$do-refine ABC-123\nDelegated run: nobody is watching this session.',
     '--setup', 'skip', '--linear-issue', 'ABC-123', '--json']);
 });
 
@@ -642,6 +650,16 @@ test('the config loads, defaults the skill, and the example has every key', () =
   assert.deepEqual(exampleKeys, [...Object.keys(config)].sort());
 });
 
+test('the example loads once its placeholders are filled, with one model at two efforts', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'runner-'));
+  const filled = JSON.parse(readFileSync(example, 'utf8').replace(/<[^>]*>/g, 'x'));
+  const { models, levels } = loadConfig(writeConfig(dir, filled));
+  const [deep, standard] = [models[levels.deep]!, models[levels.standard]!];
+  assert.notEqual(levels.deep, levels.standard);
+  assert.deepEqual([deep.agent, deep.model], [standard.agent, standard.model]);
+  assert.notEqual(deep.effort, standard.effort);
+});
+
 const badConfigs: [string, unknown][] = [
   ['no allowlist', { ...valid, allowedCreatorIds: undefined }],
   ['an empty allowlist', { ...valid, allowedCreatorIds: [] }],
@@ -946,13 +964,25 @@ test('a drain is not acknowledged while a claim is in flight behind a fresh idle
   assert.deepEqual(f.requests, [], 'nothing new starts while drained');
 });
 
-test('open watches, a stale request or a corrupt request are never acknowledged', async () => {
+test('saved watches are acknowledged, since they resume after a restart', async () => {
   const f = fakes();
   f.deps.drain = join(dirname(f.deps.status), 'drain.json');
   await handleJob(config, f.deps, claim);
-  requestDrain(f.deps, 'busy');
+  assert.ok(JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1'], 'the launch is watched');
+  requestDrain(f.deps, 'watching');
   acknowledgeDrain(f.deps);
-  assert.equal(ack(f.deps), null);
+  assert.deepEqual(ack(f.deps), { nonce: 'watching', pid: process.pid });
+});
+
+test('unreadable watches, a stale request or a corrupt request are never acknowledged', async () => {
+  const f = fakes();
+  f.deps.drain = join(dirname(f.deps.status), 'drain.json');
+  for (const contents of ['{"s":', '[]', '{"s":{}}']) {
+    writeFileSync(f.deps.watches, contents);
+    requestDrain(f.deps, 'unreadable');
+    acknowledgeDrain(f.deps);
+    assert.equal(ack(f.deps), null, contents);
+  }
   writeFileSync(f.deps.watches, '{}');
   requestDrain(f.deps, 'old', Date.now() - 1);
   acknowledgeDrain(f.deps);
