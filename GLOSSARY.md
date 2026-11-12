@@ -9,7 +9,7 @@ The identifier Cloud Inbox issues with each claim attempt; the Runner must send 
 _Avoid_: lease id, job id
 
 **Cloud Inbox**:
-Delegator's always-on hosted service, a Cloudflare Worker: it installs each machine's Linear app, alone holds Linear credentials, takes Linear's webhooks and queues jobs for each machine's Runner.
+Delegator's always-on hosted service, a Cloudflare Worker: it installs the one `Delegator` Linear app, alone holds Linear credentials, takes Linear's webhooks and keeps one shared queue that any machine's Runner can claim from.
 _Avoid_: relay, proxy, server
 
 **Delegated run**:
@@ -21,7 +21,7 @@ The system that starts work on a machine from a Linear delegation: Cloud Inbox, 
 _Avoid_: Dispatch, Factory Dispatch
 
 **Job**:
-The `{issueId, sessionId}` payload Cloud Inbox queues for a machine's Runner; the Runner reads the issue through Cloud Inbox at pickup.
+The `{issueId, sessionId}` payload Cloud Inbox queues for whichever machine's Runner claims it first; the Runner reads the issue through Cloud Inbox at pickup.
 _Avoid_: task, dispatch payload
 
 **Job state**:
@@ -33,7 +33,7 @@ The 10 minutes a claimed job stays with the Runner that claimed it; when it expi
 _Avoid_: lock, timeout
 
 **Machine**:
-The computer that runs jobs, with its own Linear app and its own Durable Object in Cloud Inbox, named by its key in Cloud Inbox's `MACHINES` secret. Its Runner is the process on it.
+The computer that runs jobs, named by its key in Cloud Inbox's `MACHINES` secret, which maps it to its own bearer secret. Every machine shares the one `Delegator` app and queue. Its Runner is the process on it.
 _Avoid_: host
 
 **Runner**:

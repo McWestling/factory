@@ -1,9 +1,9 @@
 // Cloud Inbox's webhook route and Runner API. The Worker hands each request here with
-// a way to reach a machine's queue, so `node:test` can drive the whole route.
+// a way to reach the shared queue, so `node:test` can drive the whole route.
 
 import { isLaunchEvidence } from '../job.ts';
 import { hex, timingSafeEqual, type Config } from './auth.ts';
-import { MAX_UPDATE_CHARS, type AgentEvent, type MachineQueue, type Refusal, type UpdateType } from './queue.ts';
+import { MAX_UPDATE_CHARS, type AgentEvent, type JobQueue, type Refusal, type UpdateType } from './queue.ts';
 
 const TIMESTAMP_WINDOW_MS = 60_000;
 /** Far above any agent session event; anything larger is refused before it's parsed. */
@@ -22,8 +22,8 @@ export function underBasePath(request: Request): Request | null {
   return new Request(url, request);
 }
 
-export type Machines = (machine: string) =>
-  Pick<MachineQueue, 'webhook' | 'claim' | 'finish' | 'task' | 'update' | 'watch' | 'watching' | 'linkPullRequest'>;
+/** The shared queue, as the Durable Object exposes it. */
+export type Inbox = Pick<JobQueue, 'webhook' | 'claim' | 'finish' | 'task' | 'update' | 'watch' | 'watching' | 'linkPullRequest'>;
 
 // Logs ids and outcomes only: never bodies, headers, tokens or state.
 export const log = (fields: Record<string, string>) => console.log(JSON.stringify(fields));
@@ -67,8 +67,8 @@ async function readBounded(request: Request, limit: number): Promise<ArrayBuffer
   return new Blob(chunks).arrayBuffer();
 }
 
-/** `POST /webhook`: every check runs before the machine's queue sees the event. */
-export async function handleWebhook(request: Request, config: Config, machines: Machines, now = Date.now()) {
+/** `POST /webhook`: every check runs before the queue sees the event. */
+export async function handleWebhook(request: Request, config: Config, inbox: Inbox, now = Date.now()) {
   const reject = (status: number, outcome: string) => {
     log({ event: 'webhook', outcome });
     return text(status, status === 401 ? 'Unauthorized' : status === 413 ? 'Payload too large' : 'Forbidden');
@@ -86,21 +86,16 @@ export async function handleWebhook(request: Request, config: Config, machines: 
   }
   if (typeof payload !== 'object' || payload === null) return text(400, 'Bad request');
 
-  // The signature names the machine: data-change events such as `Attachment` carry no
-  // `oauthClientId`. Every secret is tried, so timing doesn't tell which one matched.
-  const machineList = Object.entries(config.machines);
-  const verified = await Promise.all(machineList.map(([, m]) => signatureMatches(m.webhookSecret, raw, signature)));
-  const entry = machineList.find((_, i) => verified[i]);
-  if (!entry) return reject(401, 'signature');
-  const [machine, { clientId }] = entry;
-  if (payload.oauthClientId != null && payload.oauthClientId !== clientId) return reject(401, 'unknown-client');
+  // Data-change events such as `Attachment` carry no `oauthClientId`, so the signature comes first.
+  if (!(await signatureMatches(config.app.webhookSecret, raw, signature))) return reject(401, 'signature');
+  if (payload.oauthClientId != null && payload.oauthClientId !== config.app.clientId) return reject(401, 'unknown-client');
   const sent = payload.webhookTimestamp;
   if (typeof sent !== 'number' || Math.abs(now - sent) > TIMESTAMP_WINDOW_MS) return reject(401, 'stale');
   if (payload.organizationId !== config.orgId) return reject(403, 'org');
 
   const { type, action, appUserId, agentSession, agentActivity } = payload;
   if (type !== 'AgentSessionEvent' || (action !== 'created' && action !== 'prompted')) {
-    log({ event: 'webhook', machine, outcome: 'ignored' });
+    log({ event: 'webhook', outcome: 'ignored' });
     return text(200, 'OK');
   }
   const sessionId = agentSession?.id;
@@ -119,8 +114,8 @@ export async function handleWebhook(request: Request, config: Config, machines: 
     stop,
   };
 
-  const result = await machines(machine).webhook(event);
-  log({ event: 'webhook', machine, action, session: sessionId, outcome: result });
+  const result = await inbox.webhook(event);
+  log({ event: 'webhook', action, session: sessionId, outcome: result });
   return result === 'app-user' ? text(403, 'Forbidden') : text(200, 'OK');
 }
 
@@ -154,30 +149,29 @@ async function readUpdate(request: Request): Promise<{ type: UpdateType; body: s
  * each with `?claimId=<claimId>`. The machine comes only from the bearer secret that
  * matched, and the issue and session only from the job, never from the request.
  */
-export async function handleRunner(request: Request, config: Config, machines: Machines) {
+export async function handleRunner(request: Request, config: Config, inbox: Inbox) {
   const header = request.headers.get('Authorization') ?? '';
   const secret = header.startsWith('Bearer ') ? header.slice(7) : '';
   let machine: string | undefined;
   // Compare against every machine, so the time taken doesn't say which matched.
-  for (const [name, m] of Object.entries(config.machines)) {
-    if (timingSafeEqual(secret, m.bearerSecret)) machine = name;
+  for (const [name, bearerSecret] of Object.entries(config.machines)) {
+    if (timingSafeEqual(secret, bearerSecret)) machine = name;
   }
   if (!machine) {
     log({ event: 'runner', outcome: 'unauthorized' });
     return text(401, 'Unauthorized', { 'WWW-Authenticate': 'Bearer' });
   }
 
-  const queue = machines(machine);
   const url = new URL(request.url);
   const [, route, id, op, ...rest] = url.pathname.split('/');
   const method = request.method;
 
   if (method === 'GET' && route === 'jobs' && id === 'watching' && op === undefined) {
-    return Response.json(await queue.watching());
+    return Response.json(await inbox.watching(machine));
   }
 
   if (method === 'POST' && route === 'jobs' && id === 'claim' && op === undefined) {
-    const job = await queue.claim();
+    const job = await inbox.claim(machine);
     log({ event: 'claim', machine, outcome: job ? 'claimed' : 'empty', ...(job && { session: job.sessionId }) });
     return job ? Response.json(job) : new Response(null, { status: 204 });
   }
@@ -202,7 +196,7 @@ export async function handleRunner(request: Request, config: Config, machines: M
         if (!isLaunchEvidence(launch)) return text(400, 'Invalid launch evidence');
       }
     }
-    const recorded = await queue.finish(id, claimId, op, launch);
+    const recorded = await inbox.finish(machine, id, claimId, op, launch);
     if (!recorded) return refused('not-claimed');
     done('recorded');
     return new Response(null, { status: 204 });
@@ -211,14 +205,14 @@ export async function handleRunner(request: Request, config: Config, machines: M
     const update = await readUpdate(request);
     if (update === 'too-large') return text(413, 'Payload too large');
     if (!update) return text(400, `Expected {type: thought|response|error, body: 1-${MAX_UPDATE_CHARS} characters}`);
-    const result = await queue.update(id, claimId, update.type, update.body);
+    const result = await inbox.update(machine, id, claimId, update.type, update.body);
     if (result !== 'queued') return refused(result);
     done('queued', { type: update.type });
     return new Response(null, { status: 202 });
   }
-  const result = op === 'task' ? await queue.task(id, claimId)
-    : op === 'watch' ? await queue.watch(id, claimId)
-    : await queue.linkPullRequest(id, claimId);
+  const result = op === 'task' ? await inbox.task(machine, id, claimId)
+    : op === 'watch' ? await inbox.watch(machine, id, claimId)
+    : await inbox.linkPullRequest(machine, id, claimId);
   if (typeof result === 'string') return refused(result);
   done('ok');
   return Response.json(result);
