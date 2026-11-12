@@ -1,5 +1,5 @@
-// `npm run setup`: installs or refreshes Factory on a Mac from this checkout's origin, then proves each
-// chosen agent can reach Linear and discover the skills. Run it again any time to update.
+// `npm run setup`: installs or refreshes Factory on a Mac from this checkout's origin, grants the chosen agents
+// read access to checkout folders, then proves each can reach Linear and discover the skills. Run it again any time to update.
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -8,6 +8,7 @@ import { createInterface } from 'node:readline/promises';
 import { promisify } from 'node:util';
 import { loadConfig } from '../delegator/runner/runner.ts';
 import { lastLine, outsideRunner, readJson, updateRunner, withLock, type Result, type UpkeepDeps } from '../delegator/upkeep.ts';
+import { readRoots } from './read-roots.ts';
 
 export type SetupDeps = UpkeepDeps & {
   platform: string;
@@ -400,6 +401,7 @@ export async function setup(deps: SetupDeps): Promise<number> {
     for (const name of found) { results.push(await support(deps, name, forms)); deps.print(results.at(-1)!.line); }
     results.push(runner ? await updateRunner(deps) : await offerRunner(deps).catch((error: Error) => ({ ok: false, line: `runner: not installed (${error.message}).` })));
     deps.print(results.at(-1)!.line);
+    for (const result of await readRoots(deps, found)) { results.push(result); deps.print(result.line); }
     for (const name of found) { results.push(await verify(deps, name)); deps.print(results.at(-1)!.line); }
     return results.every((result) => result.ok) ? 0 : 1;
   });
