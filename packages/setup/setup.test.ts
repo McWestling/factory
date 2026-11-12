@@ -318,6 +318,9 @@ for (const [label, change, message] of [
 test('an agent with both the plugin and bare supporting skills is reported, not changed', async () => {
   const mac = machine();
   mac.m.support.claude = 'plugin';
+  const plugin = join(mac.home, '.claude/plugins/cache/claude-plugins-official/mattpocock-skills/1.0/.claude-plugin');
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(join(plugin, 'plugin.json'), JSON.stringify({ skills: SUPPORT.map((name) => `./skills/${name}`) }));
   mac.m.deps.exec = ((exec) => async (file: string, args: string[], timeout: number) => {
     if (file === 'npx' && args.includes('ls')) {
       return { stdout: JSON.stringify(SUPPORT.map((name) => ({ name, source: 'mattpocock/skills', agents: ['Claude Code', 'Codex'] }))) };
@@ -325,8 +328,30 @@ test('an agent with both the plugin and bare supporting skills is reported, not 
     return exec(file, args, timeout);
   })(mac.m.deps.exec);
   assert.equal(await mac.run(), 1);
-  assert.match(mac.m.output.join('\n'), /supporting skills \(claude\): both the mattpocock-skills plugin and bare skills/);
+  assert.match(mac.m.output.join('\n'), /npx --yes skills remove 'grilling' 'domain-modeling' 'research' 'prototype' 'tdd' 'codebase-design' 'code-review' -g -a claude-code -y/);
+  assert.match(mac.m.output.join('\n'), /No CLI-only skills would be lost/);
   assert.deepEqual(changes(mac.m.calls), ['npx --yes skills add Someone/factory -g -y --skill * -a claude-code']);
+});
+
+test('Codex conflict names CLI-only skills and leaves unrelated skills alone', async () => {
+  const mac = machine({ agents: ['codex'] });
+  mac.m.support.codex = 'plugin';
+  const plugin = join(mac.home, '.codex/plugins/cache/mattpocock/mattpocock-skills/1.0/.claude-plugin');
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(join(plugin, 'plugin.json'), JSON.stringify({ skills: ['./skills/tdd', './skills/pr'] }));
+  mac.m.deps.exec = ((exec) => async (file: string, args: string[], timeout: number) => {
+    if (file === 'npx' && args.includes('ls')) return { stdout: JSON.stringify([
+      ...['tdd', 'pr', 'old-skill'].map((name) => ({ name, source: 'mattpocock/skills', agents: ['Codex'] })),
+      { name: 'keep-me', source: 'other/repo', agents: ['Codex'] },
+    ]) };
+    return exec(file, args, timeout);
+  })(mac.m.deps.exec);
+  assert.equal(await mac.run(), 1);
+  const line = mac.m.output.find((line) => line.startsWith('supporting skills (codex)'))!;
+  assert.match(line, /npx --yes skills remove 'tdd' 'pr' 'old-skill' -g -y/);
+  assert.match(line, /The plugin doesn't provide: old-skill/);
+  assert.doesNotMatch(line, /keep-me/);
+  assert.deepEqual(changes(mac.m.calls), ['npx --yes skills add Someone/factory -g -y --skill * -a codex']);
 });
 
 test("a CLI install that would expose bare skills to Codex's plugin is deferred", async () => {

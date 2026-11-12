@@ -108,28 +108,43 @@ async function supportForms(deps: SetupDeps) {
     codex: codex.find((plugin) => plugin.pluginId.startsWith(`${PLUGIN}@`) && plugin.enabled)?.pluginId,
   };
   const bare = ((await json('npx', ['--yes', 'skills', 'ls', '-g', '--json'])) ?? []) as { name: string; source?: string; agents?: string[] }[];
-  const cli = (name: string) => bare.some((skill) => SUPPORT.includes(skill.name)
-    && String(skill.source).toLowerCase().includes('mattpocock/skills') && skill.agents?.includes(AGENTS[name]!.display));
-  return { plugins, cli };
+  const cli = (name: string) => bare.filter((skill) => String(skill.source).toLowerCase().includes('mattpocock/skills') && skill.agents?.includes(AGENTS[name]!.display));
+  const pluginSkills = (name: string): string[] => {
+    const marketplace = plugins[name]?.split('@')[1];
+    const cache = join(deps.home, `.${name}`, 'plugins', 'cache', marketplace ?? '', PLUGIN);
+    const installed = readJson(join(deps.home, `.${name}`, 'plugins', 'installed_plugins.json'))?.plugins?.[plugins[name] ?? '']?.[0]?.installPath;
+    const versions = existsSync(cache) ? readdirSync(cache).sort((a, b) => b.localeCompare(a, undefined, { numeric: true })) : [];
+    const directory = installed ?? (versions[0] ? join(cache, versions[0]) : null);
+    const skills = directory && readJson(join(directory, '.claude-plugin', 'plugin.json'))?.skills;
+    return Array.isArray(skills) ? skills.map((path: string) => path.split('/').at(-1)!) : [];
+  };
+  return { plugins, cli, pluginSkills };
 }
 
 /** Keeps each chosen agent's existing form of the supporting skills current, or installs one, plugin first. */
 async function support(deps: SetupDeps, name: string, forms: Awaited<ReturnType<typeof supportForms>>): Promise<Result> {
   const run = (file: string, ...args: string[]) => deps.exec(file, args, 600_000);
   const plugin = forms.plugins[name];
+  const bare = forms.cli(name);
+  const hasCli = bare.some((skill) => SUPPORT.includes(skill.name));
   const done = (line: string) => ({ ok: true, line: `supporting skills (${name}): ${line}.` });
   const failed = (line: string) => ({ ok: false, line: `supporting skills (${name}): ${line}` });
   // The skills CLI keeps bare copies in ~/.agents/skills, which Codex reads, so a CLI install beside Codex's plugin duplicates them there.
   const cliBlocked = name !== 'codex' && forms.plugins.codex
     ? failed(`not installed. The skills CLI would also expose bare copies to Codex, which uses the ${PLUGIN} plugin. Choose one form for both agents, then rerun.`) : null;
   try {
-    if (plugin && forms.cli(name)) return failed(`both the ${PLUGIN} plugin and bare skills from the skills CLI are installed. Remove one, then rerun. Nothing was changed.`);
+    if (plugin && hasCli) {
+      const provided = forms.pluginSkills(name);
+      const extra = bare.map(({ name: skill }) => skill).filter((skill) => !provided.includes(skill));
+      const command = `npx --yes skills remove ${bare.map(({ name: skill }) => `'${skill.replaceAll("'", "'\\''")}'`).join(' ')} -g${name === 'codex' ? '' : ` -a ${AGENTS[name]!.id}`} -y`;
+      return failed(`both the ${PLUGIN} plugin and bare skills from the skills CLI are installed. Remove the CLI copies, then rerun:\n${command}\n${name === 'codex' ? 'Codex reads the shared CLI copies, so this removes these skills for all agents. ' : ''}${provided.length ? (extra.length ? `The plugin doesn't provide: ${extra.join(', ')}. Removing the CLI copies would lose these skills.` : 'No CLI-only skills would be lost.') : `Could not read the plugin skill list. Check these skills before removing: ${extra.join(', ')}.`} Nothing was changed.`);
+    }
     if (plugin && name === 'claude') { await run('claude', 'plugin', 'update', plugin); return done(`refreshed the ${plugin} plugin`); }
     if (plugin) { await run('codex', 'plugin', 'marketplace', 'upgrade', plugin.split('@')[1]!); return done(`refreshed the ${plugin} plugin`); }
-    if (forms.cli(name) || !AGENTS[name]!.plugin) {
+    if (hasCli || !AGENTS[name]!.plugin) {
       if (cliBlocked) return cliBlocked;
       await run('npx', '--yes', 'skills', 'add', 'mattpocock/skills', '--skill', '*', '-g', '-a', AGENTS[name]!.id, '-y');
-      return done(forms.cli(name) ? 'refreshed with the skills CLI' : 'installed with the skills CLI');
+      return done(hasCli ? 'refreshed with the skills CLI' : 'installed with the skills CLI');
     }
     if (name === 'claude') { await run('claude', 'plugin', 'install', `${PLUGIN}@claude-plugins-official`); return done(`installed the ${PLUGIN} plugin`); }
     await run('codex', 'plugin', 'marketplace', 'add', 'mattpocock/skills');
