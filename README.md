@@ -81,10 +81,10 @@ One command sets up or refreshes Factory on a Mac: `npm run setup`, from a clean
 
 - It checks Git, Node.js, the GitHub CLI and your agent CLIs before changing anything, and installs none of them.
 - It installs or refreshes every Factory skill from the checkout’s `origin`, and the supporting skills in each agent’s existing form: the plugin for a new Claude Code or Codex install, the skills CLI otherwise. Agents you didn’t choose are left alone.
-- It safely updates an existing Runner; see [what it checks](packages/delegator/README.md#update-after-merging-factory-changes).
+- At a terminal, it can optionally guide you through Cloud Inbox and install the Runner on this Mac; see [Install with setup](packages/delegator/README.md#install-with-setup). Once the Runner is installed, the same command safely refreshes it; see [what it checks](packages/delegator/README.md#update-after-merging-factory-changes).
 - It starts each agent fresh to confirm Linear’s MCP `whoami` answers and every skill is discoverable. Cursor’s skills can’t be checked this way, so setup reports Cursor as unverified.
 
-It exits non-zero until every step passes; at a terminal, it waits for each fix and checks again. The Runner is an optional follow-up: [install it](packages/delegator/README.md#install-and-control-the-runner) once, and setup keeps it updated. To restart the Runner’s menu bar app, run `npm run menubar`.
+It exits non-zero until every step passes; at a terminal, it waits for each fix and checks again. Declining the Runner leaves it and Cloud Inbox untouched, and setup still passes. To restart the Runner’s menu bar app, run `npm run menubar`.
 
 ## Contributing
 

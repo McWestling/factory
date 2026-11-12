@@ -286,6 +286,32 @@ resume on the next poll. In-flight work continues, as do watch recovery and PR
 checks. Pausing leaves jobs queued in Cloud Inbox. The menu bar app reads status
 and toggles this flag; it needs no Cloud Inbox access.
 
+### Install with setup
+
+From the repo root, `npm run setup` at a terminal asks whether to install the Runner
+when this Mac has none. Say no and nothing here changes. Say yes and it checks for
+Node 26, `swiftc` and `orca`, then:
+
+- **Config:** an existing `~/.config/factory-delegator/config.json` is checked and used
+  as it is; an invalid one is refused, never overwritten. Without one, setup asks which
+  Cloud Inbox to use and writes the config from [config.example.json](config.example.json),
+  with mode `600`, only once it passes the Runner's own checks. It asks for your Linear
+  user id (your agent's Linear `whoami` shows it) and a model id for each model in the example.
+- **An Inbox you already run:** paste its URL and this machine's bearer secret, read
+  with input hidden. Nothing in Cloud Inbox changes.
+- **A new Inbox,** or one this checkout's checkpoint already holds: setup runs the
+  `login`, `setup`, `connect` and `status` steps above in your terminal, so the
+  Cloudflare sign-in and the Linear app registration and approval stay yours. It needs
+  `npm --prefix packages/delegator ci --ignore-scripts` first; it doesn't install Wrangler.
+  If a step stops, setup lists what finished; rerun it to resume from the checkpoint,
+  which keeps the original secrets and never deploys or uploads twice.
+- **Install:** setup runs the default `install.sh`, then waits up to 60 seconds for the
+  Runner's `status.json` to show the new process reaching Cloud Inbox. Only then does it
+  report the Runner installed and connected; otherwise it fails and names the logs.
+
+The config holds the Inbox URL and this machine's bearer secret, never Linear tokens
+or the Inbox's owner and app credentials. Setup prints no secrets.
+
 ### Update after merging Factory changes
 
 From the repo root, on a clean checkout of `main` that matches GitHub, run:
@@ -295,8 +321,7 @@ npm run setup
 ```
 
 Along with the skills, it updates an existing Runner app from this checkout and prints
-one line for it. It never installs a missing Runner and exits non-zero when the
-update fails or refuses.
+one line for it, with no question asked. It exits non-zero when the update fails or refuses.
 
 - **A running Runner** is asked to drain: setup writes `drain.json` in the state
   directory, the Runner stops claiming and checking watches, and writes
