@@ -10,6 +10,8 @@ Setup is opinionated and deterministic: the same Linear workspace always gives t
 
 The run asks at most one round of easy questions. It reports whether dependencies are usable, saying "Looks good, we're set up!" only when they are, and offers a draft PR when it wrote files. Never end with a list of notes for the user to parse.
 
+**Asking.** Ask with AskUserQuestion where the client has it (multiSelect when picking several items, up to 4 questions per call), otherwise in chat.
+
 ## Linear
 
 Use the Linear MCP server for every read. If it is unavailable or unauthorized, stop and report that; don't fall back to a browser, the app, or the API. Write to Linear only when the user picks that option in a question.
