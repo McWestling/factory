@@ -70,7 +70,7 @@ Ask the user, recommended route first, marked "(Recommended)", with context in t
 
 ### Write an implementation issue
 
-Write the body from [brief-template.md](../do-refine/brief-template.md), applying the implementation template under **Templates** when there is one: the front door, the factory-run block (target, exact model name and reason chosen as the template says), the repo tag, acceptance criteria, and the template's **Lifecycle** text. End the Context with the **Touches:** line, listing the directories and files from the code survey. Then check it against [dispatch-gates.md](../do-refine/dispatch-gates.md); if it fails a gate other than open blockers, it isn't ready: route it to a map instead.
+Write the body from [brief-template.md](../do-refine/brief-template.md), applying the implementation template under **Templates** when there is one: the front door, the level tag and reason (plus model pin and target only when needed), the repo tag, acceptance criteria, and the template's **Lifecycle** text. End the Context with the **Touches:** line, listing the directories and files from the code survey. Then check it against [dispatch-gates.md](../do-refine/dispatch-gates.md); if it fails a gate other than open blockers, it isn't ready: route it to a map instead.
 
 **Items that already carry a full brief** (written to an older template): reshape them to the current template, drop dependencies that have since shipped, and keep the old body at the bottom under `## Origin`.
 
@@ -105,7 +105,7 @@ When the queue is empty, or the user stops, list Triage again to confirm what's 
 
 After the table, print **What you can do next**, grouped by action, with a name and link on every line:
 
-- **Dispatch now:** each ready implementation issue, with its factory-run block and the **Kickoff prompt** per **Comment shape** (for example `/do-implement ABC-123`), to run on the target the block names. Compare **Touches:** lines, flag pairs that overlap, and say which to run first.
+- **Dispatch now:** each ready implementation issue, with its level tag and the **Kickoff prompt** per **Comment shape** (for example `/do-implement ABC-123`), to run on the target named in its tag or the default target. Compare **Touches:** lines, flag pairs that overlap, and say which to run first.
 - **Chart next:** each stub map with a one-line why and `/do-refine <map URL>` to paste into a fresh session. Recommend which to chart first.
 - **Waiting on you:** skipped items and open questions.
 - **Where to see it:** the views per **Views** that now show these items, found by exact name. If an item won't show in any view, say so.
