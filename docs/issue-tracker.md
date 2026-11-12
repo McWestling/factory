@@ -2,7 +2,7 @@
 
 This is McWestling's config. Other repos point to it from their `AGENTS.md` instead of keeping a copy.
 
-**Setup version:** 2026-11-11.2
+**Setup version:** 2026-11-12
 
 The skills hold the procedure. This file holds only the values they look up, under the headings below. Keep the headings stable: skills cite them by name.
 
@@ -85,7 +85,7 @@ Each product has an initiative with the same name as its Product label. Its desc
 | `Codex`         | Codex outside Orca                                                               |
 | `Linear/Cursor` | Cursor Cloud, delegated from Linear. Legacy; retired when Factory Delegator ships |
 
-The label records where the work was dispatched from, not where the session runs or which model ran. Set it when work starts: a session with any `ORCA_*` environment variable set is `Orca`, and Orca sets the label itself on the Cursor Cloud agents it launches. The issue's factory-run block target is the plan; the label records what actually ran.
+The label records where the work was dispatched from, not where the session runs or which model ran. Set it when work starts: a session with any `ORCA_*` environment variable set is `Orca`, and Orca sets the label itself on the Cursor Cloud agents it launches. An issue's `[target=]` tag is the plan when it differs from the default; the label records what actually ran.
 
 **Default target:** `Orca`, for every model below, Cursor models included. Never suggest a legacy target.
 
@@ -93,15 +93,15 @@ The label records where the work was dispatched from, not where the session runs
 
 **Checked:** 2026-11-10, against the vendor pages under Sources. Re-check when this date is over 90 days old or a listed model retires.
 
-| Model            | Use it for                                                                     |
-| ---------------- | ------------------------------------------------------------------------------ |
-| Claude Opus 5.5  | Judgment-heavy, cross-cutting or ambiguous work; the maintainer in the session |
-| Claude Fable 5.2 | Long-horizon or hardest work, when Opus 5.5 at higher effort falls short       |
-| GPT-6 Astra      | Hardest end-to-end work in Codex, when GPT-6.1 Sol falls short                 |
-| GPT-6.1 Sol      | Complex implementation and agentic work                                        |
-| GPT-6 Luna       | Focused, pattern-following tickets where a good result is clear                |
-| Composer 2.5     | Mechanical changes, as a Cursor Cloud agent                                    |
-| Grok 4.7         | Mechanical changes, as a Cursor Cloud agent                                    |
+| Model            | Level      | Use it for                                                                     |
+| ---------------- | ---------- | ------------------------------------------------------------------------------ |
+| Claude Opus 5.5  | `deep`     | Judgment-heavy, cross-cutting or ambiguous work; the maintainer in the session |
+| Claude Fable 5.2 | `deep`     | Long-horizon or hardest work, when Opus 5.5 at higher effort falls short       |
+| GPT-6 Astra      | `deep`     | Hardest end-to-end work in Codex, when GPT-6.1 Sol falls short                 |
+| GPT-6.1 Sol      | `standard` | Complex implementation and agentic work                                        |
+| GPT-6 Luna       | `light`    | Focused, pattern-following tickets where a good result is clear                |
+| Composer 2.5     | `light`    | Mechanical changes, as a Cursor Cloud agent                                    |
+| Grok 4.7         | `light`    | Mechanical changes, as a Cursor Cloud agent                                    |
 
 **Sources:**
 
