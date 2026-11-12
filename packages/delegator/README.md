@@ -300,14 +300,16 @@ update fails or refuses.
 
 - **A running Runner** is asked to drain: setup writes `drain.json` in the state
   directory, the Runner stops claiming and checking watches, and writes
-  `drain.json.ack` only when no claim, job or open watch remains. Without that
-  acknowledgment within 60 seconds, setup refuses and changes nothing. A fresh
-  idle `status.json` alone doesn't count.
+  `drain.json.ack` only when no claim, job or watch check is in flight. Saved
+  watches don't block it: they stay in `watching.json` and the new Runner resumes
+  them. Without that acknowledgment within 60 seconds, setup refuses and changes
+  nothing. A fresh idle `status.json` alone doesn't count.
 - **The new bundle** is built with `install.sh --build-app <dir>`, checked file for
   file against this checkout, and run with `--check-config` against your config
   before anything is replaced. A Runner that doesn't come back is swapped for the
   previous bundle and restarted.
-- **A stopped Runner** is refreshed and stays stopped. Pause, **Start at login** and
+- **A stopped Runner** is refreshed and stays stopped, unless its `watching.json` is
+  unreadable. Pause, **Start at login** and
   config are never touched. Run `npm run menubar` from the repo root to restart the menu bar app on its new version.
 - **A Runner from before draining** is refused, with steps to pause, stop and rerun.
 

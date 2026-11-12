@@ -954,13 +954,25 @@ test('a drain is not acknowledged while a claim is in flight behind a fresh idle
   assert.deepEqual(f.requests, [], 'nothing new starts while drained');
 });
 
-test('open watches, a stale request or a corrupt request are never acknowledged', async () => {
+test('saved watches are acknowledged, since they resume after a restart', async () => {
   const f = fakes();
   f.deps.drain = join(dirname(f.deps.status), 'drain.json');
   await handleJob(config, f.deps, claim);
-  requestDrain(f.deps, 'busy');
+  assert.ok(JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1'], 'the launch is watched');
+  requestDrain(f.deps, 'watching');
   acknowledgeDrain(f.deps);
-  assert.equal(ack(f.deps), null);
+  assert.deepEqual(ack(f.deps), { nonce: 'watching', pid: process.pid });
+});
+
+test('unreadable watches, a stale request or a corrupt request are never acknowledged', async () => {
+  const f = fakes();
+  f.deps.drain = join(dirname(f.deps.status), 'drain.json');
+  for (const contents of ['{"s":', '[]', '{"s":{}}']) {
+    writeFileSync(f.deps.watches, contents);
+    requestDrain(f.deps, 'unreadable');
+    acknowledgeDrain(f.deps);
+    assert.equal(ack(f.deps), null, contents);
+  }
   writeFileSync(f.deps.watches, '{}');
   requestDrain(f.deps, 'old', Date.now() - 1);
   acknowledgeDrain(f.deps);
