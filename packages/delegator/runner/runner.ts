@@ -463,11 +463,11 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
           continue;
         }
         if (!['pending', 'active', 'awaitingInput', 'stale'].includes(latest.sessionStatus)) throw new Error('unknown session status');
-        if (!latest.pullRequests.includes(url)) continue;
+        if (!latest.pullRequests.includes(url)) { log('pr-unconfirmed'); continue; }
         body = `Opened ${url}.`;
       } else if ((deps.now ?? Date.now)() - job.at >= 24 * 60 * 60_000) {
         body = 'No PR after 24 h; check the Orca worktree.';
-      } else continue;
+      } else { log('no-pr-yet'); continue; }
       await api.update(job, 'response', body);
       change((current) => delete current[job.sessionId]);
       log('finished');
