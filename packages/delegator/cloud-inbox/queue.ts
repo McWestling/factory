@@ -1,9 +1,9 @@
-// One machine's job queue and the outbox of agent activities Cloud Inbox posts, kept in
-// that machine's Durable Object. Runs under Node for tests, so SQL goes through `Sql`,
+// The shared job queue every machine claims from, and the outbox of agent activities
+// Cloud Inbox posts, kept in Cloud Inbox's Durable Object. Runs under Node for tests, so SQL goes through `Sql`,
 // which both Cloudflare's SqlStorage and a node:sqlite adapter satisfy.
 
 import type { Claim, LaunchEvidence } from '../job.ts';
-import type { MachineAuth } from './auth.ts';
+import type { AppAuth } from './auth.ts';
 import { log } from './routes.ts';
 
 const GRAPHQL_URL = 'https://api.linear.app/graphql';
@@ -20,8 +20,8 @@ const DISPATCH_LABEL = 'Orca';
 const PULL_REQUEST = /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+(?:[/?#]|$)/;
 
 export const MESSAGES = {
-  queued: (machine: string) =>
-    `Queued on ${machine}. It starts when ${machine} picks it up, which can take a while if the machine is busy or asleep.`,
+  queued: (app: string) =>
+    `Queued for ${app}. It starts when a machine picks it up, which can take a while if every machine is busy or asleep.`,
   replaced: 'Replaced by a newer delegation.',
   stopped: 'Stopped watching. The agent in Orca keeps running; stop it there if needed.',
   replies: "Delegator doesn't read replies; steer the agent in Orca.",
@@ -103,8 +103,9 @@ type LaunchData = {
 const HEAD = 'NOT EXISTS (SELECT 1 FROM outbox p WHERE p.session_id = o.session_id AND p.id < o.id)';
 
 /**
- * A job's id is its session id. A job is waiting while `queued` or `claimed` with an
- * expired lease; each issue keeps only its newest waiting job.
+ * A job's id is its session id. Any machine may claim a waiting job; the claim records
+ * which one did, and only that machine can use it. A job is waiting while `queued` or
+ * `claimed` with an expired lease; each issue keeps only its newest waiting job.
  *
  * Queue changes write the activities they need to the outbox in the same synchronous
  * step and call `schedule`; `deliver()` (the Durable Object's alarm) sends them later.
@@ -114,13 +115,11 @@ const HEAD = 'NOT EXISTS (SELECT 1 FROM outbox p WHERE p.session_id = o.session_
  * queued thought: once the Runner owns the session, that thought is obsolete.
  *
  * Each claim gets a fresh id, and only that claim, while its lease lasts, can record the
- * job's outcome. A row claimed before ids existed has none, so it can't be finished: its
- * lease runs out and the job goes back on the queue.
+ * job's outcome.
  */
-export class MachineQueue {
+export class JobQueue {
   #sql: Sql;
-  #auth: MachineAuth;
-  #machine: string;
+  #auth: AppAuth;
   #fetch: typeof fetch;
   #now: () => number;
   #schedule: (at: number) => void;
@@ -128,29 +127,20 @@ export class MachineQueue {
 
   constructor(
     sql: Sql,
-    auth: MachineAuth,
-    machine: string,
+    auth: AppAuth,
     schedule: (at: number) => void,
     fetchFn: typeof fetch = (input, init) => fetch(input, init),
     now: () => number = Date.now,
   ) {
     this.#sql = sql;
     this.#auth = auth;
-    this.#machine = machine;
     this.#fetch = fetchFn;
     this.#now = now;
     this.#schedule = schedule;
+    // `machine` is the machine whose claim holds the job.
     sql.exec(`CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, issue_id TEXT NOT NULL,
-      state TEXT NOT NULL, lease_until INTEGER, updated_at INTEGER NOT NULL)`);
-    // Added after the first deployments, so existing tables need it too.
-    if (!sql.exec('PRAGMA table_info(jobs)').toArray().some((column) => column.name === 'claim_id')) {
-      sql.exec('ALTER TABLE jobs ADD COLUMN claim_id TEXT');
-    }
-    for (const column of ['launch_repo', 'launch_branch']) {
-      if (!sql.exec('PRAGMA table_info(jobs)').toArray().some((row) => row.name === column)) {
-        sql.exec(`ALTER TABLE jobs ADD COLUMN ${column} TEXT`);
-      }
-    }
+      state TEXT NOT NULL, lease_until INTEGER, updated_at INTEGER NOT NULL, claim_id TEXT, machine TEXT,
+      launch_repo TEXT, launch_branch TEXT)`);
     sql.exec('CREATE TABLE IF NOT EXISTS seen (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     sql.exec('CREATE TABLE IF NOT EXISTS seen_activities (id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     sql.exec('CREATE TABLE IF NOT EXISTS ended (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
@@ -202,20 +192,20 @@ export class MachineQueue {
     this.#sql.exec("INSERT INTO jobs (id, issue_id, state, updated_at) VALUES (?, ?, 'queued', ?)",
       event.sessionId, event.issueId, now);
     this.#settle(now);
-    this.#enqueue(event.sessionId, 'thought', MESSAGES.queued(app.appName ?? this.#machine), now, true);
+    this.#enqueue(event.sessionId, 'thought', MESSAGES.queued(app.appName ?? 'Delegator'), now, true);
     this.#wake();
     return 'queued';
   }
 
-  /** Claims the oldest waiting job with a fresh lease, or returns undefined. */
-  async claim(): Promise<Claim | undefined> {
+  /** Claims the oldest waiting job for `machine` with a fresh lease, or returns undefined. */
+  async claim(machine: string): Promise<Claim | undefined> {
     const now = this.#now();
     if (this.#settle(now)) this.#wake();
     const claimId = crypto.randomUUID();
     const [row] = this.#sql.exec(
-      `UPDATE jobs SET state = 'claimed', lease_until = ?, updated_at = ?, claim_id = ?
+      `UPDATE jobs SET state = 'claimed', lease_until = ?, updated_at = ?, claim_id = ?, machine = ?
        WHERE id = (SELECT id FROM jobs WHERE state = 'queued' ORDER BY rowid LIMIT 1) RETURNING id, issue_id`,
-      now + LEASE_MS, now, claimId).toArray();
+      now + LEASE_MS, now, claimId, machine).toArray();
     if (!row) return undefined;
     // The Runner owns the session now, so its queued thought is obsolete. One already in
     // flight is never retried: a failure updates a row that is gone.
@@ -225,42 +215,45 @@ export class MachineQueue {
 
   /**
    * Records a claim's outcome and queues its write-back: a launch's field changes, or
-   * clearing a failed job's delegate. False unless it's the job's current claim and its
-   * lease hasn't expired.
+   * clearing a failed job's delegate. False unless it's the job's current claim, held by
+   * `machine`, and its lease hasn't expired.
    */
-  async finish(id: string, claimId: string, outcome: Outcome, launch?: LaunchEvidence): Promise<boolean> {
+  async finish(machine: string, id: string, claimId: string, outcome: Outcome, launch?: LaunchEvidence): Promise<boolean> {
     const now = this.#now();
     const [row] = this.#sql.exec(
       `UPDATE jobs SET state = ?, lease_until = NULL, updated_at = ?, launch_repo = ?, launch_branch = ?
-       WHERE id = ? AND state = 'claimed' AND claim_id = ? AND lease_until > ? RETURNING issue_id`,
-      outcome, now, launch?.repo ?? null, launch?.branch ?? null, id, claimId, now).toArray();
+       WHERE id = ? AND state = 'claimed' AND claim_id = ? AND machine = ? AND lease_until > ? RETURNING issue_id`,
+      outcome, now, launch?.repo ?? null, launch?.branch ?? null, id, claimId, machine, now).toArray();
     if (!row) return false;
     this.#enqueue(id, outcome === 'launched' ? 'launch' : 'release', String(row.issue_id), now);
     this.#wake();
     return true;
   }
 
-  /** Recover completion watches after an upgrade or loss of the machine's local state. */
-  async watching(): Promise<(Claim & { at: number; launch?: LaunchEvidence })[]> {
+  /** `machine`'s launched jobs, to recover completion watches after an upgrade or loss of its local state. */
+  async watching(machine: string): Promise<(Claim & { at: number; launch?: LaunchEvidence })[]> {
     return this.#sql.exec(`SELECT id, issue_id, claim_id, updated_at, launch_repo, launch_branch FROM jobs WHERE state = 'launched'
-      AND claim_id IS NOT NULL AND id NOT IN (SELECT session_id FROM ended)
-      AND id NOT IN (SELECT session_id FROM superseded)`).toArray().map((row) => ({
+      AND machine = ? AND id NOT IN (SELECT session_id FROM ended)
+      AND id NOT IN (SELECT session_id FROM superseded)`, machine).toArray().map((row) => ({
       sessionId: String(row.id), issueId: String(row.issue_id), claimId: String(row.claim_id), at: Number(row.updated_at),
       ...(row.launch_repo && row.launch_branch ? { launch: { repo: String(row.launch_repo), branch: String(row.launch_branch) } } : {}),
     }));
   }
 
-  /** The job's issue id while `claimId` holds it: claimed with a live lease, or launched by that claim. */
-  #held(id: string, claimId: string): string | undefined {
+  /**
+   * The job's issue id while `machine`'s claim `claimId` holds it: claimed with a live
+   * lease, or launched by that claim.
+   */
+  #held(machine: string, id: string, claimId: string): string | undefined {
     const [row] = this.#sql.exec(
-      `SELECT issue_id FROM jobs WHERE id = ? AND claim_id = ?
-       AND ((state = 'claimed' AND lease_until > ?) OR state = 'launched')`, id, claimId, this.#now()).toArray();
+      `SELECT issue_id FROM jobs WHERE id = ? AND claim_id = ? AND machine = ?
+       AND ((state = 'claimed' AND lease_until > ?) OR state = 'launched')`, id, claimId, machine, this.#now()).toArray();
     return row ? String(row.issue_id) : undefined;
   }
 
   /** Reads what the Runner checks before launch, from the job's own issue and session. */
-  async task(id: string, claimId: string): Promise<Task | Refusal> {
-    const issueId = this.#held(id, claimId);
+  async task(machine: string, id: string, claimId: string): Promise<Task | Refusal> {
+    const issueId = this.#held(machine, id, claimId);
     if (!issueId) return 'not-claimed';
     const data = await this.#read<TaskData>(TASK, { issue: issueId, session: id });
     const issue = data?.issue;
@@ -280,16 +273,16 @@ export class MachineQueue {
    * Queues a status update on the job's session, behind its earlier activities. A
    * `response` or `error` ends the session, so later updates are refused.
    */
-  async update(id: string, claimId: string, type: UpdateType, body: string): Promise<'queued' | Refusal> {
+  async update(machine: string, id: string, claimId: string, type: UpdateType, body: string): Promise<'queued' | Refusal> {
     // Older Runners use the same completion message; they must pass ownership checks too.
     if (type === 'response' && body.startsWith('Opened ')) {
-      const found = await this.watch(id, claimId);
+      const found = await this.watch(machine, id, claimId);
       if (typeof found === 'string') return found;
       if (['complete', 'error', 'stopped'].includes(found.sessionStatus)) return 'ended';
       if (!['pending', 'active', 'awaitingInput', 'stale'].includes(found.sessionStatus)) return 'linear';
       if (!found.pullRequests.some((url) => body === `Opened ${url}.`)) return 'no-pr';
     }
-    if (!this.#held(id, claimId)) return 'not-claimed';
+    if (!this.#held(machine, id, claimId)) return 'not-claimed';
     // No await from here on, so a stop can't land between the check and the write.
     if (this.#sql.exec('SELECT 1 FROM ended WHERE session_id = ?', id).toArray().length) return 'ended';
     const now = this.#now();
@@ -300,14 +293,14 @@ export class MachineQueue {
   }
 
   /** Only attachments whose authoritative repository and head match the recorded launch. */
-  async watch(id: string, claimId: string): Promise<Watch | Refusal> {
-    const issueId = this.#held(id, claimId);
+  async watch(machine: string, id: string, claimId: string): Promise<Watch | Refusal> {
+    const issueId = this.#held(machine, id, claimId);
     if (!issueId) return 'not-claimed';
     const data = await this.#read<WatchData>(WATCH, { issue: issueId, session: id });
     const status = data?.agentSession?.status;
     if (!status) return 'linear';
     if (['complete', 'error', 'stopped'].includes(status)) {
-      if (this.#held(id, claimId) !== issueId) return 'not-claimed';
+      if (this.#held(machine, id, claimId) !== issueId) return 'not-claimed';
       return { sessionStatus: status, pullRequests: [] };
     }
     if (!data?.issue) return 'linear';
@@ -336,7 +329,7 @@ export class MachineQueue {
       }
     }
     // A stop, replacement or reclaim may have landed during metadata reads.
-    if (this.#held(id, claimId) !== issueId) return 'not-claimed';
+    if (this.#held(machine, id, claimId) !== issueId) return 'not-claimed';
     if (this.#sql.exec('SELECT 1 FROM superseded WHERE session_id = ?', id).toArray().length) return 'not-claimed';
     if (this.#sql.exec('SELECT 1 FROM ended WHERE session_id = ?', id).toArray().length) {
       return { sessionStatus: 'complete', pullRequests: [] };
@@ -345,8 +338,8 @@ export class MachineQueue {
   }
 
   /** Links the first verified launch pull request on the session as "Pull request". */
-  async linkPullRequest(id: string, claimId: string): Promise<{ url: string } | Refusal> {
-    const found = await this.watch(id, claimId);
+  async linkPullRequest(machine: string, id: string, claimId: string): Promise<{ url: string } | Refusal> {
+    const found = await this.watch(machine, id, claimId);
     if (typeof found === 'string') return found;
     if (['complete', 'error', 'stopped'].includes(found.sessionStatus)) return 'ended';
     const url = found.pullRequests[0];
@@ -383,7 +376,7 @@ export class MachineQueue {
         this.#sql.exec('DELETE FROM outbox WHERE id = ?', id);
       } else {
         const attempts = Number(row.attempts) + 1;
-        log({ event: 'activity', machine: this.#machine, session: sessionId, type, outcome: 'retry', attempt: String(attempts) });
+        log({ event: 'activity', session: sessionId, type, outcome: 'retry', attempt: String(attempts) });
         // A row cancelled while in flight is already gone, so this updates nothing.
         this.#sql.exec('UPDATE outbox SET attempts = ?, next_at = ? WHERE id = ?',
           attempts, this.#now() + Math.min(RETRY_MAX_MS, 5_000 * 2 ** attempts), id);
@@ -424,7 +417,7 @@ export class MachineQueue {
     // ponytail: an activity Linear keeps refusing is dropped after the history window.
     for (const { session_id, type } of this.#sql.exec(
       'DELETE FROM outbox WHERE created_at <= ? RETURNING session_id, type', now - HISTORY_MS).toArray()) {
-      log({ event: 'activity', machine: this.#machine, session: String(session_id), type: String(type), outcome: 'expired' });
+      log({ event: 'activity', session: String(session_id), type: String(type), outcome: 'expired' });
     }
   }
 
@@ -508,7 +501,7 @@ export class MachineQueue {
 
   /**
    * Applies a write-back's field changes unless its row was cancelled or a newer delegation
-   * of the issue reached this machine, checked with no await before the edit is sent.
+   * of the issue arrived, checked with no await before the edit is sent.
    */
   async #updateIssue(token: string, row: number, issueId: string, sessionId: string, input: Record<string, unknown>): Promise<boolean> {
     const stale = !this.#sql.exec('SELECT 1 FROM outbox WHERE id = ?', row).toArray().length

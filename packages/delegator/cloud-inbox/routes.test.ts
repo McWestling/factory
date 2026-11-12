@@ -4,9 +4,9 @@ import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { MachineAuth, type Config, type Storage } from './auth.ts';
-import { MachineQueue, MAX_UPDATE_CHARS, MESSAGES, type Sql } from './queue.ts';
-import { handleRunner, handleWebhook, MAX_WEBHOOK_BYTES, underBasePath } from './routes.ts';
+import { AppAuth, type Config, type Storage } from './auth.ts';
+import { JobQueue, MAX_UPDATE_CHARS, MESSAGES, type Sql } from './queue.ts';
+import { handleRunner, handleWebhook, MAX_WEBHOOK_BYTES, underBasePath, type Inbox } from './routes.ts';
 
 const fixture = (name: string) =>
   JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), 'utf8')) as Record<string, any>;
@@ -14,17 +14,16 @@ const fixture = (name: string) =>
 const ORG = 'org-example';
 const WEBHOOK_SECRET = 'webhook-secret-example';
 const BEARER = 'b'.repeat(32);
+const OTHER_BEARER = 'o'.repeat(32);
 const config: Config = {
   orgId: ORG,
   adminSecret: 'a'.repeat(32),
-  machines: {
-    'example-machine': { clientId: 'client-example', clientSecret: 'client-secret-example', webhookSecret: WEBHOOK_SECRET, bearerSecret: BEARER },
-    'other-machine': { clientId: 'client-other', clientSecret: 'client-secret-other', webhookSecret: 'other', bearerSecret: 'o'.repeat(32) },
-  },
+  app: { clientId: 'client-example', clientSecret: 'client-secret-example', webhookSecret: WEBHOOK_SECRET },
+  machines: { 'example-machine': BEARER, 'other-machine': OTHER_BEARER },
 };
 const LEASE_MS = 10 * 60_000;
 
-/** A machine installed as `app-user-example`, with node:sqlite standing in for the Durable Object's SQL. */
+/** Delegator installed as `app-user-example`, with node:sqlite standing in for the Durable Object's SQL. */
 function setup(prepare?: (db: DatabaseSync, now: number) => void) {
   const db = new DatabaseSync(':memory:');
   prepare?.(db, 1_800_000_000_000);
@@ -44,7 +43,7 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void) {
   const clock = { now: 1_800_000_000_000 };
   data.set('token', {
     accessToken: 'access-example', refreshToken: 'refresh-example', expiresAt: clock.now + 365 * 86_400_000,
-    appUserId: 'app-user-example', appName: 'Example Machine', orgId: ORG, clientId: 'client-example', scopes: ['read', 'write', 'app:assignable'],
+    appUserId: 'app-user-example', appName: 'Delegator', orgId: ORG, clientId: 'client-example', scopes: ['read', 'write', 'app:assignable'],
   });
   // Fakes Linear. `posts` records each activity Linear accepted, in order. `failNext`
   // fails that many activity requests; `refreshFails` fails token refreshes; `hold()`
@@ -98,10 +97,10 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void) {
     });
     return Response.json({ data: { agentActivityCreate: { success: true } } });
   };
-  const auth = new MachineAuth(storage, config.machines['example-machine']!, ORG, fetchFn, () => clock.now);
+  const auth = new AppAuth(storage, config.app, ORG, fetchFn, () => clock.now);
   // The Durable Object's alarm; tests fire it with `flush()`.
   const alarms: number[] = [];
-  const build = () => new MachineQueue(sql, auth, 'example-machine', (at) => alarms.push(at), fetchFn, () => clock.now);
+  const build = () => new JobQueue(sql, auth, (at) => alarms.push(at), fetchFn, () => clock.now);
   let queue = build();
   /** Replaces the queue with a new one over the same storage, as after a restart. */
   const rebuild = () => { queue = build(); };
@@ -120,7 +119,7 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void) {
     const request = new Request('https://cloud-inbox.example/webhook', {
       method: 'POST', body, headers: { 'Linear-Signature': sign(body) },
     });
-    return handleWebhook(request, config, () => queue, clock.now);
+    return handleWebhook(request, config, queue, clock.now);
   };
   /** Delivers a webhook, then fires the alarm. */
   const deliver = async (payload: Record<string, any>, sign?: (body: string) => string) => {
@@ -143,10 +142,10 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void) {
   const runner = (method: string, path: string, bearer = BEARER, body?: unknown) =>
     handleRunner(new Request(`https://cloud-inbox.example${path}`, {
       method, headers: { Authorization: `Bearer ${bearer}` }, body: body === undefined ? undefined : JSON.stringify(body),
-    }), config, () => queue);
+    }), config, queue);
   /** Claims a job, returning everything the runner receives. */
-  const claimed = async () => {
-    const res = await runner('POST', '/jobs/claim');
+  const claimed = async (bearer = BEARER) => {
+    const res = await runner('POST', '/jobs/claim', bearer);
     await flush();
     return res.status === 204 ? undefined : await res.json() as { issueId: string; sessionId: string; claimId: string };
   };
@@ -160,7 +159,7 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void) {
     runner('POST', `/jobs/${sessionId}/${outcome}?claimId=${claimId}`);
   return {
     clock, posts, linear, alarms, rows, send, deliver, flush, rebuild, created, createdPayload, stoppedPayload,
-    runner, claim, claimed, report, data, sql, storage, machines: () => queue,
+    runner, claim, claimed, report, data, sql, storage, inbox: () => queue,
   };
 }
 
@@ -242,7 +241,7 @@ test('a created webhook queues the job and posts the queued thought', async () =
   assert.deepEqual(rows().jobs, [{ id: 'session-1', issue_id: 'issue-1', state: 'queued' }]);
   assert.deepEqual(posts, [{
     auth: 'Bearer access-example', sessionId: 'session-1', type: 'thought',
-    body: 'Queued on Example Machine. It starts when Example Machine picks it up, which can take a while if the machine is busy or asleep.',
+    body: 'Queued for Delegator. It starts when a machine picks it up, which can take a while if every machine is busy or asleep.',
   }]);
 });
 
@@ -253,7 +252,6 @@ for (const [label, tamper, status] of [
   ['a stale timestamp', (p, now) => [{ ...p, webhookTimestamp: now - 60_001 }], 401],
   ['a future timestamp', (p, now) => [{ ...p, webhookTimestamp: now + 60_001 }], 401],
   ['an unknown client', (p) => [{ ...p, oauthClientId: 'client-unknown' }], 401],
-  ["another machine's client", (p) => [{ ...p, oauthClientId: 'client-other' }], 401],
   ['a wrong org', (p) => [{ ...p, organizationId: 'org-other' }], 403],
   ['a wrong app user', (p) => [{ ...p, appUserId: 'app-user-other' }], 403],
 ] as [string, Tamper, number][]) {
@@ -282,7 +280,7 @@ test('a second delegation of the same issue replaces the queued job', async () =
   assert.deepEqual(rows().jobs.map((j) => j.id), ['session-2', 'session-3']);
   assert.deepEqual(posts.slice(1, 3).map(({ sessionId, type, body }) => ({ sessionId, type, body })), [
     { sessionId: 'session-1', type: 'response', body: 'Replaced by a newer delegation.' },
-    { sessionId: 'session-2', type: 'thought', body: MESSAGES.queued('Example Machine') },
+    { sessionId: 'session-2', type: 'thought', body: MESSAGES.queued('Delegator') },
   ]);
   assert.deepEqual(await claim(), { issueId: 'issue-1', sessionId: 'session-2' });
 });
@@ -390,7 +388,7 @@ test('unknown runner routes are 404 once authenticated', async () => {
   assert.equal((await runner('POST', '/jobs/session-1/other')).status, 404);
 });
 
-const QUEUED = MESSAGES.queued('Example Machine');
+const QUEUED = MESSAGES.queued('Delegator');
 const sent = (posts: { sessionId: string; type: string; body: string }[]) =>
   posts.map(({ sessionId, type, body }) => [sessionId, type, body]);
 
@@ -618,7 +616,7 @@ test('only paths under the base path reach Cloud Inbox, with the prefix removed'
 
 const webhookRequest = (body: BodyInit | null, headers: Record<string, string> = {}) =>
   new Request('https://cloud-inbox.example/webhook', { method: 'POST', body, headers, duplex: 'half' } as RequestInit);
-const refuseQueue = () => { throw new Error('the queue must not see this request'); };
+const refuseQueue = new Proxy({}, { get() { throw new Error('the queue must not see this request'); } }) as Inbox;
 
 for (const [label, headers] of [
   ['no signature', {}],
@@ -660,7 +658,7 @@ for (const [label, headers] of [
 }
 
 test('a chunked webhook is accepted at exactly the limit and refused one byte over', async () => {
-  const { clock, createdPayload, machines, rows } = setup();
+  const { clock, createdPayload, inbox, rows } = setup();
   const json = JSON.stringify({ ...createdPayload('session-1'), webhookTimestamp: clock.now });
   const sendSized = (size: number) => {
     const bytes = new TextEncoder().encode(json.padEnd(size));
@@ -671,7 +669,7 @@ test('a chunked webhook is accepted at exactly the limit and refused one byte ov
         controller.close();
       },
     });
-    return handleWebhook(webhookRequest(body, { 'Linear-Signature': signed(json.padEnd(size)) }), config, machines, clock.now);
+    return handleWebhook(webhookRequest(body, { 'Linear-Signature': signed(json.padEnd(size)) }), config, inbox(), clock.now);
   };
   assert.equal((await sendSized(MAX_WEBHOOK_BYTES + 1)).status, 413);
   assert.deepEqual(rows().jobs, []);
@@ -715,28 +713,6 @@ test('an outcome without a claim id is a bad request', async () => {
   assert.equal((await runner('POST', '/jobs/session-1/launched')).status, 400);
   assert.equal((await runner('POST', '/jobs/session-1/failed?claimId=')).status, 400);
   assert.equal(rows().jobs[0]!.state, 'claimed');
-});
-
-test('an existing installation keeps its jobs, and a pre-change claim expires into a fresh one', async () => {
-  const { clock, claimed, runner, report, rebuild, rows } = setup((db, now) => {
-    db.exec(`CREATE TABLE jobs (id TEXT PRIMARY KEY, issue_id TEXT NOT NULL,
-      state TEXT NOT NULL, lease_until INTEGER, updated_at INTEGER NOT NULL)`);
-    db.prepare("INSERT INTO jobs VALUES ('old-claim', 'issue-1', 'claimed', ?, ?)").run(now + LEASE_MS, now);
-    db.prepare("INSERT INTO jobs VALUES ('old-queued', 'issue-2', 'queued', NULL, ?)").run(now);
-  });
-  rebuild(); // The column is added only once.
-  // The old runner has no id to send, and no guess matches the empty column.
-  assert.equal((await runner('POST', '/jobs/old-claim/launched')).status, 400);
-  assert.equal((await report('old-claim', 'launched', 'guess')).status, 409);
-  const queued = await claimed();
-  assert.equal(queued?.sessionId, 'old-queued');
-  assert.equal((await report('old-queued', 'launched', queued?.claimId)).status, 204);
-  assert.equal(await claimed(), undefined);
-  clock.now += LEASE_MS;
-  const reclaimed = await claimed();
-  assert.equal(reclaimed?.sessionId, 'old-claim');
-  assert.equal((await report('old-claim', 'failed', reclaimed?.claimId)).status, 204);
-  assert.deepEqual(rows().jobs.map((j) => j.state), ['failed', 'launched']);
 });
 
 const prompt = (activityId: string | undefined, sessionId = 'session-1') => {
@@ -813,7 +789,7 @@ test('the alarm alone expires an activity failing for 30 days, logs it, and free
   const logged = t.mock.method(console, 'log', () => {});
   await flush();
   const lines = logged.mock.calls.map((call) => JSON.parse(String(call.arguments[0])));
-  assert.deepEqual(lines, [{ event: 'activity', machine: 'example-machine', session: 'session-1', type: 'thought', outcome: 'expired' }]);
+  assert.deepEqual(lines, [{ event: 'activity', session: 'session-1', type: 'thought', outcome: 'expired' }]);
   assert.deepEqual(sent(posts), [['session-1', 'thought', MESSAGES.replies]]);
   assert.equal(linear.attempts, 2);
   assert.deepEqual(rows().outbox, []);
@@ -852,11 +828,7 @@ test('watch recovery returns only this machine\'s launched, unended, unsupersede
   assert.equal(jobs[0]!.claimId, h.claimId);
   assert.equal(jobs[0]!.sessionId, 'session-1');
   assert.equal(typeof jobs[0]!.at, 'number');
-  const other = setup();
-  const isolated = await handleRunner(new Request('https://cloud-inbox.example/jobs/watching', {
-    headers: { Authorization: `Bearer ${'o'.repeat(32)}` },
-  }), config, (name) => name === 'other-machine' ? other.machines() : h.machines());
-  assert.deepEqual(await isolated.json(), []);
+  assert.deepEqual(await (await h.runner('GET', '/jobs/watching', OTHER_BEARER)).json(), []);
   await h.send(h.createdPayload('session-2', 'issue-1'));
   assert.deepEqual(await (await h.runner('GET', '/jobs/watching')).json(), []);
   const next = await h.claimed();
@@ -871,12 +843,8 @@ for (const [method, op, body] of OPERATIONS) {
     assert.equal((await call(h, method, op, h.claimId, body, 'session-1', 'x'.repeat(32))).status, 401);
     assert.equal((await h.runner(method, `/jobs/session-1/${op}`, BEARER, body)).status, 400);
     assert.equal((await call(h, method, op, 'not-the-claim', body)).status, 409);
-    // Another machine's bearer secret reaches only that machine's queue, where this job doesn't exist.
-    const other = setup();
-    const res = await handleRunner(new Request(`https://cloud-inbox.example/jobs/session-1/${op}?claimId=${h.claimId}`, {
-      method, headers: { Authorization: `Bearer ${'o'.repeat(32)}` }, body: body === undefined ? undefined : JSON.stringify(body),
-    }), config, (name) => (name === 'other-machine' ? other.machines() : h.machines()));
-    assert.equal(res.status, 409);
+    // Another machine's bearer secret can't use this machine's claim, even with its id.
+    assert.equal((await call(h, method, op, h.claimId, body, 'session-1', OTHER_BEARER)).status, 409);
     // An unclaimed job, and a claim past its lease, are refused too.
     await h.created('session-2', 'issue-2');
     assert.equal((await call(h, method, op, h.claimId, body, 'session-2')).status, 409);
@@ -1312,8 +1280,8 @@ for (const launch of [{ repo: 'owner/repo' }, { repo: 'https://example.com/repo'
 }
 
 
-test('Worker launch acknowledgement forwards evidence through Machine into durable recovery', async () => {
-  // Only the Cloudflare runtime base class is replaced; all production adapters run.
+/** The real Worker over a harness's storage. Only the Cloudflare runtime base class is replaced. */
+async function worker(h: Harness) {
   const hooks = registerHooks({
     resolve(specifier, context, nextResolve) {
       if (specifier === 'cloudflare:workers') return {
@@ -1323,28 +1291,101 @@ test('Worker launch acknowledgement forwards evidence through Machine into durab
       return nextResolve(specifier, context);
     },
   });
-  let worker;
+  let module;
   try {
-    const path = new URL('./worker.ts', import.meta.url).href;
-    worker = await import(path);
+    module = await import(new URL('./worker.ts', import.meta.url).href);
   } finally { hooks.deregister(); }
+  const names = new Set<string>();
+  const env = { LINEAR_ORG_ID: config.orgId, ADMIN_SECRET: config.adminSecret, LINEAR_CLIENT_ID: config.app.clientId,
+    LINEAR_CLIENT_SECRET: config.app.clientSecret, LINEAR_WEBHOOK_SECRET: config.app.webhookSecret,
+    MACHINES: JSON.stringify(config.machines),
+    MACHINE: { idFromName: (name: string) => { names.add(name); return name; }, get: () => inbox } };
+  const inbox = new module.Machine({ storage: { ...h.storage, sql: h.sql, setAlarm: async () => {} } }, env);
+  const owner = `Basic ${btoa(`owner:${config.adminSecret}`)}`;
+  const request = (method: string, path: string, { body, auth = `Bearer ${BEARER}` }: { body?: unknown; auth?: string } = {}) =>
+    module.default.fetch(new Request(`https://cloud-inbox.example/delegator${path}`, { method, redirect: 'manual',
+      headers: { Authorization: auth }, body: body === undefined ? undefined : JSON.stringify(body) }), env) as Promise<Response>;
+  return { request, owner, names };
+}
+
+test('Worker launch acknowledgement forwards evidence through the Durable Object into durable recovery', async () => {
   const h = setup();
   await h.created('session-1');
-  const kv = new Map();
-  const env = { LINEAR_ORG_ID: config.orgId, ADMIN_SECRET: config.adminSecret, MACHINES: JSON.stringify(config.machines),
-    MACHINE: { idFromName: (name: string) => name, get: () => machine } };
-  const machine = new worker.Machine({ storage: { ...h.storage, sql: h.sql,
-    kv: { get: (key: string) => kv.get(key), put: (key: string, value: unknown) => kv.set(key, value) },
-    setAlarm: async () => {},
-  } }, env);
-  const request = (method: string, path: string, body?: unknown) => worker.default.fetch(
-    new Request(`https://cloud-inbox.example/delegator${path}`, { method,
-      headers: { Authorization: `Bearer ${BEARER}` }, body: body === undefined ? undefined : JSON.stringify(body) }), env);
+  const { request } = await worker(h);
   const claim = await (await request('POST', '/jobs/claim')).json();
   const launch = { repo: 'owner/repo', branch: 'launch-branch' };
-  assert.equal((await request('POST', `/jobs/session-1/launched?claimId=${claim.claimId}`, launch)).status, 204);
+  assert.equal((await request('POST', `/jobs/session-1/launched?claimId=${claim.claimId}`, { body: launch })).status, 204);
   const recovered = await (await request('GET', '/jobs/watching')).json();
   assert.deepEqual(recovered[0].launch, launch);
+});
+
+test('the Worker has one install, callback, status and disconnect, with no machine segment', async (t) => {
+  const h = setup();
+  h.data.delete('token');
+  const { request, owner, names } = await worker(h);
+  let revoked = false;
+  const calls: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const params = new URLSearchParams(typeof init?.body === 'string' ? '' : String(init?.body ?? ''));
+    calls.push(url);
+    if (url === 'https://api.linear.app/oauth/revoke') { revoked = true; return new Response(null, { status: 200 }); }
+    if (url === 'https://api.linear.app/oauth/token') {
+      if (params.get('grant_type') === 'refresh_token') return Response.json({ error: 'invalid_grant' }, { status: 400 });
+      assert.equal(params.get('redirect_uri'), 'https://cloud-inbox.example/delegator/callback');
+      assert.equal(params.get('client_id'), config.app.clientId);
+      return Response.json({ access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 86400, scope: 'read write app:assignable' });
+    }
+    assert.equal(url, 'https://api.linear.app/graphql');
+    if (revoked) return new Response(null, { status: 401 });
+    return Response.json({ data: { viewer: { id: 'app-user-example', name: 'Delegator', organization: { id: ORG } } } });
+  });
+
+  for (const route of ['install/example-machine', 'callback/example-machine', 'status/example-machine']) {
+    assert.equal((await request('GET', `/${route}`, { auth: owner })).status, 404);
+  }
+  assert.equal((await request('POST', '/disconnect/example-machine', { auth: owner })).status, 404);
+  assert.equal((await request('GET', '/install', { auth: '' })).status, 401);
+  assert.equal((await request('GET', '/status', { auth: '' })).status, 401);
+
+  const install = await request('GET', '/install', { auth: owner });
+  assert.equal(install.status, 302);
+  const authorize = new URL(install.headers.get('Location')!);
+  assert.equal(authorize.searchParams.get('redirect_uri'), 'https://cloud-inbox.example/delegator/callback');
+  assert.equal(authorize.searchParams.get('client_id'), config.app.clientId);
+  const callback = await request('GET', `/callback?state=${authorize.searchParams.get('state')}&code=code-example`, { auth: '' });
+  assert.equal(callback.status, 200);
+  assert.equal(await callback.text(), 'Installed Delegator. Cloud Inbox holds the Linear credentials.');
+
+  assert.deepEqual(await (await request('GET', '/status', { auth: owner })).json(), { connected: true });
+  assert.equal((await request('POST', '/disconnect', { auth: owner })).status, 200);
+  assert.deepEqual(await (await request('GET', '/status', { auth: owner })).json(), { connected: false });
+  assert.ok(calls.includes('https://api.linear.app/oauth/revoke'));
+  // Every route reached the same, single Durable Object.
+  assert.deepEqual([...names], ['Delegator']);
+});
+
+test('two machines claim from one queue: each job goes to one claim, and only its machine can use it', async () => {
+  const h = setup();
+  await h.created('session-1', 'issue-1');
+  await h.created('session-2', 'issue-2');
+  const first = await h.claimed(BEARER);
+  const second = await h.claimed(OTHER_BEARER);
+  assert.equal(await h.claimed(BEARER), undefined);
+  assert.equal(await h.claimed(OTHER_BEARER), undefined);
+  assert.deepEqual([first?.sessionId, second?.sessionId], ['session-1', 'session-2']);
+
+  // Each machine's claim id is refused from the other machine, for every operation.
+  for (const [method, op, body] of OPERATIONS) {
+    assert.equal((await call(h, method, op, second!.claimId, body, 'session-2', BEARER)).status, 409, `${method} ${op}`);
+    assert.equal((await call(h, method, op, first!.claimId, body, 'session-1', OTHER_BEARER)).status, 409, `${method} ${op}`);
+  }
+  assert.equal((await call(h, 'POST', 'launched', first!.claimId, undefined, 'session-1', BEARER)).status, 204);
+  assert.equal((await call(h, 'POST', 'launched', second!.claimId, undefined, 'session-2', OTHER_BEARER)).status, 204);
+  const watching = async (bearer: string) =>
+    (await (await h.runner('GET', '/jobs/watching', bearer)).json() as { sessionId: string }[]).map((j) => j.sessionId);
+  assert.deepEqual(await watching(BEARER), ['session-1']);
+  assert.deepEqual(await watching(OTHER_BEARER), ['session-2']);
 });
 
 for (const status of ['complete', 'error', 'stopped']) {

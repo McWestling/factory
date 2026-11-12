@@ -1,8 +1,8 @@
 # Delegator
 
 Delegate an issue from Linear. Factory Cloud Inbox holds it until the Factory Runner
-on your machine picks it up and starts a coding agent in Orca. Each machine has its
-own Linear agent integration, so the agent you delegate to decides the machine.
+on one of your machines picks it up and starts a coding agent in Orca. You delegate
+to one Linear agent, `Delegator`, and any machine's Runner can claim from its queue.
 
 ## Where it runs
 
@@ -15,8 +15,8 @@ own Linear agent integration, so the agent you delegate to decides the machine.
 Cloud Inbox is available for controlled testing. On Cloudflare it has answered a real
 delegation and stop, and served the Runner API's task, update and write-back operations
 against real Linear. It cannot launch Orca by itself.
-One deployment supports one Linear workspace and several computers, each with its
-own Linear app. Installing Factory's skills does not deploy Delegator.
+One deployment supports one Linear workspace, one Linear app and several computers,
+each with its own bearer secret. Installing Factory's skills does not deploy Delegator.
 
 ## Test locally
 
@@ -63,7 +63,7 @@ account, binding and migrations. Both are gitignored. Back up the checkpoint in
 your secret manager: it contains app credentials and machine connection authority,
 but never Linear access or refresh tokens. Rerun setup after an interruption;
 it preserves credentials and machine keys and doesn't redeploy a completed setup.
-Never rename the Worker or a machine key: they select the stored installation/jobs.
+Never rename the Worker: it selects the stored installation and jobs.
 
 For an existing installation, restore its checkpoint, or import its **complete,
 original** secrets before setup:
@@ -132,7 +132,7 @@ when testing is finished. Adding computers remains a manual configuration task.
 Copy [config.example.json](config.example.json) to
 `~/.config/factory-delegator/config.json`, fill it in and `chmod 600` it. The Runner
 refuses to start without it, with a looser mode, or with any key missing or empty;
-nothing has a default except `skill` (`do-implement`). `machine` is the Linear app's
+nothing has a default except `skill` (`do-implement`). `machine` is this machine's
 name, used in messages. Each `models` key is a Preferred models name. The required
 `levels` map names a configured model for each of `light`, `standard` and `deep`.
 Repos come from Orca at pickup; an old `repos` config key is ignored and can be removed.
@@ -318,18 +318,18 @@ Test it with `node --test upkeep.test.ts` from `packages/delegator`; the rest of
 Cloud Inbox is the middleman between Linear and your machines. It requests
 `read,write,app:assignable`, checks the granted permissions at installation and refresh,
 and never returns Linear tokens to machines, whose credential authorizes only Cloud Inbox's
-named operations on that machine's own claimed jobs: reading the task, posting status
+named operations on the jobs that machine has claimed: reading the task, posting status
 updates, and the launch and failure write-backs.
 
 Linear requires `write` to post agent activities, and `write` also allows issue edits.
 So a compromised Cloud Inbox can read and edit workspace data and tamper with queue delivery.
-Per-machine storage does not isolate machines from a compromised Worker. Machines must
+Machines share one queue and are separated only by their claims, which a compromised Worker
+can ignore. Machines must
 treat Cloud Inbox messages and job ids as untrusted inputs.
 
-**Existing installations:** add `clientSecret` to the machine's `MACHINES` entry, upload
-it, then reinstall. Tokens with a different grant are refused until then, but deploying
-new code does not revoke them at Linear, so revoke the old authorization there. Preserve
-machine keys and queued jobs.
+**Existing installations:** installations from before the one `Delegator` app don't
+carry over. Set up the new configuration, install `Delegator`, then revoke the old apps'
+authorizations in Linear: deploying new code does not revoke them there.
 
 You own the deployment, credentials and usage charges. Traffic/storage limits,
 recovery drills and safe automatic launches remain separate work.

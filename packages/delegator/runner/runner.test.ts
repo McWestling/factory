@@ -7,8 +7,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import type { MachineAuth } from '../cloud-inbox/auth.ts';
-import { MachineQueue } from '../cloud-inbox/queue.ts';
+import type { AppAuth } from '../cloud-inbox/auth.ts';
+import { JobQueue } from '../cloud-inbox/queue.ts';
 import { handleRunner } from '../cloud-inbox/routes.ts';
 import { acknowledgeDrain, checkWatches, startStatusHeartbeat, handleJob, launchArgs, loadConfig, NOT_ALLOWED, poll, resumeWatches, watchJobs, type Deps, type RunnerConfig, type Task } from './runner.ts';
 
@@ -364,13 +364,13 @@ function realInbox() {
     } });
   };
   const auth = { installation: async () => ({ appUserId: 'app-user', appName: 'Example' }), getAccessToken: async () => 'token' };
-  const queue = new MachineQueue({ exec: (query, ...bindings) => {
+  const queue = new JobQueue({ exec: (query, ...bindings) => {
     const rows = db.prepare(query).all(...bindings);
     return { toArray: () => rows };
-  } }, auth as unknown as MachineAuth, 'example-machine', () => {}, linear, () => clock.now);
-  const inboxConfig = { orgId: 'org', adminSecret: 'admin', machines: {
-    'example-machine': { clientId: 'client', clientSecret: 'secret', webhookSecret: 'webhook', bearerSecret: config.bearerSecret },
-  } };
+  } }, auth as unknown as AppAuth, () => {}, linear, () => clock.now);
+  const inboxConfig = { orgId: 'org', adminSecret: 'admin',
+    app: { clientId: 'client', clientSecret: 'secret', webhookSecret: 'webhook' },
+    machines: { 'example-machine': config.bearerSecret } };
   const ops: string[] = [];
   let loseLaunched = 0;
   let loseThought = 0;
@@ -381,7 +381,7 @@ function realInbox() {
     if (url.pathname.endsWith('/updates') && loseThought-- > 0) throw new TypeError('fetch failed');
     // Lost before it reaches Cloud Inbox.
     if (url.pathname.endsWith('/launched') && loseLaunched-- > 0) throw new TypeError('fetch failed');
-    return handleRunner(new Request(url, init), inboxConfig, () => queue);
+    return handleRunner(new Request(url, init), inboxConfig, queue);
   };
   const state = () => db.prepare('SELECT state FROM jobs').all().map((row) => row.state);
   return { queue, clock, issueEdits, thoughts, responses, links, ops, fetch, state,
@@ -414,8 +414,8 @@ test('a final response accepted before a lost acknowledgement is not queued twic
 test('an upgraded Runner retains a legacy watch without evidence and never posts a contextual PR', async () => {
   const inbox = realInbox();
   await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
-  const old = await inbox.queue.claim();
-  await inbox.queue.finish(old!.sessionId, old!.claimId, 'launched');
+  const old = await inbox.queue.claim('example-machine');
+  await inbox.queue.finish('example-machine', old!.sessionId, old!.claimId, 'launched');
   inbox.prs(['https://github.com/owner/repo/pull/7']);
   const f = fakes();
   f.deps.fetch = inbox.fetch;

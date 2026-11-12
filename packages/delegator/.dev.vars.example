@@ -1,4 +1,7 @@
 # Copy to .dev.vars for `wrangler dev`. In production, set each with `wrangler secret put`.
 LINEAR_ORG_ID="00000000-0000-0000-0000-000000000000"
 ADMIN_SECRET="replace-with-at-least-32-random-characters"
-MACHINES='{"example-machine":{"clientId":"replace-me","clientSecret":"replace-me","webhookSecret":"replace-me","bearerSecret":"replace-with-at-least-32-random-characters"}}'
+LINEAR_CLIENT_ID="replace-me"
+LINEAR_CLIENT_SECRET="replace-me"
+LINEAR_WEBHOOK_SECRET="replace-me"
+MACHINES='{"example-machine":"replace-with-at-least-32-random-characters"}'

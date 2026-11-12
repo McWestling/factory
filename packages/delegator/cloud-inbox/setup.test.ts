@@ -44,6 +44,8 @@ test('setup resumes an interrupted registration and reruns without changing cred
     assert.equal(manifest.searchParams.get('distribution'), 'private');
     assert.equal(manifest.searchParams.get('webhook.resourceTypes'), 'AgentSessionEvent');
     assert.equal(manifest.searchParams.get('webhook.enabled'), 'true');
+    assert.equal(manifest.searchParams.get('oauth.client_name'), 'Delegator');
+    assert.equal(manifest.searchParams.get('oauth.redirect_uris'), 'https://factory-cloud-inbox.example.workers.dev/delegator/callback');
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
@@ -85,7 +87,9 @@ test('an interrupted secret upload retries the identical complete configuration'
     fail = false;
     await setup(file, io);
     const secrets = JSON.parse(uploaded!);
-    assert.equal(JSON.parse(secrets.MACHINES)['example-machine'].clientSecret, 'secret');
+    assert.equal(secrets.LINEAR_CLIENT_SECRET, 'secret');
+    assert.deepEqual(Object.keys(JSON.parse(secrets.MACHINES)), ['example-machine']);
+    assert.equal(JSON.parse(secrets.MACHINES)['example-machine'].length, 64);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
@@ -113,7 +117,7 @@ test('guided credential correction preserves owner, machine authority and identi
     assert.equal(after.machine, before.machine);
     assert.equal(after.name, before.name);
     assert.equal(after.config.adminSecret, before.config.adminSecret);
-    assert.equal(after.config.machines['example-machine'].bearerSecret, before.config.machines['example-machine'].bearerSecret);
-    assert.equal(JSON.parse(JSON.parse(upload).MACHINES)['example-machine'].clientSecret, 'corrected-secret');
+    assert.equal(after.config.machines['example-machine'], before.config.machines['example-machine']);
+    assert.equal(JSON.parse(upload).LINEAR_CLIENT_SECRET, 'corrected-secret');
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

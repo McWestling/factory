@@ -1,4 +1,4 @@
-// Cloud Inbox config and the per-machine Linear OAuth install. Runs in the Worker and
+// Cloud Inbox config and the Delegator app's Linear OAuth install. Runs in the Worker and
 // under Node for tests, so it uses only fetch and WebCrypto.
 
 const AUTHORIZE_URL = 'https://linear.app/oauth/authorize';
@@ -10,18 +10,22 @@ const REFRESH_MARGIN_MS = 60 * 60_000;
 const MACHINE_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const MIN_SECRET_LENGTH = 32;
 
-export type MachineConfig = {
+/** The one Linear OAuth app, `Delegator`, that every machine shares. */
+export type AppConfig = {
   clientId: string;
   clientSecret: string;
   webhookSecret: string;
-  bearerSecret: string;
 };
 
 export type Config = {
   orgId: string;
   adminSecret: string;
-  machines: Record<string, MachineConfig>;
+  app: AppConfig;
+  /** Machine name to its bearer secret, the only way that machine can claim jobs. */
+  machines: Record<string, string>;
 };
+
+const APP_KEYS = { clientId: 'LINEAR_CLIENT_ID', clientSecret: 'LINEAR_CLIENT_SECRET', webhookSecret: 'LINEAR_WEBHOOK_SECRET' } as const;
 
 /** Reads Cloud Inbox's secrets. Returns a problem naming the bad key, never its value. */
 export function readConfig(env: Record<string, unknown>): Config | string {
@@ -30,6 +34,12 @@ export function readConfig(env: Record<string, unknown>): Config | string {
   if (typeof adminSecret !== 'string' || adminSecret.length < MIN_SECRET_LENGTH) {
     return `ADMIN_SECRET must be at least ${MIN_SECRET_LENGTH} characters`;
   }
+  const app: Record<string, string> = {};
+  for (const [field, key] of Object.entries(APP_KEYS)) {
+    const value = env[key];
+    if (typeof value !== 'string' || !value) return `${key} is missing`;
+    app[field] = value;
+  }
   let machines: unknown;
   try {
     machines = JSON.parse(typeof raw === 'string' ? raw : '');
@@ -37,27 +47,20 @@ export function readConfig(env: Record<string, unknown>): Config | string {
     return 'MACHINES is not JSON';
   }
   if (!machines || typeof machines !== 'object' || Array.isArray(machines)) {
-    return 'MACHINES must be an object of machine name to secrets';
+    return 'MACHINES must be an object of machine name to bearer secret';
   }
   const entries = Object.entries(machines);
   if (!entries.length) return 'MACHINES is empty';
   const bearerSecrets = new Set<unknown>();
-  const clientIds = new Set<unknown>();
-  for (const [name, machine] of entries) {
+  for (const [name, bearerSecret] of entries) {
     if (!MACHINE_NAME.test(name)) return `MACHINES has an invalid machine name`;
-    const m = (machine ?? {}) as Record<string, unknown>;
-    for (const key of ['clientId', 'clientSecret', 'webhookSecret', 'bearerSecret']) {
-      if (typeof m[key] !== 'string' || !m[key]) return `MACHINES.${name}.${key} is missing`;
+    if (typeof bearerSecret !== 'string' || bearerSecret.length < MIN_SECRET_LENGTH) {
+      return `MACHINES.${name} must be a bearer secret of at least ${MIN_SECRET_LENGTH} characters`;
     }
-    if (bearerSecrets.has(m.bearerSecret)) return 'MACHINES has duplicate bearerSecret values';
-    if (clientIds.has(m.clientId)) return 'MACHINES has duplicate clientId values';
-    bearerSecrets.add(m.bearerSecret);
-    clientIds.add(m.clientId);
-    if ((m.bearerSecret as string).length < MIN_SECRET_LENGTH) {
-      return `MACHINES.${name}.bearerSecret must be at least ${MIN_SECRET_LENGTH} characters`;
-    }
+    if (bearerSecrets.has(bearerSecret)) return 'MACHINES has duplicate bearer secrets';
+    bearerSecrets.add(bearerSecret);
   }
-  return { orgId, adminSecret, machines: machines as Record<string, MachineConfig> };
+  return { orgId, adminSecret, app: app as AppConfig, machines: machines as Record<string, string> };
 }
 
 export const hex = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
@@ -121,10 +124,10 @@ export type InstallResult =
   | { ok: true; appUserId: string }
   | { ok: false; reason: 'state' | 'reinstall' | 'superseded' | 'exchange' | 'org' };
 
-/** One machine's install and token, kept in that machine's Durable Object storage. */
-export class MachineAuth {
+/** The Delegator app's one install and token, kept in Cloud Inbox's Durable Object storage. */
+export class AppAuth {
   #storage: Storage;
-  #client: Pick<MachineConfig, 'clientId' | 'clientSecret'>;
+  #client: Pick<AppConfig, 'clientId' | 'clientSecret'>;
   #orgId: string;
   #fetch: typeof fetch;
   #now: () => number;
@@ -134,7 +137,7 @@ export class MachineAuth {
 
   constructor(
     storage: Storage,
-    client: Pick<MachineConfig, 'clientId' | 'clientSecret'>,
+    client: Pick<AppConfig, 'clientId' | 'clientSecret'>,
     orgId: string,
     // Bounded, so a slow Linear can't hold a refresh, and the deliveries behind it, open.
     fetchFn: typeof fetch = (input, init) => fetch(input, { signal: AbortSignal.timeout(10_000), ...init }),
@@ -215,7 +218,7 @@ export class MachineAuth {
     return { ok: true, appUserId: viewer.id };
   }
 
-  /** The app user this machine was installed as, or undefined before the install. */
+  /** The app user Delegator was installed as, or undefined before the install. */
   async installation(): Promise<AppUser | undefined> {
     if (await this.#storage.get('disconnecting')) return undefined;
     const token = await this.#storage.get<StoredToken>('token');
@@ -283,12 +286,12 @@ export class MachineAuth {
 
   /** Returns the cached access token, refreshing it when under an hour remains. */
   async getAccessToken(): Promise<string> {
-    if (await this.#storage.get('disconnecting')) throw new Error('Machine is disconnected; retry disconnect before reconnecting');
+    if (await this.#storage.get('disconnecting')) throw new Error('Delegator is disconnected; retry disconnect before reconnecting');
     const token = await this.#storage.get<StoredToken>('token');
-    if (!token) throw new Error('Machine is not installed');
+    if (!token) throw new Error('Delegator is not installed');
     // Also catches records from before the identity was stored.
     if (!cloudInboxScopes(token.scopes) || token.orgId !== this.#orgId || token.clientId !== this.#client.clientId) {
-      throw new Error('Machine must be reinstalled: its token has other or unverified permissions or belongs to another org or client');
+      throw new Error('Delegator must be reinstalled: its token has other or unverified permissions or belongs to another org or client');
     }
     if (token.expiresAt - this.#now() > REFRESH_MARGIN_MS) return token.accessToken;
     // One refresh at a time: Linear rotates the refresh token.
