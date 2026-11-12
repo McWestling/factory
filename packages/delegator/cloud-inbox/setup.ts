@@ -33,10 +33,12 @@ async function save(file: string, state: State) {
   await chmod(`${file}.tmp`, 0o600);
   await rename(`${file}.tmp`, file);
 }
+/** The Worker secrets that hold `config`, as `readConfig` reads them. */
+const secrets = (config?: Partial<Config>) => ({ LINEAR_ORG_ID: config?.orgId, ADMIN_SECRET: config?.adminSecret,
+  LINEAR_CLIENT_ID: config?.app?.clientId, LINEAR_CLIENT_SECRET: config?.app?.clientSecret,
+  LINEAR_WEBHOOK_SECRET: config?.app?.webhookSecret, MACHINES: JSON.stringify(config?.machines) });
 function validate(state: State): Config {
-  const config = state.config;
-  const result = readConfig({ LINEAR_ORG_ID: config?.orgId, ADMIN_SECRET: config?.adminSecret,
-    MACHINES: JSON.stringify(config?.machines) });
+  const result = readConfig(secrets(state.config));
   if (typeof result === 'string') throw new Error(result);
   if (!state.machine || !Object.hasOwn(result.machines, state.machine)) throw new Error('Saved machine key is missing. Restore the checkpoint.');
   return result;
@@ -68,8 +70,8 @@ export async function setup(file: string, io: SetupIO): Promise<void> {
   const run = (args: string[], input?: string) => io.command([...args, ...flags], input);
   if (!state.origin) {
     // Check before deploying: a lost checkpoint must never rotate existing remote secrets.
-    const secrets = JSON.parse(await run(['secret', 'list'])) as unknown[];
-    if (secrets.length && !state.imported) {
+    const remote = JSON.parse(await run(['secret', 'list'])) as unknown[];
+    if (remote.length && !state.imported) {
       throw new Error('This Worker already has secrets. Restore the checkpoint or run import with its original .dev.vars before setup.');
     }
     const deployed = await run(['deploy', '--keep-vars']);
@@ -87,8 +89,8 @@ export async function setup(file: string, io: SetupIO): Promise<void> {
     if (!state.registrationUrl) {
       const url = new URL('https://linear.app/settings/api/applications/new');
       url.search = new URLSearchParams({ distribution: 'private', 'developer.name': 'Factory operator',
-        'oauth.client_name': `Factory ${state.machine}`, 'oauth.client_uri': `${state.origin}/delegator`,
-        'oauth.redirect_uris': `${state.origin}/delegator/callback/${state.machine}`,
+        'oauth.client_name': 'Delegator', 'oauth.client_uri': `${state.origin}/delegator`,
+        'oauth.redirect_uris': `${state.origin}/delegator/callback`,
         'oauth.grant_types': 'authorization_code', 'webhook.enabled': 'true',
         'webhook.url': `${state.origin}/delegator/webhook`, 'webhook.resourceTypes': 'AgentSessionEvent' }).toString();
       state.registrationUrl = url.href;
@@ -100,26 +102,24 @@ export async function setup(file: string, io: SetupIO): Promise<void> {
     await fill('clientId', 'App client ID');
     await fill('clientSecret', 'App client secret', true);
     await fill('webhookSecret', 'App webhook signing secret', true);
-    state.config = { orgId: state.orgId!, adminSecret: state.adminSecret!, machines: {
-      [state.machine!]: { clientId: state.clientId!, clientSecret: state.clientSecret!,
-        webhookSecret: state.webhookSecret!, bearerSecret: state.bearerSecret! },
-    } };
+    state.config = { orgId: state.orgId!, adminSecret: state.adminSecret!,
+      app: { clientId: state.clientId!, clientSecret: state.clientSecret!, webhookSecret: state.webhookSecret! },
+      machines: { [state.machine!]: state.bearerSecret! } };
     await save(file, state);
   }
   const config = validate(state);
   if (!state.uploaded) {
-    const secrets = JSON.parse(await run(['secret', 'list'])) as unknown[];
-    if (secrets.length && !state.uploading && !state.imported) {
+    const remote = JSON.parse(await run(['secret', 'list'])) as unknown[];
+    if (remote.length && !state.uploading && !state.imported) {
       throw new Error('Remote secrets appeared during setup. Restore/import original configuration before continuing.');
     }
     state.uploading = true;
     await save(file, state);
-    await run(['secret', 'bulk'], JSON.stringify({ LINEAR_ORG_ID: config.orgId,
-      ADMIN_SECRET: config.adminSecret, MACHINES: JSON.stringify(config.machines) }));
+    await run(['secret', 'bulk'], JSON.stringify(secrets(config)));
     state.uploaded = true;
     await save(file, state);
   }
-  io.say(`Setup URL: ${state.origin}/delegator/install/${state.machine}`);
+  io.say(`Setup URL: ${state.origin}/delegator/install`);
   io.say('Run npm run inbox -- connect to authorize, then npm run inbox -- status to check access.');
   io.say('Owner authentication is saved in the private checkpoint. Back it up securely. Runner pairing is not implemented yet.');
 }
@@ -128,12 +128,10 @@ export async function setup(file: string, io: SetupIO): Promise<void> {
 export async function credentials(file: string, io: SetupIO): Promise<void> {
   const state = await load(file);
   const config = validate(state);
-  const machine = config.machines[state.machine!]!;
   const clientId = (await io.ask('clientId', 'Original app client ID (correct a typo; do not replace a working app)')).trim();
   const clientSecret = (await io.ask('clientSecret', 'App client secret', true)).trim();
   const webhookSecret = (await io.ask('webhookSecret', 'App webhook signing secret', true)).trim();
-  state.config = { ...config, machines: { ...config.machines,
-    [state.machine!]: { ...machine, clientId, clientSecret, webhookSecret } } };
+  state.config = { ...config, app: { clientId, clientSecret, webhookSecret } };
   validate(state);
   state.uploaded = false;
   state.uploading = true;
@@ -215,7 +213,7 @@ async function main() {
     return;
   }
   const route = action === 'connect' || action === 'reconnect' ? 'install' : action;
-  const response = await fetch(`${state.origin}/delegator/${route}/${state.machine}`, {
+  const response = await fetch(`${state.origin}/delegator/${route}`, {
     method: action === 'disconnect' ? 'POST' : 'GET', redirect: 'manual', signal: AbortSignal.timeout(30_000),
     headers: { Authorization: `Basic ${Buffer.from(`owner:${config.adminSecret}`).toString('base64')}` },
   });
