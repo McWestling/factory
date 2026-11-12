@@ -273,7 +273,9 @@ function inbox(config: RunnerConfig, deps: Deps) {
 
 /** The exact argv for `orca worktree create`, per docs/issue-format.md. */
 export function launchArgs(config: RunnerConfig, repoPath: string, model: string, task: Pick<Task, 'identifier' | 'branchName'>) {
-  const { agent, model: id, effort } = config.models[model]!;
+  const { agent, model: id, effort: configuredEffort } = config.models[model]!;
+  const effort = agent === 'codex' && /(?:^|-)luna(?:-|$)/i.test(id)
+    && !['high', 'xhigh', 'max'].includes(configuredEffort ?? '') ? 'high' : configuredEffort;
   return [
     'worktree', 'create',
     '--name', task.branchName.split('/').pop()!,
