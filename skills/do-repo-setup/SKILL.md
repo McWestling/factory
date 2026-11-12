@@ -48,7 +48,7 @@ For an agent without plugin support, or to complete an existing CLI installation
 npx skills add mattpocock/skills --skill '*' -g -a <current-agent> -y
 ```
 
-Replace `<current-agent>` with that agent's skills-CLI identifier (for example `cursor`); resolve it from the installer's supported agents, never guess or use `--all`. Never run `-y` without `-a`. This may use the installer's shared canonical store; it must create links only for the selected agent. Never install the CLI form for an agent already using the plugin. Before a CLI install, check whether its shared store would also expose bare skills to another plugin-enabled agent on this machine. If it would, defer the install and report the conflict so the maintainer can choose one form for the affected agents; do not build alternate storage or wrappers.
+Replace `<current-agent>` with that agent's skills-CLI identifier (for example `claude-code`); resolve it from the installer's supported agents, never guess or use `--all`. Never run `-y` without `-a`. This may use the installer's shared canonical store; it must create links only for the selected agent. Never install the CLI form for an agent already using the plugin. Before a CLI install, check whether its shared store would also expose bare skills to another plugin-enabled agent on this machine. If it would, defer the install and report the conflict so the maintainer can choose one form for the affected agents; do not build alternate storage or wrappers.
 
 After the step 3 answer, run only the approved route, then recheck the current agent's discovery. On failure or skipped install, report missing dependencies. When installed but not advertised, say: "Dependencies installed; start a fresh session and rerun do-repo-setup before using do-refine or do-implement." Continue independent repo setup, but keep overall setup pending.
 
@@ -252,19 +252,18 @@ Slots are `{{…}}`. Fill them from Linear; everything else is copied exactly, i
   | `Duplicate`   | Duplicate of another issue.                                                                                                  |
 
 - `{{decision labels}}`: the team's `wayfinder:` labels that exist, in this order: `wayfinder:research`, `wayfinder:grilling`, `wayfinder:prototype`, `wayfinder:task`. Each in backticks, comma-separated.
-- `{{retired labels}}`: in this order, comma-separated: the retired labels among `ready-for-agent`, `ready-for-human`, `needs-triage`, `needs-info`, `wontfix`, `wayfinder:map` (in that order); then each retired label group as "the `<name>` group"; then retired Dispatch target labels, alphabetically, as "and the `A`, `B` and `C` dispatch targets".
+- `{{retired labels}}`: in this order, comma-separated: the retired labels among `ready-for-agent`, `ready-for-human`, `needs-triage`, `needs-info`, `wontfix`, `wayfinder:map` (in that order); then each retired label group as "the `<name>` group"; then retired Dispatch target labels, always including `Linear/Cursor`, alphabetically, as "and the `A`, `B` and `C` dispatch targets".
 - `{{template}}`: the one team issue template whose name or description says "implementation", as `` `<name>` (team-scoped) `` or `` `<name>` (workspace) ``. If the team has no issue templates, write `None. Agents write implementation issues without a Linear template` and don't ask. If none matches or several do, use the user's answer from step 3: the template they picked, or the `None` line.
 - `{{tool stack}}`: the Linear document titled exactly `Tool Stack`, as `[Tool Stack](<url>)`. If there is none, write `None yet` and don't ask.
 - **Dispatch target rows:** one row per active label in the Dispatch target group, in this table's order, then any others with the meaning the user gave in step 3.
 
   | Label           | Use it when                                                                      |
   | --------------- | -------------------------------------------------------------------------------- |
-  | `Orca`          | Dispatched from Orca, including Cursor Cloud agents it launches                  |
+  | `Orca`          | Dispatched from Orca                                                             |
   | `Claude`        | Claude Code outside Orca                                                         |
   | `Codex`         | Codex outside Orca                                                               |
-  | `Linear/Cursor` | Cursor Cloud, delegated from Linear. Legacy; retired when Factory Delegator ships |
-
-- `{{orca rule}}`: if there is an `Orca` label, ": a session with any `ORCA_*` environment variable set is `Orca`, and Orca sets the label itself on the Cursor Cloud agents it launches"; otherwise nothing.
+  
+- `{{orca rule}}`: if there is an `Orca` label, ": a session with any `ORCA_*` environment variable set is `Orca`"; otherwise nothing.
 - `{{default target}}`: `Orca` if that label exists; otherwise the user's answer in step 3.
 
 The model table and its Checked date are the factory's curated pick. Copy them as they are; step 3 handles models a vendor has dropped.
@@ -274,7 +273,7 @@ The model table and its Checked date are the factory's curated pick. Copy them a
 
 This is {{workspace}}'s config. Other repos point to it from their `AGENTS.md` instead of keeping a copy.
 
-**Setup version:** 2026-11-12
+**Setup version:** 2026-11-12.2
 
 The skills hold the procedure. This file holds only the values they look up, under the headings below. Keep the headings stable: skills cite them by name.
 
@@ -336,7 +335,7 @@ Each product has an initiative with the same name as its Product label. Its desc
 ## Repo routing
 
 - **Source:** each product initiative's description opens with exactly `Repo: owner/name`, or `Repo: none` for a product with no repo yet. Several products may share a repo. This is the only product-to-repo mapping.
-- **On the issue:** a `` `[repo=owner/name]` `` tag in the issue description, written as a code span. Linear escapes bare brackets to `\[repo=…\]`, which also counts. It is the same syntax Cursor's Linear integration reads, and it overrides everything else.
+- **On the issue:** a `` `[repo=owner/name]` `` tag in the issue description, written as a code span. Linear escapes bare brackets to `\[repo=…\]`, which also counts. It overrides everything else.
 - **Lookup:** Product label → the initiative with the same name → its `Repo:` line. One hop; never inferred from anything else.
 - **Cross-check:** PRs already linked to other issues of the same product. A mismatch stops the work.
 - **Unresolved:** no tag and `Repo: none` (or no `Repo:` line). There is no default repo.
@@ -349,7 +348,7 @@ Each product has an initiative with the same name as its Product label. Its desc
 
 The label records where the work was dispatched from, not where the session runs or which model ran. Set it when work starts{{orca rule}}. An issue's `[target=]` tag is the plan when it differs from the default; the label records what actually ran.
 
-**Default target:** `{{default target}}`, for every model below, Cursor models included. Never suggest a legacy target.
+**Default target:** `{{default target}}`, for every model below. Never suggest a legacy target.
 
 ## Preferred models
 
@@ -362,8 +361,6 @@ The label records where the work was dispatched from, not where the session runs
 | GPT-6 Astra      | `deep`     |                | Hardest end-to-end work in Codex, when GPT-6.1 Sol falls short                 |
 | GPT-6.1 Sol      | `standard` |                | Complex implementation and agentic work                                        |
 | GPT-6 Luna       | `light`    | `high` or above | Focused, pattern-following tickets                                             |
-| Composer 2.5     | `light`    |                | Mechanical changes, as a Cursor Cloud agent                                    |
-| Grok 4.7         | `light`    |                | Mechanical changes, as a Cursor Cloud agent                                    |
 
 A blank effort means the agent's default. See [Runner config](https://github.com/mcwestling/factory/blob/main/docs/issue-format.md#runner-config) for effort variants.
 
@@ -371,7 +368,6 @@ A blank effort means the agent's default. See [Runner config](https://github.com
 
 - Claude: <https://platform.claude.com/docs/en/about-claude/models/overview>
 - Codex: <https://learn.chatgpt.com/docs/models.md>
-- Cursor: <https://cursor.com/docs/models>
 
 ## Views
 
@@ -513,3 +509,36 @@ Apply each entry newer than the doc's version, in order. Compare with slots fill
 - **Old text:** the table has **Model**, **Level** and **Use it for** columns; Luna's use text includes `where a good result is clear`.
 - **New text:** add an **Effort** column with the current template values, explain that a blank effort means the agent's default, and link to Runner config for effort variants. Luna's effort is `high` or above and its use text is `Focused, pattern-following tickets`.
 - **Why:** setup must carry forward the effort defaults now documented in the tracker, including the Luna minimum.
+
+### 2026-11-12.2
+- **Why:** Factory no longer supports Cursor: skill installs for it were unreliable, and setup couldn't verify it.
+
+- **Where:** `## Labels`, the **Retired, never apply** line.
+- **Old text:** the retired dispatch targets don't include `Linear/Cursor`.
+- **New text:** add `Linear/Cursor` to the retired dispatch targets, in alphabetical order.
+- **Why:** Factory no longer supports Cursor: skill installs for it were unreliable, and setup couldn't verify it.
+
+- **Where:** `## Repo routing`, the **On the issue** line.
+- **Old text:** `It is the same syntax Cursor's Linear integration reads, and it overrides everything else.`
+- **New text:** `It overrides everything else.`
+- **Why:** Factory no longer supports Cursor: skill installs for it were unreliable, and setup couldn't verify it.
+
+- **Where:** `## Dispatch targets`, the table.
+- **Old text:** the `Orca` row reads `Dispatched from Orca, including Cursor Cloud agents it launches`, and a `Linear/Cursor` row follows `Codex`.
+- **New text:** the `Orca` row reads `Dispatched from Orca`, and the `Linear/Cursor` row is gone.
+- **Why:** Factory no longer supports Cursor: skill installs for it were unreliable, and setup couldn't verify it.
+
+- **Where:** `## Dispatch targets`, the paragraph under the table.
+- **Old text:** `` a session with any `ORCA_*` environment variable set is `Orca`, and Orca sets the label itself on the Cursor Cloud agents it launches. ``
+- **New text:** `` a session with any `ORCA_*` environment variable set is `Orca`. ``
+- **Why:** Factory no longer supports Cursor: skill installs for it were unreliable, and setup couldn't verify it.
+
+- **Where:** `## Dispatch targets`, the **Default target** line.
+- **Old text:** `` **Default target:** `{{default target}}`, for every model below, Cursor models included. Never suggest a legacy target. ``
+- **New text:** `` **Default target:** `{{default target}}`, for every model below. Never suggest a legacy target. ``
+- **Why:** Factory no longer supports Cursor: skill installs for it were unreliable, and setup couldn't verify it.
+
+- **Where:** `## Preferred models`, the table and **Sources**.
+- **Old text:** the table has `Composer 2.5` and `Grok 4.7` rows, and **Sources** lists `Cursor: <https://cursor.com/docs/models>`.
+- **New text:** both rows and the Cursor source are gone.
+- **Why:** Factory no longer supports Cursor: skill installs for it were unreliable, and setup couldn't verify it.

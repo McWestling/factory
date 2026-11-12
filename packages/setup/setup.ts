@@ -23,11 +23,10 @@ export type SetupDeps = UpkeepDeps & {
   rpc: (file: string, args: string[], messages: object[], timeoutMs: number) => Promise<any[]>;
 };
 
-type Agent = { bin: string; id: string; display: string; plugin: boolean };
+type Agent = { bin: string; id: string; display: string };
 const AGENTS: Record<string, Agent> = {
-  claude: { bin: 'claude', id: 'claude-code', display: 'Claude Code', plugin: true },
-  codex: { bin: 'codex', id: 'codex', display: 'Codex', plugin: true },
-  cursor: { bin: 'agent', id: 'cursor', display: 'Cursor', plugin: false },
+  claude: { bin: 'claude', id: 'claude-code', display: 'Claude Code' },
+  codex: { bin: 'codex', id: 'codex', display: 'Codex' },
 };
 const SUPPORT = ['grilling', 'domain-modeling', 'research', 'prototype', 'tdd', 'codebase-design', 'code-review'];
 const PLUGIN = 'mattpocock-skills';
@@ -141,10 +140,10 @@ async function support(deps: SetupDeps, name: string, forms: Awaited<ReturnType<
     }
     if (plugin && name === 'claude') { await run('claude', 'plugin', 'update', plugin); return done(`refreshed the ${plugin} plugin`); }
     if (plugin) { await run('codex', 'plugin', 'marketplace', 'upgrade', plugin.split('@')[1]!); return done(`refreshed the ${plugin} plugin`); }
-    if (hasCli || !AGENTS[name]!.plugin) {
+    if (hasCli) {
       if (cliBlocked) return cliBlocked;
       await run('npx', '--yes', 'skills', 'add', 'mattpocock/skills', '--skill', '*', '-g', '-a', AGENTS[name]!.id, '-y');
-      return done(hasCli ? 'refreshed with the skills CLI' : 'installed with the skills CLI');
+      return done('refreshed with the skills CLI');
     }
     if (name === 'claude') { await run('claude', 'plugin', 'install', `${PLUGIN}@claude-plugins-official`); return done(`installed the ${PLUGIN} plugin`); }
     await run('codex', 'plugin', 'marketplace', 'add', 'mattpocock/skills');
@@ -214,23 +213,20 @@ async function verifyOnce(deps: SetupDeps, name: string): Promise<string | null>
       return claudeVerdict(await output('claude', ['-p', PROMPT, '--output-format', 'stream-json', '--verbose', '--tools', '',
         '--allowedTools', 'mcp__*__whoami', '--no-session-persistence']), factory);
     }
-    if (name === 'codex') {
-      const servers = JSON.parse((await deps.exec('codex', ['mcp', 'list', '--json'], 60_000)).stdout) as { name: string; enabled: boolean; transport?: { url?: string } }[];
-      const server = servers.find((entry) => String(entry.transport?.url).includes('mcp.linear.app') || /linear/i.test(entry.name));
-      if (!server) return 'codex has no Linear MCP server. Run: codex mcp add linear --url https://mcp.linear.app/mcp, then: codex mcp login linear';
-      if (!server.enabled) return `codex's Linear MCP server ${server.name} is disabled. Set enabled = true under [mcp_servers.${server.name}] in ~/.codex/config.toml.`;
-      const [, list] = await deps.rpc('codex', ['app-server'], [
-        { id: 1, method: 'initialize', params: { clientInfo: { name: 'factory-setup', version: '1' } } },
-        { method: 'initialized' },
-        { id: 2, method: 'skills/list', params: { cwds: [deps.root] } },
-      ], 60_000);
-      const listed = ((list?.data?.[0]?.skills ?? []) as { name: string; enabled: boolean }[]).filter((skill) => skill.enabled).map((skill) => skill.name);
-      const missing = missingSkills(listed, factory);
-      if (missing.length) return `codex can't discover: ${missing.join(', ')}. Rerun setup to reinstall them.`;
-      return codexVerdict(await output('codex', ['exec', '--sandbox', 'read-only', '--ephemeral', '--json', '--skip-git-repo-check',
-        '-c', `mcp_servers.${server.name}.enabled_tools=["whoami"]`, PROMPT]), server.name);
-    }
-    return 'verification unsupported. Cursor\'s agent CLI can\'t list its skills, so setup can\'t confirm them. Check Linear and the skills in Cursor yourself.';
+    const servers = JSON.parse((await deps.exec('codex', ['mcp', 'list', '--json'], 60_000)).stdout) as { name: string; enabled: boolean; transport?: { url?: string } }[];
+    const server = servers.find((entry) => String(entry.transport?.url).includes('mcp.linear.app') || /linear/i.test(entry.name));
+    if (!server) return 'codex has no Linear MCP server. Run: codex mcp add linear --url https://mcp.linear.app/mcp, then: codex mcp login linear';
+    if (!server.enabled) return `codex's Linear MCP server ${server.name} is disabled. Set enabled = true under [mcp_servers.${server.name}] in ~/.codex/config.toml.`;
+    const [, list] = await deps.rpc('codex', ['app-server'], [
+      { id: 1, method: 'initialize', params: { clientInfo: { name: 'factory-setup', version: '1' } } },
+      { method: 'initialized' },
+      { id: 2, method: 'skills/list', params: { cwds: [deps.root] } },
+    ], 60_000);
+    const listed = ((list?.data?.[0]?.skills ?? []) as { name: string; enabled: boolean }[]).filter((skill) => skill.enabled).map((skill) => skill.name);
+    const missing = missingSkills(listed, factory);
+    if (missing.length) return `codex can't discover: ${missing.join(', ')}. Rerun setup to reinstall them.`;
+    return codexVerdict(await output('codex', ['exec', '--sandbox', 'read-only', '--ephemeral', '--json', '--skip-git-repo-check',
+      '-c', `mcp_servers.${server.name}.enabled_tools=["whoami"]`, PROMPT]), server.name);
   } catch (error) {
     return `couldn't run the check (${(error as Error).message}).`;
   }
@@ -241,7 +237,7 @@ async function verify(deps: SetupDeps, name: string): Promise<Result> {
   for (;;) {
     const failure = await verifyOnce(deps, name);
     if (!failure) return { ok: true, line: `${name}: verified. Linear whoami answered and every Factory and supporting skill is discoverable.` };
-    if (!deps.ask || failure.startsWith('verification unsupported')) return { ok: false, line: `${name}: ${failure}` };
+    if (!deps.ask) return { ok: false, line: `${name}: ${failure}` };
     deps.print(`${name}: ${failure}`);
     if ((await deps.ask('Fix that, then press Enter to check again, or type skip: ')).trim() === 'skip') return { ok: false, line: `${name}: skipped verification.` };
   }
@@ -398,7 +394,7 @@ export async function setup(deps: SetupDeps): Promise<number> {
     const runner = !existsSync(join(deps.stateDir, PENDING))
       && ['Factory Runner.app', 'Factory Runner.app.previous'].some((app) => existsSync(join(deps.home, 'Applications', app)));
     const problems = found.length ? await prerequisites(deps, found, runner)
-      : ['No agent CLI found. Install Claude Code (claude), Codex (codex) or Cursor (agent), then rerun.'];
+      : ['No agent CLI found. Install Claude Code (claude) or Codex (codex), then rerun.'];
     if (problems.length) {
       for (const problem of problems) deps.print(`prerequisites: ${problem}`);
       deps.print('Nothing was changed.');

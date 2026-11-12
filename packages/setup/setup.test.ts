@@ -85,7 +85,7 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) 
     readDenied: false,
     gh: true,
     /** Supporting-skill state per agent: 'plugin', 'cli' or 'none'. */
-    support: { claude: 'none', codex: 'none', cursor: 'none' } as Record<string, string>,
+    support: { claude: 'none', codex: 'none' } as Record<string, string>,
     claude: claudeRun(),
     codex: codexRun(),
     codexSkills: ['do-a', 'do-b', ...SUPPORT.map((name) => `mattpocock-skills:${name}`)],
@@ -96,8 +96,8 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) 
     deps: undefined as unknown as SetupDeps,
   };
   const fail = (stderr: string, stdout = '') => Object.assign(new Error('exit 1'), { stderr, stdout });
-  const display: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' };
-  const bins: Record<string, string> = { claude: 'claude', codex: 'codex', agent: 'cursor' };
+  const display: Record<string, string> = { claude: 'Claude Code', codex: 'Codex' };
+  const bins: Record<string, string> = { claude: 'claude', codex: 'codex', agent: 'agent' };
   m.deps = {
     home, root, stateDir: join(home, '.local/state/factory'), node: '/usr/bin/node', uid: 501,
     platform: 'darwin', nodeVersion: '26.7.0', agents,
@@ -231,9 +231,9 @@ test('a fresh install from a fork installs Factory and supporting skills for the
   assert.match(mac.m.output.at(-1)!, /^claude: verified/);
 });
 
-test('a repeat install keeps each agent on its existing form and leaves unselected agents alone', async () => {
-  const mac = machine({ agents: ['claude', 'codex'], installed: ['claude', 'codex', 'cursor'] });
-  mac.m.support = { claude: 'plugin', codex: 'cli', cursor: 'cli' };
+test('a repeat install keeps each agent on its existing form', async () => {
+  const mac = machine({ agents: ['claude', 'codex'] });
+  mac.m.support = { claude: 'plugin', codex: 'cli' };
   mac.m.codexSkills = ['do-a', 'do-b', ...SUPPORT];
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   assert.equal(await mac.run(), 0, 'and again');
@@ -243,7 +243,6 @@ test('a repeat install keeps each agent on its existing form and leaves unselect
     'npx --yes skills add mattpocock/skills --skill * -g -a codex -y',
   ];
   assert.deepEqual(changes(mac.m.calls), [...once, ...once]);
-  assert.ok(!mac.m.calls.some((call) => / -a .*cursor|^agent (?!--version)/.test(call)), 'Cursor is never touched');
 });
 
 test('missing prerequisites refuse before anything changes', async () => {
@@ -280,6 +279,13 @@ test('no agent named and none found is a prerequisite failure', async () => {
   const mac = machine({ agents: [], installed: [] });
   assert.equal(await mac.run(), 1);
   assert.match(mac.m.output[0]!, /No agent CLI found/);
+});
+
+test('an unsupported agent CLI alone counts as none found', async () => {
+  const mac = machine({ agents: [], installed: ['agent'] });
+  assert.equal(await mac.run(), 1);
+  assert.equal(mac.m.output[0], 'prerequisites: No agent CLI found. Install Claude Code (claude) or Codex (codex), then rerun.');
+  assert.ok(!mac.m.calls.some((call) => call.startsWith('agent ')), 'never probes agent');
 });
 
 test('with no agents named, setup picks every agent CLI it finds', async () => {
@@ -355,12 +361,11 @@ test('Codex conflict names CLI-only skills and leaves unrelated skills alone', a
 });
 
 test("a CLI install that would expose bare skills to Codex's plugin is deferred", async () => {
-  const mac = machine({ agents: ['cursor'], installed: ['cursor', 'codex'] });
-  mac.m.support.codex = 'plugin';
+  const mac = machine();
+  mac.m.support = { claude: 'cli', codex: 'plugin' };
   assert.equal(await mac.run(), 1);
-  assert.match(mac.m.output.join('\n'), /supporting skills \(cursor\): not installed\. The skills CLI would also expose bare copies to Codex/);
-  assert.deepEqual(changes(mac.m.calls), ['npx --yes skills add Someone/factory -g -y --skill * -a cursor']);
-  assert.match(mac.m.output.at(-1)!, /^cursor: verification unsupported/);
+  assert.match(mac.m.output.join('\n'), /supporting skills \(claude\): not installed\. The skills CLI would also expose bare copies to Codex/);
+  assert.deepEqual(changes(mac.m.calls), ['npx --yes skills add Someone/factory -g -y --skill * -a claude-code']);
 });
 
 const factory = ['do-a', 'do-b'];
@@ -420,12 +425,6 @@ test('a timed-out agent fails verification', async () => {
   })(mac.m.deps.exec);
   assert.equal(await mac.run(), 1);
   assert.match(mac.m.output.at(-1)!, /^claude: couldn't run the check \(claude timed out\)/);
-});
-
-test('Cursor verification is reported unsupported, so setup fails', async () => {
-  const mac = machine({ agents: ['cursor'], installed: ['cursor'] });
-  assert.equal(await mac.run(), 1);
-  assert.match(mac.m.output.at(-1)!, /^cursor: verification unsupported/);
 });
 
 test('at a terminal, setup waits for the fix and verifies again', async () => {
@@ -776,13 +775,12 @@ test('a denied fresh read leaves setup incomplete, with the grant kept and every
   noProbes(mac.home);
 });
 
-test('Codex is only checked, Cursor is reported unsupported, and neither gets settings', async () => {
-  const mac = machine({ agents: ['codex', 'cursor'], installed: ['codex', 'cursor'] });
+test('Codex is only checked and gets no settings', async () => {
+  const mac = machine({ agents: ['codex'] });
   answer(mac, ['n', '']);
-  assert.equal(await mac.run(), 1);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   assert.deepEqual(readLines(mac.m.output), [
     'read roots (codex): verified. A fresh codex read a new file under each root. Codex already reads anywhere, so nothing was added.',
-    'read roots (cursor): unsupported. Setup can\'t grant or check Cursor\'s read access; check it in Cursor yourself.',
   ]);
   assert.ok(!existsSync(join(mac.home, '.claude')));
   const read = mac.m.calls.find((call) => call.startsWith('codex exec') && call.includes('Print each'))!;
