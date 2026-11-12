@@ -2,7 +2,7 @@
 
 This is McWestling's config. Other repos point to it from their `AGENTS.md` instead of keeping a copy.
 
-**Setup version:** 2026-11-12
+**Setup version:** 2026-11-12.2
 
 The skills hold the procedure. This file holds only the values they look up, under the headings below. Keep the headings stable: skills cite them by name.
 
@@ -52,7 +52,7 @@ Not used. Leave every issue at **No priority**.
 - **Dispatch target** (group, single-select): the tool doing the work. See [Dispatch targets](#dispatch-targets).
 - **Bug:** a concrete defect. A Triage item without it is a muse.
 - **Decision types:** `wayfinder:research`, `wayfinder:grilling`, `wayfinder:prototype`, `wayfinder:task`.
-- **Retired, never apply:** `ready-for-agent`, `ready-for-human`, `needs-triage`, `needs-info`, `wontfix`, `wayfinder:map`, the `Repo` group, and the `Conductor`, `Linear/Codex` and `Orca/Cursor` dispatch targets. Any other label with `retiredAt` is retired too.
+- **Retired, never apply:** `ready-for-agent`, `ready-for-human`, `needs-triage`, `needs-info`, `wontfix`, `wayfinder:map`, the `Repo` group, and the `Conductor`, `Linear/Codex`, `Linear/Cursor` and `Orca/Cursor` dispatch targets. Any other label with `retiredAt` is retired too.
 
 ## Templates
 
@@ -71,7 +71,7 @@ Each product has an initiative with the same name as its Product label. Its desc
 ## Repo routing
 
 - **Source:** each product initiative's description opens with exactly `Repo: owner/name`, or `Repo: none` for a product with no repo yet. Several products may share a repo. This is the only product-to-repo mapping.
-- **On the issue:** a `` `[repo=owner/name]` `` tag in the issue description, written as a code span. Linear escapes bare brackets to `\[repo=…\]`, which also counts. It is the same syntax Cursor's Linear integration reads, and it overrides everything else.
+- **On the issue:** a `` `[repo=owner/name]` `` tag in the issue description, written as a code span. Linear escapes bare brackets to `\[repo=…\]`, which also counts. It overrides everything else.
 - **Lookup:** Product label → the initiative with the same name → its `Repo:` line. One hop; never inferred from anything else.
 - **Cross-check:** PRs already linked to other issues of the same product. A mismatch stops the work.
 - **Unresolved:** no tag and `Repo: none` (or no `Repo:` line). There is no default repo.
@@ -80,14 +80,13 @@ Each product has an initiative with the same name as its Product label. Its desc
 
 | Label           | Use it when                                                                      |
 | --------------- | -------------------------------------------------------------------------------- |
-| `Orca`          | Dispatched from Orca, including Cursor Cloud agents it launches                  |
+| `Orca`          | Dispatched from Orca                                                             |
 | `Claude`        | Claude Code outside Orca                                                         |
 | `Codex`         | Codex outside Orca                                                               |
-| `Linear/Cursor` | Cursor Cloud, delegated from Linear. Legacy; retired when Factory Delegator ships |
 
-The label records where the work was dispatched from, not where the session runs or which model ran. Set it when work starts: a session with any `ORCA_*` environment variable set is `Orca`, and Orca sets the label itself on the Cursor Cloud agents it launches. An issue's `[target=]` tag is the plan when it differs from the default; the label records what actually ran.
+The label records where the work was dispatched from, not where the session runs or which model ran. Set it when work starts: a session with any `ORCA_*` environment variable set is `Orca`. An issue's `[target=]` tag is the plan when it differs from the default; the label records what actually ran.
 
-**Default target:** `Orca`, for every model below, Cursor models included. Never suggest a legacy target.
+**Default target:** `Orca`, for every model below. Never suggest a legacy target.
 
 ## Preferred models
 
@@ -100,8 +99,6 @@ The label records where the work was dispatched from, not where the session runs
 | GPT-6 Astra      | `deep`     |                 | Hardest end-to-end work in Codex, when GPT-6.1 Sol falls short                 |
 | GPT-6.1 Sol      | `standard` |                 | Complex implementation and agentic work                                        |
 | GPT-6 Luna       | `light`    | `high` or above | Focused, pattern-following tickets                                             |
-| Composer 2.5     | `light`    |                 | Mechanical changes, as a Cursor Cloud agent                                    |
-| Grok 4.7         | `light`    |                 | Mechanical changes, as a Cursor Cloud agent                                    |
 
 A blank effort means the agent's default. One model can serve two levels at different efforts; see Runner config in the [issue format contract](issue-format.md#runner-config).
 
@@ -109,7 +106,6 @@ A blank effort means the agent's default. One model can serve two levels at diff
 
 - Claude: <https://platform.claude.com/docs/en/about-claude/models/overview>
 - Codex: <https://learn.chatgpt.com/docs/models.md>
-- Cursor: <https://cursor.com/docs/models>
 
 ## Views
 

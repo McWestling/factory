@@ -156,11 +156,9 @@ export async function readRoots(deps: SetupDeps, agents: string[]): Promise<Resu
           // Default mode and only the Read tool, so the settings alone decide, and nothing can be edited or run.
           results.push(line(claudeReadVerdict(await output('claude', ['-p', `Use the Read tool to read each of these files, then reply with the word done. Do not call any other tool.\n${list}`,
             '--output-format', 'stream-json', '--verbose', '--tools', 'Read', '--permission-mode', 'default', '--no-session-persistence']), probes)));
-        } else if (name === 'codex') {
+        } else {
           results.push(line(codexReadVerdict(await output('codex', ['exec', '--sandbox', 'read-only', '--ephemeral', '--json', '--skip-git-repo-check',
             `Print each of these files with cat, then reply with the word done. Do not change any file.\n${list}`]), probes), ' Codex already reads anywhere, so nothing was added.'));
-        } else {
-          results.push(line('unsupported. Setup can\'t grant or check Cursor\'s read access; check it in Cursor yourself.'));
         }
       } catch (error) {
         results.push(line(`couldn't run the check (${(error as Error).message}).`));
