@@ -323,7 +323,7 @@ test('Codex conflict names CLI-only skills and leaves unrelated skills alone', a
   })(mac.m.deps.exec);
   assert.equal(await mac.run(), 1);
   const line = mac.m.output.find((line) => line.startsWith('supporting skills (codex)'))!;
-  assert.match(line, /npx --yes skills remove 'tdd' 'pr' 'old-skill' -g -a codex -y/);
+  assert.match(line, /npx --yes skills remove 'tdd' 'pr' 'old-skill' -g -a '\*' -y/);
   assert.match(line, /The plugin doesn't provide: old-skill/);
   assert.doesNotMatch(line, /keep-me/);
   assert.deepEqual(changes(mac.m.calls), ['npx --yes skills add Someone/factory -g -y --skill * -a codex']);
