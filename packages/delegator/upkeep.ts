@@ -36,6 +36,11 @@ export const alive = (pid: unknown) => {
   if (!Number.isInteger(pid) || (pid as number) <= 0) return false;
   try { process.kill(pid as number, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
 };
+/** The pid of a Runner reporting from outside launchd within the last 30 s, or 0. */
+export const outsideRunner = (stateDir: string): number => {
+  const status = readJson(join(stateDir, 'status.json'));
+  return alive(status?.pid) && Date.now() - Date.parse(status.updatedAt) < 30_000 ? status.pid : 0;
+};
 
 /** Rebuilds an installed Runner app, swapping it in only once the Runner is proven idle. */
 export async function updateRunner(deps: UpkeepDeps): Promise<Result> {
@@ -90,10 +95,8 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
   /** Why a stopped Runner can't be refreshed now, or null when it's still stopped with nothing outstanding. */
   const stoppedRefusal = async () => {
     if (await pid() !== null) return fail('refused. The stopped Runner was started while setup was building. Nothing was replaced; rerun when it\'s idle.');
-    const status = readJson(join(deps.stateDir, 'status.json'));
-    if (alive(status?.pid) && Date.now() - Date.parse(status.updatedAt) < 30_000) {
-      return fail(`refused. A Runner process (pid ${status.pid}) is running outside launchd. Stop it, then rerun.`);
-    }
+    const outside = outsideRunner(deps.stateDir);
+    if (outside) return fail(`refused. A Runner process (pid ${outside}) is running outside launchd. Stop it, then rerun.`);
     const watches = existsSync(join(deps.stateDir, 'watching.json')) ? readJson(join(deps.stateDir, 'watching.json')) : {};
     if (!watches || typeof watches !== 'object' || Object.keys(watches).length) {
       return fail('refused. The stopped Runner has open or unreadable watches. Start it, let Waiting for a PR clear, then rerun.');

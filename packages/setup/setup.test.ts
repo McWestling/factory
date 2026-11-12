@@ -52,7 +52,7 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) 
   const m = {
     home, root, lock, installed,
     /** The Runner side of the Mac: Orca, the launchd agent, and what the started Runner writes to status.json. */
-    orca: true, loaded: false, inboxOk: true, installFails: '' as '' | 'compile' | 'render' | 'bootstrap' | 'menu',
+    orca: true, loaded: false, pidless: false, menuLoaded: false, menuFails: false, inboxOk: true, installFails: '' as '' | 'compile' | 'render' | 'bootstrap' | 'menu',
     /** Whether Cloud Inbox's status check reports it connected to Linear. */
     connected: false,
     /** What each interactive Cloud Inbox CLI action does; returns whether it exited 0. */
@@ -114,10 +114,22 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) 
         if (m.installFails === 'bootstrap') throw fail('Bootstrap failed: 5: Input/output error');
         m.loaded = true;
         if (m.installFails === 'menu') throw fail('Bootstrap failed: 37: Operation already in progress');
+        m.menuLoaded = true;
+        return { stdout: '' };
+      }
+      if (call === `sh ${join(root, 'packages/delegator/runner/launchd/install.sh')} --enable-app-login`) {
+        if (m.menuFails) throw fail('Bootstrap failed: 5: Input/output error');
+        m.menuLoaded = true;
+        return { stdout: '' };
+      }
+      if (file === 'launchctl' && args[0] === 'print' && args[1]!.endsWith('.menubar')) {
+        if (!m.menuLoaded) throw fail('Could not find service');
         return { stdout: '' };
       }
       if (file === 'launchctl' && args[0] === 'print') {
         if (!m.loaded) throw fail('Could not find service');
+        // Loaded between KeepAlive restarts: no pid and no fresh status.
+        if (m.pidless) return { stdout: '\tstate = not running\n' };
         // A running Runner rewrites its status every few seconds.
         const now = new Date().toISOString();
         mkdirSync(m.deps.stateDir, { recursive: true });
@@ -565,29 +577,84 @@ for (const [step, error] of [
   });
 }
 
-test('a pending install whose Runner already started is only checked, never reinstalled or restarted', async () => {
+/** Install-touching calls after the first `from`: the plain installer, menu registration, or launchd starts and stops. */
+const touched = (mac: ReturnType<typeof machine>, from: number) =>
+  mac.m.calls.slice(from).filter((call) => /install\.sh|launchctl (bootout|bootstrap|kickstart|kill)/.test(call));
+
+test('a pending install whose menu bar registration failed finishes it without reinstalling or restarting the Runner', async () => {
   const mac = machine();
   mac.m.installFails = 'menu';
   answer(mac, [...EXISTING_INBOX]);
   assert.equal(await mac.run(), 1);
-  assert.ok(mac.m.loaded && existsSync(join(mac.home, PENDING)), 'the Runner runs, but the install never proved itself');
+  assert.ok(mac.m.loaded && !mac.m.menuLoaded && existsSync(join(mac.home, PENDING)), 'the Runner runs, but the install never proved itself');
   const calls = mac.m.calls.length;
-  const touched = () => mac.m.calls.slice(calls).filter((call) => /install\.sh|launchctl (bootout|bootstrap|kickstart|kill)/.test(call));
 
   mac.m.inboxOk = false;
   answer(mac, []);
   assert.equal(await mac.run(), 1);
   assert.ok(mac.m.output.some((line) => /^runner: installed, but it didn't reach Cloud Inbox/.test(line)));
   assert.ok(existsSync(join(mac.home, PENDING)), 'stays pending until Cloud Inbox answers');
+  assert.deepEqual(touched(mac, calls), [], 'registers no menu before the Runner proves itself');
 
   mac.m.inboxOk = true;
+  mac.m.menuFails = true;
+  mac.m.output.length = 0;
+  answer(mac, []);
+  assert.equal(await mac.run(), 1);
+  assert.match(runnerLine(mac.m.output.filter((line) => !line.includes('finishing')))!, /^runner: connected, but the menu bar app didn't register .*Bootstrap failed: 5/);
+  assert.ok(existsSync(join(mac.home, PENDING)), 'stays pending until the menu bar app registers');
+
+  mac.m.menuFails = false;
   mac.m.output.length = 0;
   answer(mac, []);
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   assert.match(runnerLine(mac.m.output.filter((line) => !line.includes('finishing')))!, /^runner: installed and connected \(pid 4242\)/);
-  assert.deepEqual(touched(), [], 'never reruns the installer or stops the Runner');
+  const install = join(mac.root, 'packages/delegator/runner/launchd/install.sh');
+  assert.deepEqual(touched(mac, calls), [`sh ${install} --enable-app-login`, `sh ${install} --enable-app-login`], 'only registers the menu bar app');
   assert.equal(mac.m.installs, 1);
+  assert.ok(mac.m.menuLoaded && !existsSync(join(mac.home, PENDING)));
+});
+
+/** A first install that failed at compile, so the next run resumes it; returns the call count after that run. */
+async function pendingInstall(mac: ReturnType<typeof machine>) {
+  mac.m.installFails = 'compile';
+  answer(mac, [...EXISTING_INBOX]);
+  assert.equal(await mac.run(), 1);
+  mac.m.installFails = '';
+  mac.m.output.length = 0;
+  answer(mac, []);
+  return mac.m.calls.length;
+}
+
+test('a pending install with a loaded Runner agent that has no pid waits for it instead of reinstalling', async () => {
+  const mac = machine();
+  const calls = await pendingInstall(mac);
+  mac.m.loaded = true;
+  mac.m.pidless = true;
+  assert.equal(await mac.run(), 1);
+  assert.match(runnerLine(mac.m.output.filter((line) => !line.includes('finishing')))!, /loaded and not running after 60 s.*won't reinstall over a loaded Runner/);
+  assert.deepEqual(touched(mac, calls), [], 'never runs the installer or stops or starts the Runner');
+  assert.equal(mac.m.installs, 1);
+  assert.ok(existsSync(join(mac.home, PENDING)));
+
+  // launchd's KeepAlive restarts it, and the next run sees it connected.
+  mac.m.pidless = false;
+  mac.m.menuLoaded = true;
+  mac.m.output.length = 0;
+  answer(mac, []);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.deepEqual(touched(mac, calls), []);
   assert.ok(!existsSync(join(mac.home, PENDING)));
+});
+
+test('a pending install refuses while a Runner runs outside launchd', async () => {
+  const mac = machine();
+  const calls = await pendingInstall(mac);
+  writeFileSync(join(mac.m.deps.stateDir, 'status.json'), JSON.stringify({ version: 1, pid: process.pid, updatedAt: new Date().toISOString() }));
+  assert.equal(await mac.run(), 1);
+  assert.match(runnerLine(mac.m.output.filter((line) => !line.includes('finishing')))!, new RegExp(`pid ${process.pid}\\) is running outside launchd`));
+  assert.deepEqual(touched(mac, calls), []);
+  assert.ok(existsSync(join(mac.home, PENDING)));
 });
 
 for (const [label, arrange] of [

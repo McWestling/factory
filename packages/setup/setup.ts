@@ -7,7 +7,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { promisify } from 'node:util';
 import { loadConfig } from '../delegator/runner/runner.ts';
-import { lastLine, readJson, updateRunner, withLock, type Result, type UpkeepDeps } from '../delegator/upkeep.ts';
+import { lastLine, outsideRunner, readJson, updateRunner, withLock, type Result, type UpkeepDeps } from '../delegator/upkeep.ts';
 
 export type SetupDeps = UpkeepDeps & {
   platform: string;
@@ -266,13 +266,13 @@ async function provisionInbox(deps: SetupDeps, ask: NonNullable<SetupDeps['ask']
   return { url: `${state.origin}/delegator`, secret: state.config?.machines?.[state.machine]?.bearerSecret, machine: appName(state.machine) };
 }
 
-/** The running Runner's pid from launchd, or 0 when it isn't loaded or isn't running. */
+/** The Runner's pid from launchd: 0 when loaded but not running (KeepAlive may restart it any moment), null when not loaded. */
 const runnerPid = (deps: SetupDeps) => deps.exec('launchctl', ['print', `gui/${deps.uid}/com.factory.factory-delegator.runner`], 30_000)
-  .then(({ stdout }) => Number(/^\s*pid = (\d+)$/m.exec(stdout)?.[1] ?? 0), () => 0);
+  .then(({ stdout }) => Number(/^\s*pid = (\d+)$/m.exec(stdout)?.[1] ?? 0), () => null);
 
 /** Waits for the newly installed Runner to start and reach Cloud Inbox, as launchd and its status.json report it. */
 async function started(deps: SetupDeps, since: number): Promise<Result> {
-  let pid = 0;
+  let pid: number | null = null;
   for (let second = 0; second <= 60; second++) {
     pid = await runnerPid(deps);
     const status = readJson(join(deps.stateDir, 'status.json'));
@@ -280,6 +280,10 @@ async function started(deps: SetupDeps, since: number): Promise<Result> {
       return { ok: true, line: `runner: installed and connected (pid ${pid}); Cloud Inbox answered at ${status.inbox.lastOkAt}.` };
     }
     await deps.sleep(1000);
+  }
+  if (pid === 0) {
+    return { ok: false, line: 'runner: installed, but its launchd agent is loaded and not running after 60 s. Check ~/Library/Logs/factory-delegator/runner.log, '
+      + 'then rerun npm run setup to finish; it won\'t reinstall over a loaded Runner.' };
   }
   return { ok: false, line: `runner: installed, but it didn't ${pid ? 'reach Cloud Inbox' : 'start'} within 60 s. Check ~/Library/Logs/factory-delegator/runner.log `
     + 'and the config\'s inboxUrl and bearerSecret, then choose Start Runner in the Factory Runner menu.' };
@@ -341,16 +345,29 @@ async function offerRunner(deps: SetupDeps): Promise<Result> {
   // Cleared only once a fresh status shows Cloud Inbox answering, so any earlier failure resumes here.
   writeFileSync(pending, '', { mode: 0o600 });
   const since = Date.now();
-  // The plain installer restarts a running Runner without draining it, so a Runner an earlier try started is only checked.
-  if (!await runnerPid(deps)) {
+  // The plain installer restarts a loaded Runner without draining it, so it runs only when launchd has none
+  // loaded and no Runner reports from outside launchd; a Runner an earlier try left is only checked.
+  const install = join(deps.root, DELEGATOR, 'runner/launchd/install.sh');
+  if (await runnerPid(deps) === null) {
+    const outside = outsideRunner(deps.stateDir);
+    if (outside) return { ok: false, line: `runner: not finished. A Runner process (pid ${outside}) is running outside launchd. Stop it, then rerun to finish the install.` };
     try {
-      await deps.exec('sh', [join(deps.root, DELEGATOR, 'runner/launchd/install.sh')], 600_000);
+      await deps.exec('sh', [install], 600_000);
     } catch (error) {
       return { ok: false, line: `runner: install failed (${lastLine(error)}). Fix that, then rerun to finish it.` };
     }
   }
   const result = await started(deps, since);
-  if (result.ok) rmSync(pending, { force: true });
+  if (!result.ok) return result;
+  // The installer registers the menu bar app last, so a try that failed there left the Runner running without it.
+  // Registering it alone never touches the Runner.
+  const menu = `gui/${deps.uid}/com.factory.factory-delegator.menubar`;
+  if (!await deps.exec('launchctl', ['print', menu], 30_000).then(() => true, () => false)) {
+    try { await deps.exec('sh', [install, '--enable-app-login'], 60_000); } catch (error) {
+      return { ok: false, line: `runner: connected, but the menu bar app didn't register to open at login (${lastLine(error)}). Rerun npm run setup to finish it.` };
+    }
+  }
+  rmSync(pending, { force: true });
   return result;
 }
 

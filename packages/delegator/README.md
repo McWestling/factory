@@ -309,8 +309,12 @@ Node 26, `swiftc` and `orca`, then:
   Runner's `status.json` to show the new process reaching Cloud Inbox. Only then does it
   report the Runner installed and connected; otherwise it fails and names the logs.
   Until then the install stays pending, and the next `npm run setup` finishes it without
-  asking: it reruns `install.sh` only when no Runner is running, and otherwise waits
-  for the running one to report Cloud Inbox, so it never restarts work in progress.
+  asking. It reruns `install.sh` only when launchd has no Runner agent loaded and no
+  Runner reports from outside launchd; a loaded agent, running or between restarts, is
+  only waited for, so work in progress is never restarted. Once the Runner reports
+  Cloud Inbox, setup registers the menu bar app to open at login if an earlier try
+  didn't (`install.sh --enable-app-login`, which leaves the Runner alone). The install
+  stops being pending only when both succeed.
 
 The config holds the Inbox URL and this machine's bearer secret, never Linear tokens
 or the Inbox's owner and app credentials. Setup prints no secrets.
