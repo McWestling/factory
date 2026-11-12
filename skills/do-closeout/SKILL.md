@@ -8,6 +8,8 @@ Run this at the end of a thread, before the user closes it. It answers one quest
 
 This skill is one of the factory's `do-` skills and expects its siblings to be installed alongside it. It reads map rules from `do-refine`'s [Maps section](../do-refine/SKILL.md#maps).
 
+**Asking.** Ask with AskUserQuestion where the client has it (multiSelect when picking several items, up to 4 questions per call), otherwise in chat.
+
 ## Workspace values
 
 This skill holds the procedure. The tracker values (statuses, views, repo routing, comment shape, PR rules) live in the repo's **tracker doc**. Find it through `AGENTS.md`, which names either a path in this repo or a doc in another repo (like `docs/issue-tracker.md` in `owner/name`); read another repo's doc from its checkout, found through `orca repo list --json`. If `AGENTS.md` names none, use `docs/issue-tracker.md`. Read it before you touch the tracker. Where this file says "per X", X is a heading in that doc.
@@ -76,10 +78,12 @@ A failed, unrun (including declined), non-runnable or unrecorded step stays unde
 ## What you may change
 
 - **Fix by yourself:** tracker closeout items only, from [step 2](#2-tracker-closeout).
-- **Ask first:** list the loose ends, doc closeout items and unticked PR after-merge steps, then do each one only after the user says yes to it. For PR steps, run, verify and record completion per the checklist procedure above. File a follow-up as a new issue in the triage status per **Issue statuses**, linked to this issue as related.
+- **Ask first:** list the loose ends, doc closeout items and unticked PR after-merge steps, ask about each item with AskUserQuestion where the client has it, otherwise in chat, and do each one only after the user says yes to it. For PR steps, run, verify and record completion per the checklist procedure above. File a follow-up as a new issue in the triage status per **Issue statuses**, linked to this issue as related.
 - **Never:** touch git, branches or worktrees. No commits, pushes, stash drops, branch deletes or worktree removal; report them and let the user act.
 
 ## 6. Verdict
+
+Before giving the verdict, ask about any remaining items you can act on per **Ask first**. After each approved action, recheck what is still open and ask the next questions until nothing actionable remains or the user declines or defers it. Then give the verdict below.
 
 End with a bold verdict line, then two short bullet lists, as plain Markdown. It isn't a code block; don't fence it.
 

@@ -18,7 +18,7 @@ If a value or command you need is missing, ask the user, use their answer, then 
 
 Read and write the tracker only through the access the tracker doc's **Tracker** heading allows. Probe it once before you touch the tracker: call `whoami`, or the tracker's equivalent. The access is unavailable only if that call fails; a tool list that seems to lack the tracker doesn't count, since hosts truncate and defer their tool lists. If the probe fails or the access is unauthorized, stop and say so; don't fall back to a browser, desktop app or raw API.
 
-**Asking.** While the user is in the session, ask in chat (AskUserQuestion where the client has it). In a **delegated run** (the prompt says `Delegated run`) or any run with nobody in the session, don't ask product or design questions: make the sensible default call and record it; see [step 3](#3-ask-before-guessing). Every other stop in this skill still applies.
+**Asking.** Ask with AskUserQuestion where the client has it (multiSelect when picking several items, up to 4 questions per call), otherwise in chat. In a **delegated run** (the prompt says `Delegated run`) or any run with nobody in the session, don't ask product or design questions: make the sensible default call and record it; see [step 3](#3-ask-before-guessing). Every other stop in this skill still applies.
 
 ## 1. Read and check
 
