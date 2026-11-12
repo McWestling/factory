@@ -68,8 +68,12 @@ _Avoid_: hub repo, main repo
 One of `light`, `standard` or `deep` that tells the Runner which configured model to use for an implementation issue. The issue may also have an optional `[model=]` pin and a `[target=]` tag when it differs from the default; see [`docs/issue-format.md`](docs/issue-format.md).
 
 **Machine setup**:
-`npm run setup` from a checkout of the home repo. It installs or refreshes the Factory and supporting skills for the chosen agents, updates an existing Runner, and verifies each agent can reach Linear and discover the skills. `do-repo-setup` sets up a repo; machine setup sets up a computer.
+`npm run setup` from a checkout of the home repo. It installs or refreshes the Factory and supporting skills for the chosen agents, grants them read access to the chosen read roots, updates an existing Runner, and verifies each agent can reach Linear and discover the skills. `do-repo-setup` sets up a repo; machine setup sets up a computer.
 _Avoid_: upkeep
+
+**Read root**:
+A folder machine setup lets the chosen agents read, so a session in one checkout can read the others. It covers everything beneath it, including repos added there later. It grants no write or shell access.
+_Avoid_: additional directory, which in Claude Code also grants edits
 
 **Machine check**:
 The check `do-repo-setup` runs first on the computer it's on: it stops if `gh` isn't signed in, and mentions a missing Orca when it finishes.

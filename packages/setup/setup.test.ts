@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { loadConfig } from '../delegator/runner/runner.ts';
 import { claudeVerdict, codexVerdict, setup, type SetupDeps } from './setup.ts';
+import { readRule } from './read-roots.ts';
 
 const HEAD = 'b'.repeat(40);
 const SUPPORT = ['grilling', 'domain-modeling', 'research', 'prototype', 'tdd', 'codebase-design', 'code-review'];
@@ -28,6 +29,22 @@ function codexRun({ items = [{ type: 'mcp_tool_call', server: 'linear', tool: 'w
     { type: 'item.completed', item: { type: 'agent_message', text: 'done' } }, { type: 'turn.completed' }].map((event) => JSON.stringify(event)).join('\n');
 }
 
+/** The probe files a read prompt lists, one per line after the instruction. */
+const probesIn = (prompt: string) => prompt.split('\n').slice(1);
+/** A fresh Claude reading each probe from disk, or denied permission to. */
+const claudeReads = (paths: string[], denied = false) => [
+  ...paths.flatMap((path, index) => [
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: `r${index}`, name: 'Read', input: { file_path: path } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: `r${index}`, is_error: denied,
+      content: denied ? `Claude requested permissions to read from ${path}, but you haven't granted it yet.` : `1\t${readFileSync(path, 'utf8')}` }] } },
+  ]),
+  { type: 'result', subtype: 'success', is_error: false, result: 'done',
+    permission_denials: denied ? paths.map((path, index) => ({ tool_name: 'Read', tool_use_id: `r${index}`, tool_input: { file_path: path } })) : [] },
+].map((event) => JSON.stringify(event)).join('\n');
+/** A fresh Codex printing each probe with cat. */
+const codexReads = (paths: string[]) => codexRun({ items: [{ type: 'command_execution', command: `cat ${paths.join(' ')}`,
+  aggregated_output: paths.map((path) => readFileSync(path, 'utf8')).join(''), exit_code: 0, status: 'completed' }] });
+
 /** A disposable Mac: a fixture fork checkout and a temp home, with every CLI faked. */
 /** Writes an installed Runner app bundle whose runner supports safe draining. */
 const installApp = (home: string) => {
@@ -38,7 +55,8 @@ const PLIST = 'Library/LaunchAgents/com.factory.factory-delegator.runner.plist';
 const PENDING = '.local/state/factory/runner-install-pending';
 
 function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) {
-  const home = mkdtempSync(join(tmpdir(), 'setup-'));
+  // Real, so it matches the resolved paths setup shows and grants.
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'setup-')));
   const root = join(home, 'factory');
   for (const name of ['do-a', 'do-b']) {
     mkdirSync(join(root, 'skills', name), { recursive: true });
@@ -62,7 +80,9 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) 
       connect: () => { m.connected = true; return true; },
     } as Record<string, () => boolean>,
     questions: [] as { question: string; secret: boolean }[],
-    git: { origin: 'git@github.com:Someone/factory.git', status: '', head: HEAD, tip: HEAD },
+    git: { origin: 'git@github.com:Someone/factory.git', status: '', head: HEAD, tip: HEAD, common: join(root, '.git') },
+    /** Whether a fresh agent's Read of a probe file is denied. */
+    readDenied: false,
     gh: true,
     /** Supporting-skill state per agent: 'plugin', 'cli' or 'none'. */
     support: { claude: 'none', codex: 'none', cursor: 'none' } as Record<string, string>,
@@ -144,6 +164,7 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) 
         if (command === 'remote') return { stdout: m.git.origin };
         if (command === '--no-optional-locks') return { stdout: m.git.status };
         if (command === 'rev-parse' && rest[0] === 'HEAD') return { stdout: m.git.head };
+        if (command === 'rev-parse' && rest.includes('--git-common-dir')) return { stdout: `${m.git.common}\n` };
         if (command === 'rev-parse') return { stdout: `tree-${rest[0]!.split('/').pop()}` };
         if (command === 'ls-remote') return { stdout: `ref: refs/heads/main\tHEAD\n${m.git.tip}\tHEAD\n` };
       }
@@ -166,6 +187,8 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) 
         return { stdout: JSON.stringify({ installed: m.support.codex === 'plugin' ? [{ pluginId: 'mattpocock-skills@mattpocock', enabled: true }] : [] }) };
       }
       if (call === 'codex mcp list --json') return { stdout: JSON.stringify([{ name: 'linear', enabled: true, transport: { url: 'https://mcp.linear.app/mcp' } }]) };
+      if (file === 'claude' && args[0] === '-p' && args[1]!.startsWith('Use the Read tool')) return { stdout: claudeReads(probesIn(args[1]!), m.readDenied) };
+      if (file === 'codex' && args[0] === 'exec' && args.at(-1)!.startsWith('Print each')) return { stdout: codexReads(probesIn(args.at(-1)!)) };
       if (file === 'claude' && args[0] === '-p') return { stdout: m.claude };
       if (file === 'codex' && args[0] === 'exec') return { stdout: m.codex };
       if (file === 'claude' || file === 'codex') return { stdout: '' };
@@ -189,6 +212,8 @@ function answer(mac: ReturnType<typeof machine>, answers: string[]) {
   mac.m.deps.ask = async (question, secret = false) => { mac.m.questions.push({ question, secret }); return answers.shift() ?? ''; };
 }
 
+/** The questions asked, apart from choosing read roots. */
+const runnerQuestions = (mac: ReturnType<typeof machine>) => mac.m.questions.filter(({ question }) => !/to grant these/.test(question));
 const changes = (calls: string[]) => calls.filter((call) => / (add|install|update|upgrade|remove|uninstall) /.test(` ${call} `) && !call.startsWith('git '));
 
 test('a fresh install from a fork installs Factory and supporting skills for the chosen agent only, then verifies it', async () => {
@@ -384,7 +409,7 @@ test('at a terminal, setup waits for the fix and verifies again', async () => {
   mac.m.deps.ask = async (question) => { if (/check again/.test(question)) mac.m.claude = claudeRun(); return ''; };
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   assert.match(mac.m.output.join('\n'), /needs-auth[\s\S]*claude: verified/);
-  assert.equal(mac.m.calls.filter((call) => call.startsWith('claude -p')).length, 2);
+  assert.equal(mac.m.calls.filter((call) => call.startsWith('claude -p Call')).length, 2);
 });
 
 const runnerLine = (output: string[]) => output.find((line) => line.startsWith('runner: '));
@@ -484,7 +509,7 @@ test('a valid existing config is kept as it is and installed without Inbox quest
   writeFileSync(runnerConfig(mac.home), text, { mode: 0o600 });
   answer(mac, ['y']);
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
-  assert.equal(mac.m.questions.length, 1);
+  assert.equal(runnerQuestions(mac).length, 1);
   assert.equal(readFileSync(runnerConfig(mac.home), 'utf8'), text);
   assert.match(runnerLine(mac.m.output)!, /installed and connected/);
 });
@@ -568,7 +593,7 @@ for (const [step, error] of [
     mac.m.output.length = 0;
     answer(mac, []);
     assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
-    assert.deepEqual(mac.m.questions.slice(EXISTING_INBOX.length), [], 'asks nothing more');
+    assert.deepEqual(runnerQuestions(mac).slice(EXISTING_INBOX.length), [], 'asks nothing more');
     assert.equal(mac.m.installs, 2, 'reruns the installer');
     assert.ok(!mac.m.calls.some((call) => call.includes('--build-app')), 'installs instead of updating');
     assert.ok(existsSync(join(mac.home, PLIST)), 'installs the Runner agent');
@@ -686,4 +711,91 @@ for (const [label, arrange] of [
   assert.equal(mac.m.installs, 0, 'never runs the plain installer');
   assert.equal(readFileSync(runnerConfig(mac.home), 'utf8'), 'kept');
   assert.ok(!mac.m.calls.some((call) => call.startsWith('interact ')));
+});
+
+const settings = (home: string) => join(home, '.claude/settings.json');
+const readLines = (output: string[]) => output.filter((line) => line.startsWith('read roots ('));
+const noProbes = (root: string) => assert.deepEqual(readdirSync(root).filter((name) => name.startsWith('.factory-read-probe-')), [], 'removes every probe');
+
+test('at a terminal, the suggested root and an added one are granted to Claude as read rules, then proven with a fresh read', async () => {
+  const mac = machine();
+  const extra = join(mac.home, 'Orca Worktrees');
+  mkdirSync(extra);
+  mkdirSync(join(mac.home, '.claude'));
+  const before = { model: 'opus', permissions: { defaultMode: 'auto', allow: ['Bash(git status)'], deny: ['Read(**/.env)'] }, hooks: { Stop: [] } };
+  writeFileSync(settings(mac.home), JSON.stringify(before));
+  answer(mac, ['n', extra, '']);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.ok(mac.m.output.includes(`  1. ${mac.home}`), 'shows the suggestion as an absolute path');
+  const after = JSON.parse(readFileSync(settings(mac.home), 'utf8'));
+  assert.deepEqual(after, { ...before, permissions: { ...before.permissions, allow: ['Bash(git status)', readRule(mac.home), readRule(extra)] } },
+    'adds only read rules: no edit, write or shell rules and no working directories');
+  assert.match(readLines(mac.m.output).at(-1)!, /^read roots \(claude\): verified/);
+  noProbes(mac.home);
+  noProbes(extra);
+
+  mac.m.output.length = 0;
+  answer(mac, ['n', extra, '']);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.deepEqual(JSON.parse(readFileSync(settings(mac.home), 'utf8')), after, 'a repeat run adds nothing');
+  assert.match(readLines(mac.m.output)[0]!, /already grants them/);
+});
+
+test('a denied fresh read leaves setup incomplete, with the grant kept and every probe removed', async () => {
+  const mac = machine();
+  mac.m.readDenied = true;
+  answer(mac, ['n', '']);
+  assert.equal(await mac.run(), 1);
+  assert.match(readLines(mac.m.output).at(-1)!, /^read roots \(claude\): claude couldn't read .*probe\.txt\. It was denied permission/);
+  assert.deepEqual(JSON.parse(readFileSync(settings(mac.home), 'utf8')), { permissions: { allow: [readRule(mac.home)] } });
+  noProbes(mac.home);
+});
+
+test('Codex is only checked, Cursor is reported unsupported, and neither gets settings', async () => {
+  const mac = machine({ agents: ['codex', 'cursor'], installed: ['codex', 'cursor'] });
+  answer(mac, ['n', '']);
+  assert.equal(await mac.run(), 1);
+  assert.deepEqual(readLines(mac.m.output), [
+    'read roots (codex): verified. A fresh codex read a new file under each root. Codex already reads anywhere, so nothing was added.',
+    'read roots (cursor): unsupported. Setup can\'t grant or check Cursor\'s read access; check it in Cursor yourself.',
+  ]);
+  assert.ok(!existsSync(join(mac.home, '.claude')));
+  const read = mac.m.calls.find((call) => call.startsWith('codex exec') && call.includes('Print each'))!;
+  assert.match(read, /--sandbox read-only/);
+});
+
+test('the suggestion can be replaced, missing folders and files are refused, and none grants nothing', async () => {
+  const mac = machine();
+  const code = join(mac.home, 'Code');
+  mkdirSync(join(code, 'repo'), { recursive: true });
+  writeFileSync(join(mac.home, 'notes.txt'), '');
+  answer(mac, ['n', '1', '~/missing', '~/notes.txt', '~/Code/repo/..', '']);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  const output = mac.m.output.join('\n');
+  assert.match(output, /missing doesn't exist/);
+  assert.match(output, /notes\.txt isn't a folder/);
+  assert.deepEqual(JSON.parse(readFileSync(settings(mac.home), 'utf8')).permissions.allow, [readRule(code)]);
+  noProbes(code);
+
+  rmSync(settings(mac.home));
+  answer(mac, ['n', 'none']);
+  assert.equal(await mac.run(), 0);
+  assert.ok(!existsSync(settings(mac.home)));
+});
+
+test('from a worktree, the suggestion is the folder holding the main checkout', async () => {
+  const mac = machine();
+  const main = join(mac.home, 'Code/factory');
+  mkdirSync(main, { recursive: true });
+  mac.m.git.common = join(main, '.git');
+  answer(mac, ['n', '']);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.ok(mac.m.output.includes(`  1. ${join(mac.home, 'Code')}`));
+});
+
+test('with nobody at the terminal, read roots are left alone', async () => {
+  const mac = machine();
+  assert.equal(await mac.run(), 0);
+  assert.ok(mac.m.output.includes('read roots: not changed. Run npm run setup at a terminal to choose them.'));
+  assert.ok(!existsSync(join(mac.home, '.claude')));
 });
