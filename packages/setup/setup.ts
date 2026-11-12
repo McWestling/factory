@@ -1,20 +1,23 @@
 // `npm run setup`: installs or refreshes Factory on a Mac from this checkout's origin, then proves each
 // chosen agent can reach Linear and discover the skills. Run it again any time to update.
-import { execFile, spawn } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { execFile, spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { promisify } from 'node:util';
-import { lastLine, readJson, updateRunner, withLock, type Result, type UpkeepDeps } from '../delegator/upkeep.ts';
+import { loadConfig } from '../delegator/runner/runner.ts';
+import { lastLine, outsideRunner, readJson, updateRunner, withLock, type Result, type UpkeepDeps } from '../delegator/upkeep.ts';
 
 export type SetupDeps = UpkeepDeps & {
   platform: string;
   nodeVersion: string;
   /** Agents named on the command line; empty means every supported agent CLI found. */
   agents: string[];
-  /** Asks the person at the terminal; null when nobody is there. */
-  ask: ((question: string) => Promise<string>) | null;
+  /** Asks the person at the terminal, hiding the answer when it's secret; null when nobody is there. */
+  ask: ((question: string, secret?: boolean) => Promise<string>) | null;
+  /** Runs a command attached to the terminal, for steps the person takes part in; resolves whether it exited 0. */
+  interact: (file: string, args: string[]) => Promise<boolean>;
   /** Sends newline-delimited JSON-RPC messages, waiting for each response to a message with an id. */
   rpc: (file: string, args: string[], messages: object[], timeoutMs: number) => Promise<any[]>;
 };
@@ -228,13 +231,156 @@ async function verify(deps: SetupDeps, name: string): Promise<Result> {
   }
 }
 
+const DELEGATOR = 'packages/delegator';
+/** In the state dir while a first Runner install hasn't yet proven it connects. */
+const PENDING = 'runner-install-pending';
+/** The Linear app name Cloud Inbox setup's prefilled registration gives a machine. */
+const appName = (machine: string) => `Factory ${machine}`;
+
+/** Cloud Inbox's own guided setup, resumed from its checkpoint; returns this machine's connection or why it stopped. */
+async function provisionInbox(deps: SetupDeps, ask: NonNullable<SetupDeps['ask']>): Promise<Result | { url: string; secret: string; machine: string }> {
+  const cli = join(deps.root, DELEGATOR, 'cloud-inbox/setup.ts');
+  const read = () => readJson(join(deps.root, DELEGATOR, '.cloud-inbox.local.json')) ?? {};
+  const stopped = (step: string) => {
+    const state = read();
+    const done = [state.origin && 'Worker deployed', state.config && 'Linear app registered', state.uploaded && 'configuration uploaded'].filter(Boolean);
+    return { ok: false, line: `runner: not installed. Cloud Inbox ${step} didn't finish. Done so far: ${done.join(', ') || 'nothing'}. `
+      + 'Rerun npm run setup to pick up from there; it keeps the saved checkpoint and its secrets.' };
+  };
+  if (!read().uploaded) {
+    if (!existsSync(join(deps.root, DELEGATOR, 'node_modules/wrangler'))) {
+      return { ok: false, line: `runner: not installed. Cloud Inbox setup needs Wrangler. Run: npm --prefix ${DELEGATOR} ci --ignore-scripts, then rerun.` };
+    }
+    deps.print('Cloud Inbox needs a Cloudflare account with Workers and Durable Objects, and a Linear workspace admin to create a private app. Sign in to Cloudflare in your browser first.');
+    if (!await deps.interact(deps.node, [cli, 'login'])) return stopped('sign-in');
+    if (!await deps.interact(deps.node, [cli, 'setup']) || !read().uploaded) return stopped('setup');
+  }
+  const connected = () => deps.exec(deps.node, [cli, 'status'], 60_000).then(({ stdout }) => stdout.startsWith('Connected'), () => false);
+  if (!await connected()) {
+    if (!await deps.interact(deps.node, [cli, 'connect'])) return stopped('connection');
+    do {
+      if ((await ask('Approve Factory in Linear in your browser, then press Enter to check, or type skip: ')).trim() === 'skip') return stopped('connection');
+    } while (!await connected());
+  }
+  const state = read();
+  return { url: `${state.origin}/delegator`, secret: state.config?.machines?.[state.machine]?.bearerSecret, machine: appName(state.machine) };
+}
+
+/** The Runner's pid from launchd: 0 when loaded but not running (KeepAlive may restart it any moment), null when not loaded. */
+const runnerPid = (deps: SetupDeps) => deps.exec('launchctl', ['print', `gui/${deps.uid}/com.factory.factory-delegator.runner`], 30_000)
+  .then(({ stdout }) => Number(/^\s*pid = (\d+)$/m.exec(stdout)?.[1] ?? 0), () => null);
+
+/** Waits for the newly installed Runner to start and reach Cloud Inbox, as launchd and its status.json report it. */
+async function started(deps: SetupDeps, since: number): Promise<Result> {
+  let pid: number | null = null;
+  for (let second = 0; second <= 60; second++) {
+    pid = await runnerPid(deps);
+    const status = readJson(join(deps.stateDir, 'status.json'));
+    if (pid && status?.pid === pid && Date.parse(status.updatedAt) >= since - 1000 && status.inbox?.status === 'ok') {
+      return { ok: true, line: `runner: installed and connected (pid ${pid}); Cloud Inbox answered at ${status.inbox.lastOkAt}.` };
+    }
+    await deps.sleep(1000);
+  }
+  if (pid === 0) {
+    return { ok: false, line: 'runner: installed, but its launchd agent is loaded and not running after 60 s. Check ~/Library/Logs/factory-delegator/runner.log, '
+      + 'then rerun npm run setup to finish; it won\'t reinstall over a loaded Runner.' };
+  }
+  return { ok: false, line: `runner: installed, but it didn't ${pid ? 'reach Cloud Inbox' : 'start'} within 60 s. Check ~/Library/Logs/factory-delegator/runner.log `
+    + 'and the config\'s inboxUrl and bearerSecret, then choose Start Runner in the Factory Runner menu.' };
+}
+
+/** Offers a first Runner install: reuses a valid config or writes one for an existing or new Cloud Inbox, then proves it connects. */
+async function offerRunner(deps: SetupDeps): Promise<Result> {
+  const stop = (ok: boolean, why: string) => ({ ok, line: `runner: not installed. ${why}` });
+  const ask = deps.ask, pending = join(deps.stateDir, PENDING);
+  // A first install that didn't prove itself connected is finished without asking again.
+  if (existsSync(pending)) deps.print('runner: finishing the install an earlier setup started.');
+  else if (!ask) return stop(true, 'Run npm run setup at a terminal to install it.');
+  else if (!/^y/i.test((await ask('Install the Factory Runner, so this Mac takes work delegated in Linear? [y/N] ')).trim())) return stop(true, 'You can install it on a later run.');
+  const has = (file: string, args: string[]) => deps.exec(file, args, 30_000).then(() => true, () => false);
+  const missing = [
+    !atLeast(deps.nodeVersion, 26) && `The Runner needs Node 26; this is Node ${deps.nodeVersion}.`,
+    !await has('swiftc', ['--version']) && 'The Runner needs swiftc. Run: xcode-select --install',
+    !await has('orca', ['--version']) && 'The Runner needs the orca command. Install Orca and its CLI.',
+  ].filter(Boolean);
+  if (missing.length) return stop(false, `${missing.join(' ')} Then rerun.`);
+
+  const path = join(deps.home, '.config/factory-delegator/config.json');
+  if (!existsSync(path)) {
+    if (!ask) return stop(false, 'Its config is missing. Rerun npm run setup at a terminal.');
+    let inbox: Result | { url: string; secret: string; machine: string };
+    if (existsSync(join(deps.root, DELEGATOR, '.cloud-inbox.local.json'))) inbox = await provisionInbox(deps, ask);
+    else {
+      const choice = (await ask('Cloud Inbox: use one you already run (e), or set up a new one in your Cloudflare account (n)? [e/n] ')).trim().toLowerCase();
+      if (choice === 'n') inbox = await provisionInbox(deps, ask);
+      else if (choice === 'e') {
+        inbox = {
+          url: (await ask('Cloud Inbox URL, ending in /delegator: ')).trim(),
+          secret: (await ask('This machine\'s bearer secret, from config.machines.<machine>.bearerSecret in the Inbox checkpoint: ', true)).trim(),
+          machine: (await ask('This machine\'s Linear app name: ')).trim(),
+        };
+      } else return stop(true, 'No Cloud Inbox chosen.');
+    }
+    if ('ok' in inbox) return inbox;
+    const example = readJson(join(deps.root, DELEGATOR, 'config.example.json'));
+    const user = (await ask('Your Linear user id, so the Runner takes your delegations (ask your agent to call Linear whoami): ')).trim();
+    const models: Record<string, { model: string }> = example.models;
+    for (const [name, settings] of Object.entries(models)) {
+      if (/^<.*>$/.test(settings.model)) settings.model = (await ask(`Model id Orca starts for ${name}: `)).trim();
+    }
+    const config = { ...example, inboxUrl: inbox.url, bearerSecret: inbox.secret, machine: inbox.machine, allowedCreatorIds: [user], models };
+    mkdirSync(join(path, '..'), { recursive: true, mode: 0o700 });
+    rmSync(`${path}.tmp`, { force: true });
+    writeFileSync(`${path}.tmp`, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
+    try { loadConfig(`${path}.tmp`); } catch (error) {
+      rmSync(`${path}.tmp`, { force: true });
+      return stop(false, `The answers don't make a valid config (${(error as Error).message.replace(`${path}.tmp`, 'it')}). Nothing was saved; rerun to try again.`);
+    }
+    renameSync(`${path}.tmp`, path);
+    deps.print(`runner: saved its config to ${path}.`);
+  }
+  try { loadConfig(path); } catch (error) {
+    return stop(false, `The existing config isn't valid (${(error as Error).message}). Fix it to match config.example.json, or move it aside, then rerun. Setup never overwrites it.`);
+  }
+  // Cleared only once a fresh status shows Cloud Inbox answering, so any earlier failure resumes here.
+  writeFileSync(pending, '', { mode: 0o600 });
+  const since = Date.now();
+  // The plain installer restarts a loaded Runner without draining it, so it runs only when launchd has none
+  // loaded and no Runner reports from outside launchd; a Runner an earlier try left is only checked.
+  const install = join(deps.root, DELEGATOR, 'runner/launchd/install.sh');
+  if (await runnerPid(deps) === null) {
+    const outside = outsideRunner(deps.stateDir);
+    if (outside) return { ok: false, line: `runner: not finished. A Runner process (pid ${outside}) is running outside launchd. Stop it, then rerun to finish the install.` };
+    try {
+      await deps.exec('sh', [install], 600_000);
+    } catch (error) {
+      return { ok: false, line: `runner: install failed (${lastLine(error)}). Fix that, then rerun to finish it.` };
+    }
+  }
+  const result = await started(deps, since);
+  if (!result.ok) return result;
+  // The installer registers the menu bar app last, so a try that failed there left the Runner running without it.
+  // Registering it alone never touches the Runner.
+  const menu = `gui/${deps.uid}/com.factory.factory-delegator.menubar`;
+  if (!await deps.exec('launchctl', ['print', menu], 30_000).then(() => true, () => false)) {
+    try { await deps.exec('sh', [install, '--enable-app-login'], 60_000); } catch (error) {
+      return { ok: false, line: `runner: connected, but the menu bar app didn't register to open at login (${lastLine(error)}). Rerun npm run setup to finish it.` };
+    }
+  }
+  rmSync(pending, { force: true });
+  return result;
+}
+
 /** Runs setup and returns the exit code: 0 only when every step and every chosen agent's verification passed. */
 export async function setup(deps: SetupDeps): Promise<number> {
   if (deps.platform !== 'darwin') { deps.print('setup: refused. Factory setup supports macOS only. Nothing was changed.'); return 1; }
   return withLock(deps, async () => {
     const found = deps.agents.length ? deps.agents
       : (await Promise.all(Object.entries(AGENTS).map(([name, agent]) => deps.exec(agent.bin, ['--version'], 30_000).then(() => name, () => null)))).filter((name) => name !== null);
-    const runner = existsSync(join(deps.home, 'Applications', 'Factory Runner.app'));
+    // A `.previous` bundle alone is an update interrupted mid-swap, which the updater restores.
+    // A pending first install isn't an installation yet, whatever it left behind; offerRunner finishes it.
+    const runner = !existsSync(join(deps.stateDir, PENDING))
+      && ['Factory Runner.app', 'Factory Runner.app.previous'].some((app) => existsSync(join(deps.home, 'Applications', app)));
     const problems = found.length ? await prerequisites(deps, found, runner)
       : ['No agent CLI found. Install Claude Code (claude), Codex (codex) or Cursor (agent), then rerun.'];
     if (problems.length) {
@@ -252,7 +398,7 @@ export async function setup(deps: SetupDeps): Promise<number> {
     deps.print(results[0]!.line);
     const forms = await supportForms(deps);
     for (const name of found) { results.push(await support(deps, name, forms)); deps.print(results.at(-1)!.line); }
-    results.push(await updateRunner(deps));
+    results.push(runner ? await updateRunner(deps) : await offerRunner(deps).catch((error: Error) => ({ ok: false, line: `runner: not installed (${error.message}).` })));
     deps.print(results.at(-1)!.line);
     for (const name of found) { results.push(await verify(deps, name)); deps.print(results.at(-1)!.line); }
     return results.every((result) => result.ok) ? 0 : 1;
@@ -300,13 +446,27 @@ export const rpc: SetupDeps['rpc'] = (file, args, messages, timeout) => new Prom
   next();
 });
 
+/** Reads one answer, then lets go of stdin so commands run with `interact` get the terminal to themselves. */
+const ask: NonNullable<SetupDeps['ask']> = async (question, secret = false) => {
+  const terminal = createInterface({ input: process.stdin, output: process.stdout, terminal: false });
+  try {
+    if (!secret) return await terminal.question(question);
+    // Never echo a secret: refuse to read it if the terminal can't hide input.
+    process.stdout.write(`${question}(input hidden) `);
+    if (spawnSync('stty', ['-echo'], { stdio: 'inherit' }).status !== 0) throw new Error('Could not hide input. No secret was read.');
+    try { return await terminal.question(''); } finally { spawnSync('stty', ['echo'], { stdio: 'inherit' }); process.stdout.write('\n'); }
+  } finally { terminal.close(); }
+};
+
 if (process.argv[1] === import.meta.filename) {
   const state = process.env.XDG_STATE_HOME;
-  const terminal = process.stdin.isTTY ? createInterface({ input: process.stdin, output: process.stdout }) : null;
   process.exitCode = await setup({
     exec,
     rpc,
-    ask: terminal && ((question) => terminal.question(question)),
+    ask: process.stdin.isTTY ? ask : null,
+    interact: (file, args) => new Promise((done) => {
+      spawn(file, args, { stdio: 'inherit' }).on('error', () => done(false)).on('close', (code) => done(code === 0));
+    }),
     agents: process.argv.slice(2),
     platform: process.platform,
     nodeVersion: process.versions.node,
@@ -318,5 +478,4 @@ if (process.argv[1] === import.meta.filename) {
     sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
     print: (line) => console.log(line),
   });
-  terminal?.close();
 }

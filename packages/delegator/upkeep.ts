@@ -37,6 +37,11 @@ export const alive = (pid: unknown) => {
   if (!Number.isInteger(pid) || (pid as number) <= 0) return false;
   try { process.kill(pid as number, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
 };
+/** The pid of a Runner reporting from outside launchd within the last 30 s, or 0. */
+export const outsideRunner = (stateDir: string): number => {
+  const status = readJson(join(stateDir, 'status.json'));
+  return alive(status?.pid) && Date.now() - Date.parse(status.updatedAt) < 30_000 ? status.pid : 0;
+};
 
 /** Rebuilds an installed Runner app, swapping it in only once the Runner is proven idle. */
 export async function updateRunner(deps: UpkeepDeps): Promise<Result> {
@@ -91,10 +96,8 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
   /** Why a stopped Runner can't be refreshed now, or null when it's still stopped with readable state. */
   const stoppedRefusal = async () => {
     if (await pid() !== null) return fail('refused. The stopped Runner was started while setup was building. Nothing was replaced; rerun when it\'s idle.');
-    const status = readJson(join(deps.stateDir, 'status.json'));
-    if (alive(status?.pid) && Date.now() - Date.parse(status.updatedAt) < 30_000) {
-      return fail(`refused. A Runner process (pid ${status.pid}) is running outside launchd. Stop it, then rerun.`);
-    }
+    const outside = outsideRunner(deps.stateDir);
+    if (outside) return fail(`refused. A Runner process (pid ${outside}) is running outside launchd. Stop it, then rerun.`);
     // Saved watches resume after a restart, but only if the new Runner can read them.
     try { readWatches({ watches: join(deps.stateDir, 'watching.json') }); } catch {
       return fail('refused. The stopped Runner\'s saved watches are unreadable. Nothing was changed; check ~/Library/Logs/factory-delegator, then rerun.');

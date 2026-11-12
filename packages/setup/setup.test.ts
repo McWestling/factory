@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { loadConfig } from '../delegator/runner/runner.ts';
 import { claudeVerdict, codexVerdict, setup, type SetupDeps } from './setup.ts';
 
 const HEAD = 'b'.repeat(40);
@@ -28,6 +29,14 @@ function codexRun({ items = [{ type: 'mcp_tool_call', server: 'linear', tool: 'w
 }
 
 /** A disposable Mac: a fixture fork checkout and a temp home, with every CLI faked. */
+/** Writes an installed Runner app bundle whose runner supports safe draining. */
+const installApp = (home: string) => {
+  mkdirSync(join(home, 'Applications/Factory Runner.app/Contents/Resources/runner'), { recursive: true });
+  writeFileSync(join(home, 'Applications/Factory Runner.app/Contents/Resources/runner/runner.ts'), 'const DRAIN_PROTOCOL = 1;\n');
+};
+const PLIST = 'Library/LaunchAgents/com.factory.factory-delegator.runner.plist';
+const PENDING = '.local/state/factory/runner-install-pending';
+
 function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'setup-'));
   const root = join(home, 'factory');
@@ -38,8 +47,21 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) 
   const lock = join(home, '.agents/.skill-lock.json');
   mkdirSync(join(home, '.agents'), { recursive: true });
   writeFileSync(lock, JSON.stringify({ skills: { 'someone-elses': { source: 'other/repo', skillFolderHash: 'keep' } } }));
+  mkdirSync(join(root, 'packages/delegator/node_modules/wrangler'), { recursive: true });
+  writeFileSync(join(root, 'packages/delegator/config.example.json'), readFileSync(join(import.meta.dirname, '../delegator/config.example.json')));
   const m = {
     home, root, lock, installed,
+    /** The Runner side of the Mac: Orca, the launchd agent, and what the started Runner writes to status.json. */
+    orca: true, loaded: false, pidless: false, menuLoaded: false, menuFails: false, inboxOk: true, installFails: '' as '' | 'compile' | 'render' | 'bootstrap' | 'menu',
+    /** Whether Cloud Inbox's status check reports it connected to Linear. */
+    connected: false,
+    /** What each interactive Cloud Inbox CLI action does; returns whether it exited 0. */
+    inbox: {
+      login: () => true,
+      setup: () => { writeCheckpoint(root, { ...readCheckpoint(root), ...DEPLOYED, config: INBOX_CONFIG, uploaded: true }); return true; },
+      connect: () => { m.connected = true; return true; },
+    } as Record<string, () => boolean>,
+    questions: [] as { question: string; secret: boolean }[],
     git: { origin: 'git@github.com:Someone/factory.git', status: '', head: HEAD, tip: HEAD },
     gh: true,
     /** Supporting-skill state per agent: 'plugin', 'cli' or 'none'. */
@@ -48,6 +70,7 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) 
     codex: codexRun(),
     codexSkills: ['do-a', 'do-b', ...SUPPORT.map((name) => `mattpocock-skills:${name}`)],
     calls: [] as string[],
+    installs: 0,
     output: [] as string[],
     answers: [] as string[],
     deps: undefined as unknown as SetupDeps,
@@ -61,6 +84,10 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) 
     sleep: async () => {},
     print: (line) => m.output.push(line),
     ask: null,
+    async interact(file, args) {
+      m.calls.push(`interact ${args.at(-1)}`);
+      return m.inbox[args.at(-1)!]?.() ?? false;
+    },
     async rpc(file, args, messages) {
       m.calls.push(`${file} ${args.join(' ')} ${messages.map((message) => (message as { method: string }).method).join(',')}`);
       return [{}, { data: [{ skills: m.codexSkills.map((name) => ({ name, enabled: true })) }] }];
@@ -73,6 +100,44 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) 
         return { stdout: '1.0.0' };
       }
       if (file === 'swiftc' || call === 'git --version') return { stdout: 'ok' };
+      if (call === 'orca --version') { if (!m.orca) throw fail('orca: command not found'); return { stdout: '1.4.0' }; }
+      if (file === 'sh' && args.length === 1 && args[0] === join(root, 'packages/delegator/runner/launchd/install.sh')) {
+        // The installer's steps in order, failing where installFails says: build_app (whose folders exist before
+        // swiftc runs), render_runner, then bootstrapping the Runner and the menu bar app.
+        m.installs++;
+        mkdirSync(join(home, 'Applications/Factory Runner.app/Contents/MacOS'), { recursive: true });
+        if (m.installFails === 'compile') throw fail('swiftc failed');
+        installApp(home);
+        if (m.installFails === 'render') throw fail('orca is not on PATH');
+        mkdirSync(join(home, 'Library/LaunchAgents'), { recursive: true });
+        writeFileSync(join(home, PLIST), '');
+        if (m.installFails === 'bootstrap') throw fail('Bootstrap failed: 5: Input/output error');
+        m.loaded = true;
+        if (m.installFails === 'menu') throw fail('Bootstrap failed: 37: Operation already in progress');
+        m.menuLoaded = true;
+        return { stdout: '' };
+      }
+      if (call === `sh ${join(root, 'packages/delegator/runner/launchd/install.sh')} --enable-app-login`) {
+        if (m.menuFails) throw fail('Bootstrap failed: 5: Input/output error');
+        m.menuLoaded = true;
+        return { stdout: '' };
+      }
+      if (file === 'launchctl' && args[0] === 'print' && args[1]!.endsWith('.menubar')) {
+        if (!m.menuLoaded) throw fail('Could not find service');
+        return { stdout: '' };
+      }
+      if (file === 'launchctl' && args[0] === 'print') {
+        if (!m.loaded) throw fail('Could not find service');
+        // Loaded between KeepAlive restarts: no pid and no fresh status.
+        if (m.pidless) return { stdout: '\tstate = not running\n' };
+        // A running Runner rewrites its status every few seconds.
+        const now = new Date().toISOString();
+        mkdirSync(m.deps.stateDir, { recursive: true });
+        writeFileSync(join(m.deps.stateDir, 'status.json'), JSON.stringify({ version: 1, pid: 4242, updatedAt: now,
+          inbox: m.inboxOk ? { status: 'ok', lastOkAt: now } : { status: 'unreachable', lastOkAt: null } }));
+        return { stdout: '\tpid = 4242\n' };
+      }
+      if (file === '/usr/bin/node' && args.at(-1) === 'status') return { stdout: m.connected ? 'Connected: workspace and app identity verified against Linear.\n' : 'Disconnected. Run connect.\n' };
       if (file === 'gh') { if (!m.gh) throw fail('You are not logged into any GitHub hosts.'); return { stdout: '' }; }
       if (file === 'git') {
         const [, , command, ...rest] = args;
@@ -108,6 +173,20 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) 
     },
   };
   return { ...m, m, run: () => setup(m.deps) };
+}
+
+const BEARER = 'bearer-secret-value';
+const DEPLOYED = { accountId: 'acct', name: 'factory-cloud-inbox', machine: 'mac', origin: 'https://factory-cloud-inbox.someone.workers.dev' };
+const INBOX_CONFIG = { orgId: 'org-id', adminSecret: 'admin-secret-value',
+  machines: { mac: { clientId: 'client-id', clientSecret: 'client-secret-value', webhookSecret: 'webhook-secret-value', bearerSecret: BEARER } } };
+const checkpoint = (root: string) => join(root, 'packages/delegator/.cloud-inbox.local.json');
+const readCheckpoint = (root: string) => existsSync(checkpoint(root)) ? JSON.parse(readFileSync(checkpoint(root), 'utf8')) : {};
+const writeCheckpoint = (root: string, state: object) => writeFileSync(checkpoint(root), JSON.stringify(state), { mode: 0o600 });
+const runnerConfig = (home: string) => join(home, '.config/factory-delegator/config.json');
+
+/** Answers the terminal's questions in order, recording each one; runs out with an empty answer. */
+function answer(mac: ReturnType<typeof machine>, answers: string[]) {
+  mac.m.deps.ask = async (question, secret = false) => { mac.m.questions.push({ question, secret }); return answers.shift() ?? ''; };
 }
 
 const changes = (calls: string[]) => calls.filter((call) => / (add|install|update|upgrade|remove|uninstall) /.test(` ${call} `) && !call.startsWith('git '));
@@ -157,7 +236,7 @@ test('missing prerequisites refuse before anything changes', async () => {
 
 test('an existing Runner needs its build tools checked too', async () => {
   const mac = machine();
-  mkdirSync(join(mac.home, 'Applications/Factory Runner.app'), { recursive: true });
+  installApp(mac.home);
   mac.m.deps.nodeVersion = '24.1.0';
   assert.equal(await mac.run(), 1);
   assert.match(mac.m.output.join('\n'), /Runner needs Node 26/);
@@ -302,8 +381,309 @@ test('Cursor verification is reported unsupported, so setup fails', async () => 
 test('at a terminal, setup waits for the fix and verifies again', async () => {
   const mac = machine();
   mac.m.claude = claudeRun({ status: 'needs-auth' });
-  mac.m.deps.ask = async () => { mac.m.claude = claudeRun(); return ''; };
+  mac.m.deps.ask = async (question) => { if (/check again/.test(question)) mac.m.claude = claudeRun(); return ''; };
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   assert.match(mac.m.output.join('\n'), /needs-auth[\s\S]*claude: verified/);
   assert.equal(mac.m.calls.filter((call) => call.startsWith('claude -p')).length, 2);
+});
+
+const runnerLine = (output: string[]) => output.find((line) => line.startsWith('runner: '));
+const noRunnerChanges = (mac: ReturnType<typeof machine>) => {
+  assert.ok(!existsSync(checkpoint(mac.root)), 'no Cloud Inbox checkpoint');
+  assert.ok(!existsSync(runnerConfig(mac.home)), 'no Runner config');
+  assert.ok(!mac.m.calls.some((call) => call.startsWith('interact ') || call.startsWith('sh ')), 'no Inbox or install command');
+};
+
+test('declining the Runner changes nothing for it, and setup still completes', async () => {
+  const mac = machine();
+  answer(mac, ['n']);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.match(mac.m.questions[0]!.question, /Install the Factory Runner/);
+  assert.match(runnerLine(mac.m.output)!, /^runner: not installed/);
+  noRunnerChanges(mac);
+});
+
+test('with nobody at the terminal, a missing Runner is left alone', async () => {
+  const mac = machine();
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.match(runnerLine(mac.m.output)!, /^runner: not installed\. Run npm run setup at a terminal/);
+  noRunnerChanges(mac);
+});
+
+/** The answers after choosing a Cloud Inbox: Linear user id, then a model id for each model in config.example.json. */
+const RUNNER_ANSWERS = ['user-id', 'claude-model', 'claude-model', 'codex-model'];
+const secretsIn = (text: string) => ['admin-secret-value', 'client-secret-value', 'webhook-secret-value', BEARER].filter((secret) => text.includes(secret));
+
+test('a new Cloud Inbox is set up through its own CLI, then the Runner is installed, configured and shown connected', async () => {
+  const mac = machine();
+  answer(mac, ['y', 'n', '', ...RUNNER_ANSWERS]);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.deepEqual(mac.m.calls.filter((call) => call.startsWith('interact ')), ['interact login', 'interact setup', 'interact connect']);
+  assert.ok(mac.m.questions.some(({ question }) => /Approve Factory in Linear/.test(question)), 'waits for the Linear approval');
+  const path = runnerConfig(mac.home);
+  assert.equal(statSync(path).mode & 0o777, 0o600);
+  const config = loadConfig(path);
+  assert.equal(config.inboxUrl, `${DEPLOYED.origin}/delegator`);
+  assert.equal(config.bearerSecret, BEARER);
+  assert.equal(config.machine, 'Factory mac');
+  assert.deepEqual(config.allowedCreatorIds, ['user-id']);
+  assert.deepEqual(Object.values(config.models).map((model) => model.model), ['claude-model', 'claude-model', 'codex-model']);
+  assert.deepEqual(secretsIn(readFileSync(path, 'utf8')), [BEARER], 'holds the machine secret only, never app or owner credentials');
+  assert.match(runnerLine(mac.m.output.filter((line) => !line.includes('saved its config')))!, /^runner: installed and connected \(pid 4242\); Cloud Inbox answered at /);
+  assert.deepEqual(secretsIn(mac.m.output.join('\n')), [], 'prints no secret');
+});
+
+test('an existing Cloud Inbox needs only its URL and this machine\'s secret, read hidden', async () => {
+  const mac = machine();
+  answer(mac, ['y', 'e', `${DEPLOYED.origin}/delegator`, BEARER, 'Factory laptop', ...RUNNER_ANSWERS]);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.ok(!mac.m.calls.some((call) => call.startsWith('interact ')), 'runs no Inbox setup');
+  assert.ok(!existsSync(checkpoint(mac.root)), 'writes no Inbox checkpoint');
+  assert.deepEqual(mac.m.questions.filter(({ secret }) => secret).map(({ question }) => /bearer secret/.test(question)), [true]);
+  assert.equal(loadConfig(runnerConfig(mac.home)).machine, 'Factory laptop');
+  assert.deepEqual(secretsIn(mac.m.output.join('\n')), []);
+});
+
+test('an interrupted Inbox setup reports what finished, then a rerun resumes it without touching its secrets', async () => {
+  const mac = machine();
+  writeCheckpoint(mac.root, { ...DEPLOYED, adminSecret: 'admin-secret-value', bearerSecret: BEARER });
+  const before = readFileSync(checkpoint(mac.root), 'utf8');
+  const resume = mac.m.inbox.setup!;
+  mac.m.inbox.setup = () => false;
+  answer(mac, ['y']);
+  assert.equal(await mac.run(), 1);
+  assert.match(runnerLine(mac.m.output)!, /Cloud Inbox setup didn't finish\. Done so far: Worker deployed\. Rerun npm run setup/);
+  assert.equal(readFileSync(checkpoint(mac.root), 'utf8'), before, 'setup never writes the checkpoint itself');
+  assert.ok(!existsSync(runnerConfig(mac.home)) && !mac.m.calls.some((call) => call.startsWith('sh ')));
+
+  mac.m.inbox.setup = resume;
+  mac.m.output.length = 0;
+  answer(mac, ['y', '', ...RUNNER_ANSWERS]);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.ok(!mac.m.questions.some(({ question }) => /use one you already run/.test(question)), 'a checkpoint is the Inbox to use');
+  assert.equal(readCheckpoint(mac.root).adminSecret, 'admin-secret-value');
+});
+
+test('a connected Inbox from a finished checkpoint is reused without another setup or approval', async () => {
+  const mac = machine();
+  writeCheckpoint(mac.root, { ...DEPLOYED, config: INBOX_CONFIG, uploaded: true });
+  mac.m.connected = true;
+  rmSync(join(mac.root, 'packages/delegator/node_modules'), { recursive: true });
+  answer(mac, ['y', ...RUNNER_ANSWERS]);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.ok(!mac.m.calls.some((call) => call.startsWith('interact ')));
+  assert.equal(loadConfig(runnerConfig(mac.home)).bearerSecret, BEARER);
+});
+
+test('a valid existing config is kept as it is and installed without Inbox questions', async () => {
+  const mac = machine();
+  mkdirSync(join(mac.home, '.config/factory-delegator'), { recursive: true });
+  const example = JSON.parse(readFileSync(join(mac.root, 'packages/delegator/config.example.json'), 'utf8'));
+  const text = JSON.stringify({ ...example, inboxUrl: `${DEPLOYED.origin}/delegator`, bearerSecret: BEARER, machine: 'Factory mac', allowedCreatorIds: ['user-id'],
+    models: { One: { agent: 'claude', model: 'one' } }, levels: { light: 'One', standard: 'One', deep: 'One' } });
+  writeFileSync(runnerConfig(mac.home), text, { mode: 0o600 });
+  answer(mac, ['y']);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.equal(mac.m.questions.length, 1);
+  assert.equal(readFileSync(runnerConfig(mac.home), 'utf8'), text);
+  assert.match(runnerLine(mac.m.output)!, /installed and connected/);
+});
+
+test('an invalid existing config is refused, never overwritten', async () => {
+  const mac = machine();
+  mkdirSync(join(mac.home, '.config/factory-delegator'), { recursive: true });
+  writeFileSync(runnerConfig(mac.home), '{"inboxUrl":"http://insecure"}', { mode: 0o600 });
+  chmodSync(runnerConfig(mac.home), 0o644);
+  answer(mac, ['y']);
+  assert.equal(await mac.run(), 1);
+  assert.match(runnerLine(mac.m.output)!, /existing config isn't valid \(.*must have mode 600.*\)\. .*never overwrites it/);
+  assert.equal(readFileSync(runnerConfig(mac.home), 'utf8'), '{"inboxUrl":"http://insecure"}');
+  assert.ok(!mac.m.calls.some((call) => call.startsWith('sh ')));
+});
+
+test('answers that make an invalid config save nothing and install nothing', async () => {
+  const mac = machine();
+  answer(mac, ['y', 'e', 'http://not-https.example/delegator', BEARER, 'Factory laptop', ...RUNNER_ANSWERS]);
+  assert.equal(await mac.run(), 1);
+  assert.match(runnerLine(mac.m.output)!, /don't make a valid config \(config `inboxUrl` must be an https URL/);
+  assert.ok(!existsSync(runnerConfig(mac.home)) && !existsSync(`${runnerConfig(mac.home)}.tmp`));
+  assert.ok(!mac.m.calls.some((call) => call.startsWith('sh ')));
+  assert.deepEqual(secretsIn(mac.m.output.join('\n')), []);
+});
+
+test('a new Inbox without Wrangler installed asks for it instead of installing it', async () => {
+  const mac = machine();
+  rmSync(join(mac.root, 'packages/delegator/node_modules'), { recursive: true });
+  answer(mac, ['y', 'n']);
+  assert.equal(await mac.run(), 1);
+  assert.match(runnerLine(mac.m.output)!, /needs Wrangler\. Run: npm --prefix packages\/delegator ci --ignore-scripts/);
+  noRunnerChanges(mac);
+});
+
+test('missing Runner tools refuse before any Inbox or config step', async () => {
+  const mac = machine();
+  mac.m.orca = false;
+  answer(mac, ['y']);
+  assert.equal(await mac.run(), 1);
+  assert.match(runnerLine(mac.m.output)!, /needs the orca command/);
+  noRunnerChanges(mac);
+});
+
+for (const [label, change, message] of [
+  ['a Runner that never reaches Cloud Inbox', (mac: ReturnType<typeof machine>) => { mac.m.inboxOk = false; }, /installed, but it didn't reach Cloud Inbox within 60 s/],
+  ['a Runner that never starts', (mac: ReturnType<typeof machine>) => {
+    mac.m.deps.exec = ((exec) => async (file: string, args: string[], timeout: number) => {
+      if (file === 'launchctl') throw new Error('Could not find service');
+      return exec(file, args, timeout);
+    })(mac.m.deps.exec);
+  }, /installed, but it didn't start within 60 s/],
+  ['a failed install', (mac: ReturnType<typeof machine>) => { mac.m.installFails = 'compile'; }, /^runner: install failed \(swiftc failed\)/],
+] as const) {
+  test(`${label} fails setup instead of reporting a working Runner`, async () => {
+    const mac = machine();
+    change(mac);
+    answer(mac, ['y', 'e', `${DEPLOYED.origin}/delegator`, BEARER, 'Factory laptop', ...RUNNER_ANSWERS]);
+    assert.equal(await mac.run(), 1);
+    assert.match(mac.m.output.find((line) => /^runner: (installed|install failed)/.test(line))!, message);
+    assert.ok(!mac.m.output.some((line) => /connected \(pid/.test(line)));
+  });
+}
+
+const EXISTING_INBOX = ['y', 'e', `${DEPLOYED.origin}/delegator`, BEARER, 'Factory laptop', ...RUNNER_ANSWERS];
+
+for (const [step, error] of [
+  ['compile', 'swiftc failed'],
+  ['render', 'orca is not on PATH'],
+  ['bootstrap', 'Bootstrap failed: 5: Input/output error'],
+] as const) {
+  test(`a first install that failed at ${step} is finished on rerun, with a fresh Cloud Inbox check`, async () => {
+    const mac = machine();
+    mac.m.installFails = step;
+    answer(mac, [...EXISTING_INBOX]);
+    assert.equal(await mac.run(), 1);
+    assert.ok(mac.m.output.some((line) => line.startsWith(`runner: install failed (${error})`)), mac.m.output.join('\n'));
+    assert.ok(existsSync(join(mac.home, PENDING)), 'remembers the install is unfinished');
+
+    mac.m.installFails = '';
+    mac.m.output.length = 0;
+    answer(mac, []);
+    assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+    assert.deepEqual(mac.m.questions.slice(EXISTING_INBOX.length), [], 'asks nothing more');
+    assert.equal(mac.m.installs, 2, 'reruns the installer');
+    assert.ok(!mac.m.calls.some((call) => call.includes('--build-app')), 'installs instead of updating');
+    assert.ok(existsSync(join(mac.home, PLIST)), 'installs the Runner agent');
+    assert.match(runnerLine(mac.m.output.filter((line) => !line.includes('finishing')))!, /^runner: installed and connected \(pid 4242\); Cloud Inbox answered at /);
+    assert.ok(!existsSync(join(mac.home, PENDING)));
+  });
+}
+
+/** Install-touching calls after the first `from`: the plain installer, menu registration, or launchd starts and stops. */
+const touched = (mac: ReturnType<typeof machine>, from: number) =>
+  mac.m.calls.slice(from).filter((call) => /install\.sh|launchctl (bootout|bootstrap|kickstart|kill)/.test(call));
+
+test('a pending install whose menu bar registration failed finishes it without reinstalling or restarting the Runner', async () => {
+  const mac = machine();
+  mac.m.installFails = 'menu';
+  answer(mac, [...EXISTING_INBOX]);
+  assert.equal(await mac.run(), 1);
+  assert.ok(mac.m.loaded && !mac.m.menuLoaded && existsSync(join(mac.home, PENDING)), 'the Runner runs, but the install never proved itself');
+  const calls = mac.m.calls.length;
+
+  mac.m.inboxOk = false;
+  answer(mac, []);
+  assert.equal(await mac.run(), 1);
+  assert.ok(mac.m.output.some((line) => /^runner: installed, but it didn't reach Cloud Inbox/.test(line)));
+  assert.ok(existsSync(join(mac.home, PENDING)), 'stays pending until Cloud Inbox answers');
+  assert.deepEqual(touched(mac, calls), [], 'registers no menu before the Runner proves itself');
+
+  mac.m.inboxOk = true;
+  mac.m.menuFails = true;
+  mac.m.output.length = 0;
+  answer(mac, []);
+  assert.equal(await mac.run(), 1);
+  assert.match(runnerLine(mac.m.output.filter((line) => !line.includes('finishing')))!, /^runner: connected, but the menu bar app didn't register .*Bootstrap failed: 5/);
+  assert.ok(existsSync(join(mac.home, PENDING)), 'stays pending until the menu bar app registers');
+
+  mac.m.menuFails = false;
+  mac.m.output.length = 0;
+  answer(mac, []);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.match(runnerLine(mac.m.output.filter((line) => !line.includes('finishing')))!, /^runner: installed and connected \(pid 4242\)/);
+  const install = join(mac.root, 'packages/delegator/runner/launchd/install.sh');
+  assert.deepEqual(touched(mac, calls), [`sh ${install} --enable-app-login`, `sh ${install} --enable-app-login`], 'only registers the menu bar app');
+  assert.equal(mac.m.installs, 1);
+  assert.ok(mac.m.menuLoaded && !existsSync(join(mac.home, PENDING)));
+});
+
+/** A first install that failed at compile, so the next run resumes it; returns the call count after that run. */
+async function pendingInstall(mac: ReturnType<typeof machine>) {
+  mac.m.installFails = 'compile';
+  answer(mac, [...EXISTING_INBOX]);
+  assert.equal(await mac.run(), 1);
+  mac.m.installFails = '';
+  mac.m.output.length = 0;
+  answer(mac, []);
+  return mac.m.calls.length;
+}
+
+test('a pending install with a loaded Runner agent that has no pid waits for it instead of reinstalling', async () => {
+  const mac = machine();
+  const calls = await pendingInstall(mac);
+  mac.m.loaded = true;
+  mac.m.pidless = true;
+  assert.equal(await mac.run(), 1);
+  assert.match(runnerLine(mac.m.output.filter((line) => !line.includes('finishing')))!, /loaded and not running after 60 s.*won't reinstall over a loaded Runner/);
+  assert.deepEqual(touched(mac, calls), [], 'never runs the installer or stops or starts the Runner');
+  assert.equal(mac.m.installs, 1);
+  assert.ok(existsSync(join(mac.home, PENDING)));
+
+  // launchd's KeepAlive restarts it, and the next run sees it connected.
+  mac.m.pidless = false;
+  mac.m.menuLoaded = true;
+  mac.m.output.length = 0;
+  answer(mac, []);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.deepEqual(touched(mac, calls), []);
+  assert.ok(!existsSync(join(mac.home, PENDING)));
+});
+
+test('a pending install refuses while a Runner runs outside launchd', async () => {
+  const mac = machine();
+  const calls = await pendingInstall(mac);
+  writeFileSync(join(mac.m.deps.stateDir, 'status.json'), JSON.stringify({ version: 1, pid: process.pid, updatedAt: new Date().toISOString() }));
+  assert.equal(await mac.run(), 1);
+  assert.match(runnerLine(mac.m.output.filter((line) => !line.includes('finishing')))!, new RegExp(`pid ${process.pid}\\) is running outside launchd`));
+  assert.deepEqual(touched(mac, calls), []);
+  assert.ok(existsSync(join(mac.home, PENDING)));
+});
+
+for (const [label, arrange] of [
+  ['an app-only Runner', (mac: ReturnType<typeof machine>) => installApp(mac.home)],
+  ['a stopped Runner', (mac: ReturnType<typeof machine>) => {
+    installApp(mac.home);
+    mkdirSync(join(mac.home, 'Library/LaunchAgents'), { recursive: true });
+    writeFileSync(join(mac.home, PLIST), '');
+  }],
+  ['a running Runner', (mac: ReturnType<typeof machine>) => {
+    installApp(mac.home);
+    mkdirSync(join(mac.home, 'Library/LaunchAgents'), { recursive: true });
+    writeFileSync(join(mac.home, PLIST), '');
+    mac.m.loaded = true;
+  }],
+  ['an update interrupted mid-swap', (mac: ReturnType<typeof machine>) => {
+    installApp(mac.home);
+    renameSync(join(mac.home, 'Applications/Factory Runner.app'), join(mac.home, 'Applications/Factory Runner.app.previous'));
+  }],
+] as const) test(`${label} takes the update path with no question and keeps its config`, async () => {
+  const mac = machine();
+  arrange(mac);
+  mkdirSync(join(mac.home, '.config/factory-delegator'), { recursive: true });
+  writeFileSync(runnerConfig(mac.home), 'kept', { mode: 0o600 });
+  answer(mac, []);
+  await mac.run();
+  assert.ok(!mac.m.questions.some(({ question }) => /Runner|Cloud Inbox/.test(question)));
+  assert.ok(mac.m.calls.some((call) => call.endsWith('install.sh --build-app ' + join(mac.home, 'Applications/Factory Runner.app.staged'))), 'stages an update');
+  assert.equal(mac.m.installs, 0, 'never runs the plain installer');
+  assert.equal(readFileSync(runnerConfig(mac.home), 'utf8'), 'kept');
+  assert.ok(!mac.m.calls.some((call) => call.startsWith('interact ')));
 });
