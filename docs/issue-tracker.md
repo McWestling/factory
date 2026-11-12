@@ -99,7 +99,7 @@ The label records where the work was dispatched from, not where the session runs
 | Claude Fable 5.2 | `deep`     | Long-horizon or hardest work, when Opus 5.5 at higher effort falls short       |
 | GPT-6 Astra      | `deep`     | Hardest end-to-end work in Codex, when GPT-6.1 Sol falls short                 |
 | GPT-6.1 Sol      | `standard` | Complex implementation and agentic work                                        |
-| GPT-6 Luna       | `light`    | Focused, pattern-following tickets where a good result is clear                |
+| GPT-6 Luna       | `light`    | Focused, pattern-following tickets; always use at least `high` effort                |
 | Composer 2.5     | `light`    | Mechanical changes, as a Cursor Cloud agent                                    |
 | Grok 4.7         | `light`    | Mechanical changes, as a Cursor Cloud agent                                    |
 

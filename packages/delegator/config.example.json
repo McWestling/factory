@@ -5,7 +5,7 @@
   "allowedCreatorIds": ["<Linear user id allowed to delegate>"],
   "models": {
     "Claude Opus 5.5": { "agent": "claude", "model": "<model id>", "effort": "high" },
-    "GPT-6 Luna": { "agent": "codex", "model": "<model id>" }
+    "GPT-6 Luna": { "agent": "codex", "model": "<model id>", "effort": "high" }
   },
   "levels": {
     "light": "GPT-6 Luna",

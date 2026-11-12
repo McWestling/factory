@@ -219,10 +219,18 @@ test('Codex uses a dollar prefix for do-implement', () => {
   assert.ok(args.includes('--prompt=$do-implement ABC-123\nDelegated run: nobody is watching this session.'));
 });
 
-test('a skill other than do-implement skips setup, and a model without effort omits it', () => {
+test('Luna launches at high effort minimum and preserves higher effort', () => {
+  for (const effort of [undefined, 'low', 'medium', 'high', 'xhigh', 'max']) {
+    const settings = { ...config.models['GPT-6 Luna']!, effort };
+    const args = launchArgs({ ...config, models: { ...config.models, 'GPT-6 Luna': settings } }, '/repos/repo', 'GPT-6 Luna', goodTask);
+    assert.equal(args[args.indexOf('--effort') + 1], effort === 'xhigh' || effort === 'max' ? effort : 'high');
+  }
+});
+
+test('a skill other than do-implement skips setup and Luna still gets high effort', () => {
   const args = launchArgs({ ...config, skill: 'do-refine' }, '/repos/repo', 'GPT-6 Luna', goodTask);
   assert.deepEqual(args, ['worktree', 'create', '--name', 'abc-123-do-the-thing', '--repo', 'path:/repos/repo',
-    '--branch', 'someone/abc-123-do-the-thing', '--agent', 'codex', '--model', 'gpt-6-luna', '--prompt=$do-refine ABC-123\nDelegated run: nobody is watching this session.',
+    '--branch', 'someone/abc-123-do-the-thing', '--agent', 'codex', '--model', 'gpt-6-luna', '--effort', 'high', '--prompt=$do-refine ABC-123\nDelegated run: nobody is watching this session.',
     '--setup', 'skip', '--linear-issue', 'ABC-123', '--json']);
 });
 
