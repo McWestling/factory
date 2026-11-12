@@ -650,6 +650,16 @@ test('the config loads, defaults the skill, and the example has every key', () =
   assert.deepEqual(exampleKeys, [...Object.keys(config)].sort());
 });
 
+test('the example loads once its placeholders are filled, with one model at two efforts', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'runner-'));
+  const filled = JSON.parse(readFileSync(example, 'utf8').replace(/<[^>]*>/g, 'x'));
+  const { models, levels } = loadConfig(writeConfig(dir, filled));
+  const [deep, standard] = [models[levels.deep]!, models[levels.standard]!];
+  assert.notEqual(levels.deep, levels.standard);
+  assert.deepEqual([deep.agent, deep.model], [standard.agent, standard.model]);
+  assert.notEqual(deep.effort, standard.effort);
+});
+
 const badConfigs: [string, unknown][] = [
   ['no allowlist', { ...valid, allowedCreatorIds: undefined }],
   ['an empty allowlist', { ...valid, allowedCreatorIds: [] }],
