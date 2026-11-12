@@ -19,11 +19,8 @@ Implement this ticket in one PR and run the verification below.
 
 See the [issue format contract](../../docs/issue-format.md).
 
-```factory-run
-target: <target>
-model: <exact Preferred models name>
-reason: <one clause explaining why this model fits>
-```
+`[level=standard]` `[model=<model>]` `[target=<target>]`
+<One plain sentence explaining why this level fits.>
 
 ---
 
@@ -63,11 +60,12 @@ reason: <one clause explaining why this model fits>
 
 ## Filling it in
 
-- **What this is / Status / Next** form the front door: a reader should understand the issue without knowing the project. When the scope changes, update Status, Next and the factory-run block together. History goes in comments, not in new dated sections of the description.
+- **What this is / Status / Next** form the front door: a reader should understand the issue without knowing the project. When the scope changes, update Status and Next together. History goes in comments, not in new dated sections of the description.
 - **Model freshness:** check the **Checked** date under **Preferred models** against its re-check rule. If it is due, or a listed model has retired, re-read its **Sources** and propose an update to the user (new rows, retired rows, a new Checked date) before suggesting a model.
-- **Factory-run block, model:** pick an exact name from **Preferred models**, weighing how hard and risky the work is against cost. Keep the strongest models for cross-cutting or ambiguous work (schema changes, auth, concurrency, architecture calls, hard debugging) and cheaper ones for mechanical or pattern-following changes. The reason clause says why the model fits.
-- **Factory-run block, target:** choose a label from **Dispatch targets** that can run that model, never a legacy one: the default target unless the model or work needs another (a model the default target can't run, a local stack, live input from the user). This is the plan; the Dispatch target label records what actually ran.
-- **Factory-run block, reason:** give one human-readable clause for the model choice. The agent and skill come from the model mapping and Runner config described in the [issue format contract](../../docs/issue-format.md).
+- **Level:** always write `[level=light|standard|deep]`, choosing by difficulty and risk: `light` for mechanical or pattern-following work, `standard` for normal implementation, and `deep` for cross-cutting, ambiguous or hard-debugging work. Write the word, not the digit.
+- **Model pin:** add `[model=<name>]` only when the work needs that model's strength, and explain why in the reason sentence. Otherwise omit it.
+- **Target:** add `[target=<label>]` only when it differs from the **Default target** in the tracker doc. The Dispatch target label records what actually ran.
+- **Reason:** after the tags, write one plain sentence explaining why the level fits. The agent, model and effort come from the level mapping and Runner config described in the [issue format contract](../../docs/issue-format.md).
 - **Touches:** the directories and files from your code survey. Dispatch compares these lines to batch issues that don't overlap.
 - **Verification:** use the repo's own check command, from its `AGENTS.md` or README.
 - **Lifecycle:** use the status names from **Issue statuses**. If the repo has no PR automation (see the review rule in its `AGENTS.md`), say who marks the PR ready and merges.

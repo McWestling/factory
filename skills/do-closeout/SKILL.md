@@ -107,7 +107,7 @@ Pick one ticket, read-only; change nothing in the tracker:
 
 Print **Suggested next ticket** with the ticket's name and link, then the prompt to paste into a fresh session, then where to run it:
 
-- **Implementation issue:** the **Kickoff prompt** per **Comment shape**. Under it, the issue's repo (its repo tag, or per **Repo routing**) and its factory-run block's `target` and `model`.
+- **Implementation issue:** the **Kickoff prompt** per **Comment shape**. Under it, the issue's repo (its repo tag, or per **Repo routing**) and its `[level=]` tag, plus `[model=]` when present.
 - **Decision ticket** (a `wayfinder:` label): `/do-refine <map URL>` in a fenced `text` block, using the map URL the tracker returns, with the repo it routes to.
 
 The fenced block holds only the command; any explanation goes outside it. It is the one copyable block in the reply.
