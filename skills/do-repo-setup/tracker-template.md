@@ -102,7 +102,7 @@ Each product has an initiative with the same name as its Product label. Its desc
 | --------------- | -------------------------------------------------------------------------------- |
 {{dispatch target rows}}
 
-The label records where the work was dispatched from, not where the session runs or which model ran. Set it when work starts{{orca rule}}. An issue's `[target=]` tag is the plan when it differs from the default; the label records what actually ran.
+The label records where the work was dispatched from, not where the session runs or which model ran. Set it when work starts{{orca rule}}.
 
 **Default target:** `{{default target}}`. Never suggest a legacy target.
 

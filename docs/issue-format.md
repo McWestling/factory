@@ -1,6 +1,6 @@
 # Issue format
 
-Factory Delegator reads inline tags from an implementation issue's description. The first tag of each kind wins, anywhere in the description, including inside code spans. Linear's escaped bracket form, such as `\[level=standard\]`, means the same thing.
+Factory Delegator reads inline tags from an implementation issue's description. For `level`, the first valid value wins; for `repo`, the first value matching the repo pattern wins; for `model`, the first non-empty value wins. Invalid or empty values are skipped, anywhere in the description, including inside code spans. Linear's escaped bracket form, such as `\[level=standard\]`, means the same thing.
 
 ## Repo tag
 
@@ -15,18 +15,17 @@ Every brief must give a level. Put the tags in **Next**, followed by a plain sen
 Normal implementation with clear requirements and existing tests.
 ```
 
-| Level | Alias | Meaning |
-| ----- | ----- | ------- |
-| `light` | `1` | Mechanical, pattern-following work |
-| `standard` | `2` | Normal implementation |
-| `deep` | `3` | Cross-cutting or ambiguous work, or hard debugging |
+| Level | Meaning |
+| ----- | ------- |
+| `light` | Mechanical, pattern-following work |
+| `standard` | Normal implementation |
+| `deep` | Cross-cutting or ambiguous work, or hard debugging |
 
 Level words are case-insensitive. A missing or unknown level is refused even when a model pin exists.
 
 - `[model=astra]` optionally pins a model. Pins are rare: add one only when the work needs that model's strength, and explain why in the sentence after the tags.
 - Matching lowercases the pin and configured model names and keeps only letters and digits. An exact normalized match wins; otherwise the pin must be a substring of exactly one name. `GPT-6 Astra`, `gpt6astra` and `astra` all match `GPT-6 Astra`; `gpt6` is ambiguous when both Astra and Luna are configured.
 - Pins are never refused. If a pin is unknown or ambiguous, the Runner first posts a thought naming the attempted pin, fallback level and model, then launches the level's model. The started thought names the model actually launched.
-- `[target=Claude]` names the planned dispatch tool and appears only when it differs from the tracker doc's default target. The Runner reads it but it does not affect launch selection. The Dispatch target label records what actually ran.
 - The parser does not read the retired fenced metadata format or fall back to it.
 
 ## Runner config
@@ -55,7 +54,7 @@ The skill is not part of the issue format. Runner config's optional `skill` key 
 
 Each refusal names the field and what was expected:
 
-- `level`: expected a `[level=…]` tag with 1/light, 2/standard, 3/deep.
+- `level`: expected a `[level=…]` tag with light, standard or deep.
 - `repo`: expected a `[repo=owner/name]` tag matching `^[\w.-]+/[\w.-]+$`.
 - At pickup, the Runner requires exactly one matching GitHub checkout from `orca repo list --json`; missing or ambiguous registrations refuse dispatch.
 
