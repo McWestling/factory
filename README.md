@@ -85,7 +85,8 @@ One command sets up or refreshes Factory on a Mac: `npm run setup`, from a clean
 - At a terminal, it can optionally guide you through Cloud Inbox and install the Runner on this Mac; see [Install with setup](packages/delegator/README.md#install-with-setup). Once the Runner is installed, the same command safely refreshes it; see [what it checks](packages/delegator/README.md#update-after-merging-factory-changes).
 - With `--verify`, it starts each agent fresh to confirm Linear’s MCP `whoami` answers and every skill is discoverable. These live checks cost model usage, so setup skips them without the flag and says so; it then passes once the configuration is written.
 
-It exits non-zero until every step passes; at a terminal, it waits for each fix to a live check and checks again. Declining the Runner leaves it and Cloud Inbox untouched, and setup still passes. To restart the Runner’s menu bar app, run `npm run menubar`.
+It exits non-zero until every step passes; at a terminal, it waits for each fix to a live check and checks again. Declining the Runner leaves it and Cloud Inbox untouched, and setup still passes. Setup relaunches the menu bar app after a successful Runner install or update.
+
 
 ## Contributing
 

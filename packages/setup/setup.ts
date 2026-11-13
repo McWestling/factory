@@ -415,6 +415,15 @@ export async function setup(deps: SetupDeps): Promise<number> {
     for (const name of found) { results.push(await support(deps, name, forms)); deps.print(results.at(-1)!.line); }
     results.push(runner ? await updateRunner(deps) : await offerRunner(deps).catch((error: Error) => ({ ok: false, line: `runner: not installed (${error.message}).` })));
     deps.print(results.at(-1)!.line);
+    if (results.at(-1)!.ok && existsSync(join(deps.home, 'Applications/Factory Runner.app'))) {
+      try {
+        // pkill exits 1 when no menu bar app is running.
+        await deps.exec('pkill', ['-x', 'FactoryRunnerMenuBar'], 30_000).catch((error) => { if (error.code !== 1) throw error; });
+        await deps.exec('open', [join(deps.home, 'Applications/Factory Runner.app')], 30_000);
+      } catch {
+        deps.print('menu bar: could not relaunch. Open ~/Applications/Factory Runner.app by hand.');
+      }
+    }
     for (const result of await readRoots(deps, found)) { results.push(result); deps.print(result.line); }
     if (deps.verify) for (const name of found) { results.push(await verify(deps, name)); deps.print(results.at(-1)!.line); }
     else deps.print('live checks: skipped. Run npm run setup -- --verify to run them.');
