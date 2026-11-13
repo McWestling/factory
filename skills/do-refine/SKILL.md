@@ -12,7 +12,7 @@ Every map points at a **destination**: a feature to ship, a decision to lock in,
 
 ## Supporting skills
 
-For upstream skill names below (`grilling`, `domain-modeling`, `research`, `prototype`), use the advertised `mattpocock-skills:<name>` when available, otherwise the advertised bare `<name>` from the skills CLI. Invoke through the agent's skill mechanism (the Skill tool where available, otherwise read the advertised SKILL.md). Pass the resolved name and this rule to research subagents. If neither form is available, stop and ask the user to run `do-repo-setup`; do not substitute upstream `wayfinder` for this workflow.
+For upstream skill names below (`grilling`, `domain-modeling`, `research`, `prototype`), use the advertised `mattpocock-skills:<name>` when available, otherwise the advertised bare `<name>` from the skills CLI. Pass the resolved name and this rule to research subagents. If neither form is available, stop and ask the user to run `do-repo-setup`; do not substitute upstream `wayfinder` for this workflow.
 
 ## Rules for every session
 
@@ -22,84 +22,13 @@ For upstream skill names below (`grilling`, `domain-modeling`, `research`, `prot
 - **Others are editing too.** Several sessions may work one map at once. Re-read an issue before you change it if time has passed, and patch descriptions instead of rewriting them.
 - **Real references only.** Write cross-references with real ids. A placeholder such as `ABC-<n>` links to some other issue or to nothing.
 
-**Asking.** Ask with AskUserQuestion where the client has it (multiSelect when picking several items, up to 4 questions per call), otherwise in chat.
-
 ## Workspace values
 
-This skill holds the procedure. The values (team, statuses, labels, templates, routing, models, views, comment shape) live in the repo's **tracker doc**. Find it through `AGENTS.md`, which names either a path in this repo or a doc in another repo (like `docs/issue-tracker.md` in `owner/name`); read another repo's doc from its checkout, found through `orca repo list --json`. If `AGENTS.md` names none, use `docs/issue-tracker.md`. Read it before you touch the tracker. Where this file says "per X", X is a heading in that doc.
+Workspace values live in the **tracker doc**: the file `AGENTS.md` names, or `docs/issue-tracker.md`. A doc in another repo is read from that repo's checkout, found through `orca repo list --json`. Read it once, before you touch the tracker; "per X" cites a heading in it. If a value you need is missing, ask the user, then offer to add it to the doc or to run `do-repo-setup`. Reach the tracker only through the doc's **Tracker** access; if that is unavailable or unauthorized, stop and say so rather than fall back to a browser, desktop app or raw API.
 
-If a value you need is missing, ask the user, use their answer, then offer to add it to the tracker doc or to run `do-repo-setup`.
+## Maps and tickets
 
-Read and write the tracker only through the access the tracker doc's **Tracker** heading allows. If that access is unavailable or unauthorized, stop and say so; don't fall back to a browser, desktop app or raw API.
-
-## Maps
-
-A map is a **project** in the tracker. Its tickets are **flat issues** in it: no sub-issues, no parent links. A map for a product sits in that product's initiative, per **Initiatives**.
-
-The map is an index. Each decision lives in one place, the ticket that settled it; the map gives a one-line gist and a link, and never repeats the detail.
-
-### Summary and description
-
-The project **summary** is one plain sentence saying what the map is (the tracker caps it at 255 characters). The project **description** holds the whole map in five sections, small enough to load at the start of every session.
-
-```markdown
-## Destination
-
-<One or two lines: what reaching the end of this map looks like. Every session reads this before choosing a ticket.>
-
-## Notes
-
-- **Product:** <name>. <!-- first bullet, when the workspace has Product labels -->
-- <Domain, skills every session should call, standing preferences, other maps this one depends on.>
-
-## Decisions so far
-
-- [<closed ticket title>](link): <one-line gist of the answer>
-
-## Not yet specified
-
-<In-scope work you can see coming but can't yet phrase as a ticket. See "Fog".>
-
-## Out of scope
-
-- [<canceled ticket title>](link): <gist>, out because <reason>.
-```
-
-Open tickets are not listed in the description. They are the open issues in the project, found by query.
-
-### Project status
-
-Use the statuses under **Project statuses**, by meaning:
-
-- **Stub:** a map made by triage that nobody has charted yet.
-- **Charted:** Destination named and decisions ticketed. Pick between the doc's charted statuses by their meanings (for example, whether anything is sliced yet).
-- **Started:** set when the first ticket on the map is claimed.
-- **Finished:** the destination is reached and no open issues remain.
-- **Abandoned:** the effort was dropped.
-
-## Tickets
-
-A map holds two kinds of issue. Both are flat issues in its project, and both start in the ready status per **Issue statuses** (for example `Todo`), blocked or not. The tracker won't move an issue when its blocker closes, so blockers, not status, decide what can be taken. Leave priority as **Priority** says.
-
-### Decision tickets
-
-A decision ticket settles a question; it doesn't deliver build work. It carries exactly one `wayfinder:<type>` label (see [Ticket types](#ticket-types)), plus the labels **Labels** puts on every product issue (for example a Product label). Never a label **Labels** marks as retired, and never a readiness or triage label.
-
-The body is one plain sentence saying what the ticket is, then the question. Size it so one agent session (about 100K tokens) can settle it.
-
-```markdown
-<One plain sentence.>
-
-## Question
-
-<The decision or investigation this ticket settles.>
-```
-
-The body never states the type; the label does. The answer isn't written into the body: it goes in a comment when the ticket is resolved. Link anything made while resolving a ticket (a prototype, a research branch) from the issue rather than pasting it in.
-
-### Implementation issues
-
-An implementation issue is one PR of build work. It carries no `wayfinder:` label, follows [brief-template.md](brief-template.md) and the implementation template under **Templates**, and passes [dispatch-gates.md](dispatch-gates.md) before anyone dispatches it. A refine session writes implementation issues but never works one.
+A **map** is a project in the tracker, and its tickets are flat issues in it: decision tickets and implementation issues. [maps.md](maps.md) holds the map's description shape, its project statuses and both ticket shapes. Read it once, before you read or write a map.
 
 ### Blocking and the frontier
 
@@ -168,7 +97,7 @@ Slicing turns settled build work into implementation issues, one PR each. Slice 
 1. **Gather.** Read the map's Destination, Notes and Decisions so far, then the resolution comments of the decisions this work depends on. Survey the code it touches in its repo, briefly: the directories and files, and any prefactoring that would make the change easy. When that repo per **Repo routing** isn't the current one, find its checkout in `orca repo list --json` (the entry whose remote is that `owner/name`) and read its `AGENTS.md` first. Read only; never edit another repo's checkout. Use the repo's own vocabulary and respect its decision records.
 2. **Draft.** Cut thin **vertical slices**: each a narrow path through every layer it needs (data, API, UI, tests), checkable on its own and sized to one PR. Prefactoring goes first, as its own slice. A wide mechanical change that no single slice can land green, such as a codebase-wide rename, goes **expand–contract**: add the new form beside the old, move callers over in batches, then delete the old form, each step a slice. Note each slice's blockers: other slices and any open decision tickets.
 3. **Check with the user.** Show the slices as a numbered list: title, blocked by, what it delivers, what it touches. Ask whether the size is right, whether each blocker is real, and whether any slice should merge or split. Repeat until the user approves. Never publish a slice the user hasn't seen.
-4. **Publish**, blockers first. Create each issue in the map's project, in the ready status, with no parent and with the labels the tracker doc requires. Write the body from [brief-template.md](brief-template.md), including its **README** line when the issue completes a major feature, applying the implementation template under **Templates** when there is one. Resolve its repo per **Repo routing** and write the repo tag into every issue. If routing leaves the product unresolved, ask the user once which repo it uses, write that onto the product's initiative in the form **Repo routing** gives, and publish none of that product's issues until it is set. Then wire `blocks` / `blockedBy` in a second pass, once every issue has a real id. Check each issue against [dispatch-gates.md](dispatch-gates.md). If it fails any gate other than open blockers, it isn't a slice yet: put it back in the fog, or turn the gap into a decision ticket.
+4. **Publish**, blockers first. Create each issue in the map's project, in the ready status, with no parent and with the labels the tracker doc requires. Write the body from [brief-template.md](brief-template.md), including its **README** line when the issue completes a major feature. Resolve its repo per **Repo routing** and write the repo tag into every issue. If routing leaves the product unresolved, ask the user once which repo it uses, write that onto the product's initiative in the form **Repo routing** gives, and publish none of that product's issues until it is set. Then wire `blocks` / `blockedBy` in a second pass, once every issue has a real id. Check each issue against [dispatch-gates.md](dispatch-gates.md). If it fails any gate other than open blockers, it isn't a slice yet: put it back in the fog, or turn the gap into a decision ticket.
 5. **Record.** Remove each sliced patch from **Not yet specified**, so it lives only as its issues. Slices aren't decisions, so they stay out of **Decisions so far**. If the map's charted status says nothing is sliced yet, move it to the one that says work is sliced.
 
 ## Choosing a mode

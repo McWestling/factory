@@ -9,21 +9,11 @@ Get it right before getting it done. A misread filed as an issue costs more than
 
 This skill is one of the factory's `do-` skills and expects its siblings to be installed alongside it.
 
-**Asking.** Ask with AskUserQuestion where the client has it (multiSelect when picking several items, up to 4 questions per call), otherwise in chat.
-
 ## The tracker doc
 
-The procedure lives here; the workspace values live in the repo's tracker doc. Find it through `AGENTS.md`, which names either a path in this repo or a doc in another repo (like `docs/issue-tracker.md` in `owner/name`); read another repo's doc from its checkout, found through `orca repo list --json`. If `AGENTS.md` names none, use `docs/issue-tracker.md`. Read it before filing. This skill uses these headings:
+Workspace values live in the **tracker doc**: the file `AGENTS.md` names, or `docs/issue-tracker.md`. A doc in another repo is read from that repo's checkout, found through `orca repo list --json`. Read it once, before filing; "per X" cites a heading in it. Use only what it says: where a value you need is missing (no doc, no team, no Product labels), ask the user, use the answer for this run, and offer to add it to the doc or to run `do-repo-setup`. Reach the tracker only through the doc's **Tracker** access; if that is unavailable or unauthorized, stop and say so rather than fall back to a browser, desktop app or raw API.
 
-- **Tracker:** the tool, and how to reach it.
-- **Team:** the team the muses go to.
-- **Issue statuses:** the names for Triage and Backlog.
-- **Labels:** the Product labels, and the Bug label that marks a defect; a Triage item without it is a muse.
-- **Repo routing:** which product maps to which repo, to tell which product the repo you're in belongs to. When it isn't any product's repo, ask which product the notes belong to instead of inferring it.
-
-Use only what the doc says. Where a value you need is missing (no doc, no team, no Product labels), ask the user, use the answer for this run, and offer to add it to the doc or to run `do-repo-setup`.
-
-Reach the tracker only through the access the doc's **Tracker** section names. If that access is unavailable or unauthorized, stop and say so; don't fall back to a browser, the desktop app or the raw API.
+**Repo routing** tells you which product the repo you're in belongs to. When it is no product's repo, ask which product the notes belong to instead of inferring it.
 
 ## Steps
 

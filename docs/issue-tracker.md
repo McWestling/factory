@@ -2,8 +2,6 @@
 
 This is McWestling's config. Other repos point to it from their `AGENTS.md` instead of keeping a copy.
 
-**Setup version:** 2026-11-12.2
-
 The skills hold the procedure. This file holds only the values they look up, under the headings below. Keep the headings stable: skills cite them by name.
 
 ## Tracker
@@ -54,10 +52,6 @@ Not used. Leave every issue at **No priority**.
 - **Decision types:** `wayfinder:research`, `wayfinder:grilling`, `wayfinder:prototype`, `wayfinder:task`.
 - **Retired, never apply:** `ready-for-agent`, `ready-for-human`, `needs-triage`, `needs-info`, `wontfix`, `wayfinder:map`, the `Repo` group, and the `Conductor`, `Linear/Codex`, `Linear/Cursor` and `Orca/Cursor` dispatch targets. Any other label with `retiredAt` is retired too.
 
-## Templates
-
-- **Implementation issues:** `Clear issue` (team-scoped).
-
 ## Tool stack
 
 A Linear document lists the services McWestling uses. **(default)** marks the one new products use when a row offers a choice. A linked service has its own page with setup details. Read it before choosing infrastructure for a product.
@@ -86,26 +80,7 @@ Each product has an initiative with the same name as its Product label. Its desc
 
 The label records where the work was dispatched from, not where the session runs or which model ran. Set it when work starts: a session with any `ORCA_*` environment variable set is `Orca`. An issue's `[target=]` tag is the plan when it differs from the default; the label records what actually ran.
 
-**Default target:** `Orca`, for every model below. Never suggest a legacy target.
-
-## Preferred models
-
-**Checked:** 2026-11-10, against the vendor pages under Sources. Re-check when this date is over 90 days old or a listed model retires.
-
-| Model            | Level      | Effort          | Use it for                                                                     |
-| ---------------- | ---------- | --------------- | ------------------------------------------------------------------------------ |
-| Claude Opus 5.5  | `deep`     |                 | Judgment-heavy, cross-cutting or ambiguous work; the maintainer in the session |
-| Claude Fable 5.2 | `deep`     |                 | Long-horizon or hardest work, when Opus 5.5 at higher effort falls short       |
-| GPT-6 Astra      | `deep`     |                 | Hardest end-to-end work in Codex, when GPT-6.1 Sol falls short                 |
-| GPT-6.1 Sol      | `standard` |                 | Complex implementation and agentic work                                        |
-| GPT-6 Luna       | `light`    | `high` or above | Focused, pattern-following tickets                                             |
-
-A blank effort means the agent's default. One model can serve two levels at different efforts; see Runner config in the [issue format contract](issue-format.md#runner-config).
-
-**Sources:**
-
-- Claude: <https://platform.claude.com/docs/en/about-claude/models/overview>
-- Codex: <https://learn.chatgpt.com/docs/models.md>
+**Default target:** `Orca`. Never suggest a legacy target.
 
 ## Views
 

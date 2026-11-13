@@ -1,6 +1,6 @@
 ---
 name: do-triage
-description: Work the issue tracker's Triage queue with the user. Survey related work, gather related captures into clusters, and route each cluster to a decline, a duplicate, an existing map, a ready implementation issue, or a new stub map for do-refine. Each run also offers to clear parent links on open issues.
+description: Work the issue tracker's Triage queue with the user. Survey related work, gather related captures into clusters, and route each cluster to a decline, a duplicate, an existing map, a ready implementation issue, or a new stub map for do-refine.
 disable-model-invocation: true
 ---
 
@@ -8,17 +8,11 @@ Triage holds raw captures nobody has reviewed yet: muses, bugs and follow-ups, o
 
 Triage **routes**; it doesn't plan. Wanted work leaves in one of two ways: into a **map** (a project, new or existing) or as a ready **implementation issue** with no project. There is no "leave it in Backlog" route. Projects are maps only, so an accepted issue with no project is indistinguishable from an unreviewed muse and comes back next triage. Bugs take the same routes; the Bug label marks an item's type, not an exemption. A cluster that needs real planning leaves as a stub map for a later `do-refine` session. Only an item that one or two questions can settle is refined all the way to ready here.
 
-This skill is one of the factory's `do-` skills and expects its siblings to be installed alongside it. It uses `do-refine`'s [brief-template.md](../do-refine/brief-template.md) and [dispatch-gates.md](../do-refine/dispatch-gates.md), and the map shape in [do-refine's SKILL.md](../do-refine/SKILL.md).
+This skill is one of the factory's `do-` skills and expects its siblings to be installed alongside it. It uses `do-refine`'s [brief-template.md](../do-refine/brief-template.md) and [dispatch-gates.md](../do-refine/dispatch-gates.md), and the map and ticket shapes in its [maps.md](../do-refine/maps.md).
 
 ## Workspace values
 
-This skill holds the procedure. The values (team, statuses, labels, templates, initiatives, routing, dispatch targets, models, views, comment shape) live in the repo's **tracker doc**. Find it through `AGENTS.md`, which names either a path in this repo or a doc in another repo (like `docs/issue-tracker.md` in `owner/name`); read another repo's doc from its checkout, found through `orca repo list --json`. If `AGENTS.md` names none, use `docs/issue-tracker.md`. Read it before you touch the tracker. Where this file says "per X", X is a heading in that doc.
-
-If a value you need is missing, ask the user, use their answer, then offer to add it to the tracker doc or to run `do-repo-setup`.
-
-Read and write the tracker only through the access the tracker doc's **Tracker** heading allows. If that access is unavailable or unauthorized, stop and say so; don't fall back to a browser, desktop app or raw API.
-
-**Asking.** Ask with AskUserQuestion where the client has it (multiSelect when picking several items, up to 4 questions per call), otherwise in chat.
+Workspace values live in the **tracker doc**: the file `AGENTS.md` names, or `docs/issue-tracker.md`. A doc in another repo is read from that repo's checkout, found through `orca repo list --json`. Read it once, before you touch the tracker; "per X" cites a heading in it. If a value you need is missing, ask the user, then offer to add it to the doc or to run `do-repo-setup`. Reach the tracker only through the doc's **Tracker** access; if that is unavailable or unauthorized, stop and say so rather than fall back to a browser, desktop app or raw API.
 
 **Names, not ids.** Refer to issues and maps by title in everything the user reads, with the id or link inside the name. Link projects only with URLs the tracker returns when you create or fetch them; guessed project URLs break.
 
@@ -32,7 +26,7 @@ Read and write the tracker only through the access the tracker doc's **Tracker**
 
 **Loose muses.** A Backlog issue with no project and no triage comment skipped this process, bugs included. List them by name, warn the user, and ask which go back to Triage. Move only the ones picked, post the **Back to Triage** comment per **Comment shape** on each (reason: a loose muse found during triage review), and add them to the queue.
 
-**Parent links.** Issues are flat per **Team**, so sweep on every run, whatever the scope. `list_issues` has no has-parent filter: list the team's issues in each open status per **Issue statuses**, through every page, requesting the `id`, `title` and `parentId` fields, and keep the ones with a `parentId`. If any turn up, list them by name with their parents and ask whether to clear all of them, pick which, or leave them. Clear only the ones the user picks (`parentId: null`).
+**Parent links.** Issues are flat per **Team**. Sweep for parent links only when the user asks. `list_issues` has no has-parent filter: list the team's issues in each open status per **Issue statuses**, through every page, requesting the `id`, `title` and `parentId` fields, and keep the ones with a `parentId`. If any turn up, list them by name with their parents and ask whether to clear all of them, pick which, or leave them. Clear only the ones the user picks (`parentId: null`).
 
 ## 2. Survey
 
@@ -70,13 +64,13 @@ Ask the user, recommended route first, marked "(Recommended)", with context in t
 
 ### Write an implementation issue
 
-Write the body from [brief-template.md](../do-refine/brief-template.md), applying the implementation template under **Templates** when there is one: the front door, the level tag and reason (plus model pin and target only when needed), the repo tag, acceptance criteria, and the template's **Lifecycle** text. End the Context with the **Touches:** line, listing the directories and files from the code survey. Then check it against [dispatch-gates.md](../do-refine/dispatch-gates.md); if it fails a gate other than open blockers, it isn't ready: route it to a map instead.
+Write the body from [brief-template.md](../do-refine/brief-template.md): the front door, the level tag and reason (plus model pin and target only when needed), the repo tag, acceptance criteria, and the template's **Lifecycle** text. End the Context with the **Touches:** line, listing the directories and files from the code survey. Then check it against [dispatch-gates.md](../do-refine/dispatch-gates.md); if it fails a gate other than open blockers, it isn't ready: route it to a map instead.
 
 **Items that already carry a full brief** (written to an older template): reshape them to the current template, drop dependencies that have since shipped, and keep the old body at the bottom under `## Origin`.
 
 ### Rewrite a capture as a map ticket
 
-Keep the issue, so its history and the user's words come with it; change only its body and labels (see the labels rule above). Use the ticket shapes in [do-refine's SKILL.md](../do-refine/SKILL.md):
+Keep the issue, so its history and the user's words come with it; change only its body and labels (see the labels rule above). Use the ticket shapes in [maps.md](../do-refine/maps.md):
 
 - **Decision ticket:** one plain sentence, then `## Question`, with a `wayfinder:<type>` label, in the ready status.
 - **Implementation issue:** the brief [above](#write-an-implementation-issue), no `wayfinder:` label, in the ready status.
@@ -87,7 +81,7 @@ Either way, read the map's current tickets and their order first, then wire `blo
 
 Triage makes the map; a separate `do-refine` session charts it. Charting is a whole session, so don't start it here.
 
-- Create the project with a one-sentence summary, an emoji icon that fits the subject, the product's initiative per **Initiatives**, the stub status per **Project statuses** (never a charted one), and the description shape from do-refine's [Maps](../do-refine/SKILL.md#maps) section, Product line included.
+- Create the project with a one-sentence summary, an emoji icon that fits the subject, the product's initiative per **Initiatives**, the stub status per **Project statuses** (never a charted one), and the description shape from [maps.md](../do-refine/maps.md), Product line included.
 - **Destination:** a one- or two-line draft, marked `Draft — confirm when charting`.
 - **Notes:** `Stub from triage on YYYY-MM-DD; chart with do-refine.`, plus anything the user said while routing. Link related maps, and name any map you considered and ruled out, with the reason.
 - **Not yet specified:** one line per absorbed capture, linking it.

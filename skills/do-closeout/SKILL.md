@@ -6,15 +6,11 @@ disable-model-invocation: true
 
 Run this at the end of a thread, before the user closes it. It answers one question: **is this closed out, and is the user good to close the thread?** It finishes the issue's closeout, so the user doesn't have to ask for each step.
 
-This skill is one of the factory's `do-` skills and expects its siblings to be installed alongside it. It reads map rules from `do-refine`'s [Maps section](../do-refine/SKILL.md#maps).
-
-**Asking.** Ask with AskUserQuestion where the client has it (multiSelect when picking several items, up to 4 questions per call), otherwise in chat.
+This skill is one of the factory's `do-` skills and expects its siblings to be installed alongside it. It reads map rules from `do-refine`'s [maps.md](../do-refine/maps.md).
 
 ## Workspace values
 
-This skill holds the procedure. The tracker values (statuses, views, repo routing, comment shape, PR rules) live in the repo's **tracker doc**. Find it through `AGENTS.md`, which names either a path in this repo or a doc in another repo (like `docs/issue-tracker.md` in `owner/name`); read another repo's doc from its checkout, found through `orca repo list --json`. If `AGENTS.md` names none, use `docs/issue-tracker.md`. Read it before you touch the tracker. Where this file says "per X", X is a heading in that doc.
-
-Read and write the tracker only through the access the tracker doc's **Tracker** heading allows. If that access is unavailable, say so, skip the tracker check and mark it open in the verdict.
+Workspace values live in the **tracker doc**: the file `AGENTS.md` names, or `docs/issue-tracker.md`. A doc in another repo is read from that repo's checkout, found through `orca repo list --json`. Read it once, before you touch the tracker; "per X" cites a heading in it. Reach the tracker only through the doc's **Tracker** access. If that access is unavailable, say so, skip the tracker check and mark it open in the verdict.
 
 ## 1. Find the issue
 
@@ -36,7 +32,7 @@ Fetch the issue, its comments, and the PR linked to it or opened from its branch
 2. The merged PR is linked on the issue.
 3. The acceptance criteria that the merged change meets are checked off. Read the diff to decide; don't tick a criterion you can't confirm.
 4. A completion comment with a dateline per **Comment shape**: what landed, and any follow-ups. Post it even when automation already set the issue done; it's the record that closeout ran. Skip it only if one is already there.
-5. If the issue sits on a map, update the map per do-refine's Maps section. Set the map to its finished status only when its Destination is reached and no open issues remain.
+5. If the issue sits on a map, update the map per [maps.md](../do-refine/maps.md). Set the map to its finished status only when its Destination is reached and no open issues remain.
 
 **Partial landing.** If only some criteria landed, don't set the done status. The issue stays in progress, with a comment saying what landed and what remains.
 
@@ -109,7 +105,7 @@ Pick one ticket, read-only; change nothing in the tracker:
 2. Otherwise, the top issue in the `Factory: Ready` view per **Views** with the same Product label.
 3. If neither has one, say so in one line and stop.
 
-Print **Suggested next ticket** with the ticket's name and link, then the prompt to paste into a fresh session, then where to run it:
+Print **Suggested next ticket** with the ticket's name and link, then one line telling the user to start a fresh session for it instead of continuing this thread, then the prompt to paste there, then where to run it:
 
 - **Implementation issue:** the **Kickoff prompt** per **Comment shape**. Under it, the issue's repo (its repo tag, or per **Repo routing**) and its `[level=]` tag, plus `[model=]` when present.
 - **Decision ticket** (a `wayfinder:` label): `/do-refine <map URL>` in a fenced `text` block, using the map URL the tracker returns, with the repo it routes to.

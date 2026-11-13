@@ -338,30 +338,6 @@ class FactoryVerifierTests(unittest.TestCase):
         self.assertIn("PASS first", output)
         self.assertTrue(lock_path.exists())
 
-    def test_isolated_skill_delivery_and_repeatable_update(self):
-        installed = self.root.parent / "installed-skill"
-        shutil.copytree(SCRIPT.parents[2] / "skills/do-repo-setup", installed)
-        self.assertFalse((installed.parent / "packages").exists())
-        bundled = installed / "verifier/factory-verifier"
-        delivered = self.root / "scripts/factory-verifier"
-        delivered.parent.mkdir()
-        self.write_contract('''version = 1
-[checks.smoke]
-run = "printf delivered"
-paths = ["**"]
-''')
-        for _ in range(2):
-            shutil.copy2(bundled, delivered)
-            self.assertTrue(os.access(delivered, os.X_OK))
-            result = subprocess.run([str(delivered), "run", "smoke"], cwd=self.root,
-                                    env=self.env, text=True, capture_output=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout, "delivered")
-            self.assertEqual(delivered.read_bytes(), SCRIPT.read_bytes())
-        delivered.write_text("stale")
-        shutil.copy2(bundled, delivered)
-        self.assertEqual(delivered.read_bytes(), SCRIPT.read_bytes())
-
     def test_local_field_keeps_hosted_plan_and_run(self):
         self.write_contract('version = 1\n[checks.hosted]\nrun = "printf hosted"\npaths = ["**"]\nlocal = false\n')
         self.assertEqual(json.loads(self.verifier("plan", "--all").stdout)["checks"], ["hosted"])
