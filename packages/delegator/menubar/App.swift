@@ -176,11 +176,7 @@ private struct RunnerMenu: View {
         if let watches = runner.status.snapshot?.watching, !watches.isEmpty {
             Section("Waiting for a PR") {
                 ForEach(Array(watches.enumerated()), id: \.offset) { item in
-                    let watch = item.element
-                    HStack {
-                        Text(watch.identifier)
-                        if let date = isoDate(watch.since) { Text(date, style: .relative) }
-                    }
+                    Text("\(item.element.identifier) · \(relativeTime(item.element.since, now: .now))")
                 }
             }
         }
@@ -191,7 +187,7 @@ private struct RunnerMenu: View {
             Menu("Recent") {
                 ForEach(Array(recent.enumerated()), id: \.offset) { item in
                     let entry = item.element
-                    Text("\(entry.identifier ?? "Unknown") · \(entry.outcome) · \(isoDate(entry.time).map { RelativeDateTimeFormatter().localizedString(for: $0, relativeTo: .now) } ?? entry.time)")
+                    Text("\(entry.identifier ?? "Unknown") · \(entry.outcome) · \(relativeTime(entry.time, now: .now))")
                 }
             }
         }
