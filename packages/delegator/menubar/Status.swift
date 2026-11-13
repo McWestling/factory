@@ -78,6 +78,12 @@ extension RunnerSnapshot {
     }
 }
 
+/// A fixed string, worked out once per render. `Text(date, style: .relative)` must not be used in the menu:
+/// its self-scheduled updates re-render the `.menu` MenuBarExtra in a loop and crash the app.
+func relativeTime(_ iso: String, now: Date) -> String {
+    isoDate(iso).map { RelativeDateTimeFormatter().localizedString(for: $0, relativeTo: now) } ?? iso
+}
+
 func isoDate(_ value: String) -> Date? {
     let formatter = ISO8601DateFormatter()
     if let date = formatter.date(from: value) { return date }

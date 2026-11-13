@@ -35,6 +35,9 @@ enum StatusCheck {
         assert(draining.snapshot!.state(paused: false) == .working("ABC-123"))
         let refreshed = idle.replacingOccurrences(of: "2026-01-15T08:00:00Z", with: "2026-01-15T08:00:05Z")
         assert(initial == runnerState(json: Data(refreshed.utf8), launchAgentLoaded: true, now: now.addingTimeInterval(5)))
+        assert(relativeTime("2026-01-15T07:00:00Z", now: now) == "1 hour ago")
+        assert(relativeTime("2026-01-15T06:59:59.877Z", now: now) == "1 hour ago")
+        assert(relativeTime("not a date", now: now) == "not a date")
         assert(initial != runnerState(json: Data(idle.replacingOccurrences(of: "\"paused\":false", with: "\"paused\":true").utf8), launchAgentLoaded: true, now: now))
     }
 }
