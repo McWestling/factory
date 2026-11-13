@@ -15,7 +15,7 @@ Every PR body a factory skill writes follows this template, unless the repo has 
 - **Short form:** for tiny PRs, where nothing changes at runtime and reverting is trivial (a docs fix, a pinned dev tool, a typo).
 - **Full form:** everything else.
 
-Skill or template text that agents follow counts as a runtime change: agents run it. A change that migrates other repos' files (a setup changelog entry, say) is never trivial to revert, since a revert here won't undo what already ran there.
+Skill or template text that agents follow counts as a runtime change: agents run it. A change that migrates other repos' files (a tracker template change, say) is never trivial to revert, since a revert here won't undo what already ran there.
 
 ## Short form
 

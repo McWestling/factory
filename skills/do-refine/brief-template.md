@@ -61,7 +61,6 @@ See the [issue format contract](../../docs/issue-format.md).
 ## Filling it in
 
 - **What this is / Status / Next** form the front door: a reader should understand the issue without knowing the project. When the scope changes, update Status and Next together. History goes in comments, not in new dated sections of the description.
-- **Model freshness:** check the **Checked** date under **Preferred models** against its re-check rule. If it is due, or a listed model has retired, re-read its **Sources** and propose an update to the user (new rows, retired rows, a new Checked date) before suggesting a model.
 - **Level:** always write `[level=light|standard|deep]`, choosing by difficulty and risk: `light` for mechanical or pattern-following work, `standard` for normal implementation, and `deep` for cross-cutting, ambiguous or hard-debugging work. Write the word, not the digit.
 - **Model pin:** add `[model=<name>]` only when the work needs that model's strength, and explain why in the reason sentence. Otherwise omit it.
 - **Target:** add `[target=<label>]` only when it differs from the **Default target** in the tracker doc. The Dispatch target label records what actually ran.
@@ -70,4 +69,4 @@ See the [issue format contract](../../docs/issue-format.md).
 - **Verification:** use the repo's own check command, from its `AGENTS.md` or README.
 - **Lifecycle:** use the status names from **Issue statuses**. If the repo has no PR automation (see the review rule in its `AGENTS.md`), say who marks the PR ready and merges.
 
-Decision tickets don't use this template; see the Tickets section of `SKILL.md`.
+Decision tickets don't use this template; see [maps.md](maps.md).

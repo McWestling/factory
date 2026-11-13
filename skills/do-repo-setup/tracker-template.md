@@ -1,0 +1,149 @@
+# Tracker doc template
+
+The tracker doc `do-repo-setup` writes. Step numbers below are steps in [SKILL.md](SKILL.md). Slots are `{{…}}`. Fill them from Linear; everything else is copied exactly, including the `<…>` placeholders in the comment shape and pull request lines. Where a slot is a table row or list item, repeat it for each match, in the order given.
+
+- `{{workspace}}`, `{{team}}`, `{{KEY}}`: the workspace name, team name and team key.
+- **Issue status rows:** one row per team status, in workflow order, using the meaning from this table. A status not in it gets the meaning the user gave in step 3.
+
+  | Status        | Meaning                                                                                                                      |
+  | ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+  | `Triage`      | Captured, not yet reviewed. Default for new issues.                                                                          |
+  | `Backlog`     | In a map but not ready yet.                                                                                                  |
+  | `Todo`        | Ready. Blockers still decide whether work can start.                                                                         |
+  | `In Progress` | Claimed, including draft PRs.                                                                                                |
+  | `In Review`   | PR out of draft and ready to merge. A draft PR stays `In Progress`. Set only by Linear's GitHub automation, never by agents. |
+  | `Done`        | Decision resolved, or PR merged.                                                                                             |
+  | `Canceled`    | Declined or won't do.                                                                                                        |
+  | `Duplicate`   | Duplicate of another issue.                                                                                                  |
+
+- `{{decision labels}}`: the team's `wayfinder:` labels that exist, in this order: `wayfinder:research`, `wayfinder:grilling`, `wayfinder:prototype`, `wayfinder:task`. Each in backticks, comma-separated.
+- `{{retired labels}}`: in this order, comma-separated: the retired labels among `ready-for-agent`, `ready-for-human`, `needs-triage`, `needs-info`, `wontfix`, `wayfinder:map` (in that order); then each retired label group as "the `<name>` group"; then retired Dispatch target labels, always including `Linear/Cursor`, alphabetically, as "and the `A`, `B` and `C` dispatch targets".
+- `{{tool stack}}`: the Linear document titled exactly `Tool Stack`, as `[Tool Stack](<url>)`. If there is none, write `None yet` and don't ask.
+- **Dispatch target rows:** one row per active label in the Dispatch target group, in this table's order, then any others with the meaning the user gave in step 3.
+
+  | Label           | Use it when                                                                      |
+  | --------------- | -------------------------------------------------------------------------------- |
+  | `Orca`          | Dispatched from Orca                                                             |
+  | `Claude`        | Claude Code outside Orca                                                         |
+  | `Codex`         | Codex outside Orca                                                               |
+  
+- `{{orca rule}}`: if there is an `Orca` label, ": a session with any `ORCA_*` environment variable set is `Orca`"; otherwise nothing.
+- `{{default target}}`: `Orca` if that label exists; otherwise the user's answer in step 3.
+
+```markdown
+# Issue tracker
+
+This is {{workspace}}'s config. Other repos point to it from their `AGENTS.md` instead of keeping a copy.
+
+The skills hold the procedure. This file holds only the values they look up, under the headings below. Keep the headings stable: skills cite them by name.
+
+## Tracker
+
+- **Tool:** Linear, workspace **{{workspace}}**.
+- **Access:** Linear MCP only.
+
+## Team
+
+- **Name:** {{team}}
+- **Key:** `{{KEY}}` (issue ids look like `{{KEY}}-<number>`)
+- **Scope:** the one team holds every product and company issue.
+- **Flat issues:** issues have no parents, including follow-ups. Link related work as related instead.
+
+## Issue statuses
+
+| Status        | Meaning                                                                                                                      |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+{{issue status rows}}
+
+## Project statuses
+
+| Status      | Meaning                                                                       |
+| ----------- | ----------------------------------------------------------------------------- |
+| `Uncharted` | Stub map from triage, not yet charted                                         |
+| `Idea`      | Charted with a Destination; decisions still open, nothing sliced              |
+| `Planned`   | Enough decisions made that implementation issues are sliced or ready to slice |
+| `Ongoing`   | Work has started                                                              |
+| `Done`      | Destination reached                                                           |
+| `Won't Do`  | Abandoned                                                                     |
+
+## Priority
+
+Not used. Leave every issue at **No priority**.
+
+## Labels
+
+- **Product** (group, single-select): the product an issue belongs to; matches its initiative.
+- **Dispatch target** (group, single-select): the tool doing the work. See [Dispatch targets](#dispatch-targets).
+- **Bug:** a concrete defect. A Triage item without it is a muse.
+- **Decision types:** {{decision labels}}.
+- **Retired, never apply:** {{retired labels}}. Any other label with `retiredAt` is retired too.
+
+## Tool stack
+
+A Linear document lists the services {{workspace}} uses. **(default)** marks the one new products use when a row offers a choice. A linked service has its own page with setup details. Read it before choosing infrastructure for a product.
+
+- **Document:** {{tool stack}}.
+
+## Initiatives
+
+Each product has an initiative with the same name as its Product label. Its description opens with a `Repo:` line; see [Repo routing](#repo-routing). Company work has no product initiative.
+
+## Repo routing
+
+- **Source:** each product initiative's description opens with exactly `Repo: owner/name`, or `Repo: none` for a product with no repo yet. Several products may share a repo. This is the only product-to-repo mapping.
+- **On the issue:** a `` `[repo=owner/name]` `` tag in the issue description, written as a code span. Linear escapes bare brackets to `\[repo=…\]`, which also counts. It overrides everything else.
+- **Lookup:** Product label → the initiative with the same name → its `Repo:` line. One hop; never inferred from anything else.
+- **Cross-check:** PRs already linked to other issues of the same product. A mismatch stops the work.
+- **Unresolved:** no tag and `Repo: none` (or no `Repo:` line). There is no default repo.
+
+## Dispatch targets
+
+| Label           | Use it when                                                                      |
+| --------------- | -------------------------------------------------------------------------------- |
+{{dispatch target rows}}
+
+The label records where the work was dispatched from, not where the session runs or which model ran. Set it when work starts{{orca rule}}. An issue's `[target=]` tag is the plan when it differs from the default; the label records what actually ran.
+
+**Default target:** `{{default target}}`. Never suggest a legacy target.
+
+## Views
+
+The factory expects exactly these shared views on the `{{KEY}}` team. Keep them, and find them by exact name with `list_custom_views`.
+
+| View                  | Kind     | Filters                                                                                                                                       |
+| --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Factory: Maps`       | Projects | Project status not `Done` or `Won't Do`; grouped by initiative (product), sub-grouped and ordered by project status                           |
+| `Factory: Decisions`  | Issues   | Status `Todo`, no assignee, not blocked, a `wayfinder:` label, in a project                                                                   |
+| `Factory: Ready`      | Issues   | Status `Todo`, no assignee, not blocked, no `wayfinder:` label; grouped by Product, then project                                              |
+| `Factory: Agent Work` | Issues   | Status `In Progress` or `In Review`, and either delegated to an agent or carrying a `Dispatch target` label; grouped by Product, then project |
+| `Factory: All Work`   | Issues   | Status `In Progress` or `In Review`                                                                                                           |
+
+## Triage
+
+- **Queue:** every `{{KEY}}` issue in `Triage`, across all products.
+- **Look-back:** survey Done and Canceled issues from the last 90 days.
+
+## Comment shape
+
+| Element            | Markdown                 | Notes                   |
+| ------------------ | ------------------------ | ----------------------- |
+| Dateline           | `YYYY-MM-DD —` summary   | First line of a comment |
+| Section label      | `**Label:**` text        | Bold label inline       |
+| Paths, keys, enums | `` `like-this` ``        | Monospace               |
+| Bullets            | `- item` on its own line | Standard list           |
+| Steps              | `1. item`                | Numbered line           |
+
+Datelines in use:
+
+- **Triage route:** `YYYY-MM-DD — Triage: <Route>. <reason>. <links>`
+- **PR opened:** `YYYY-MM-DD — PR opened: <link>`
+- **Back to Triage:** `YYYY-MM-DD — Back to Triage: <reason>.`
+- **Decision resolved:** a `## Resolution (YYYY-MM-DD)` heading
+- **Kickoff prompt:** a fenced `text` block holding only `/do-implement {{KEY}}-<number>`, with no lead-in. Any explanation goes outside the block.
+
+## Pull requests
+
+- **Title:** a plain imperative subject ending with the issue id in parentheses, like `Fix the login redirect bug ({{KEY}}-<number>)`.
+- **Branch:** the issue's Linear branch name (`gitBranchName` from `get_issue`), or the branch the host already made for the issue when its name contains the issue id. Linear builds the prefix for whoever asks, and the prefix shows whether a delegated agent or a person did the work, so keep the host's branch rather than renaming it. Never invent or prefix one yourself.
+- **Review:** each repo's `AGENTS.md` holds its own review rule: whether it has a PR autopilot, and who marks PRs ready and merges.
+```
