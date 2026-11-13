@@ -26,6 +26,10 @@ private final class RunnerModel: ObservableObject {
 
     var paused: Bool { FileManager.default.fileExists(atPath: stateDirectory.appending(path: "paused").path) }
 
+    var state: RunnerState {
+        status.snapshot?.state(paused: paused) ?? (paused ? .off : status.state)
+    }
+
     init() {
         refresh()
         Task { @MainActor in
@@ -67,6 +71,7 @@ private final class RunnerModel: ObservableObject {
             if !value { _ = FileManager.default.createFile(atPath: flag.path, contents: Data(), attributes: [.posixPermissions: 0o600]) }
             else if paused { try FileManager.default.removeItem(at: flag) }
         } catch { actionError = error.localizedDescription; return }
+        objectWillChange.send()
         if value && !runnerLoaded { run("--start-runner") } else { refresh() }
     }
 
@@ -158,7 +163,7 @@ private struct RunnerMenu: View {
     @ObservedObject var runner: RunnerModel
 
     var body: some View {
-        Text(runner.status.state.line)
+        Text(runner.state.line)
         if let current = runner.status.snapshot?.current {
             Section("Current job") {
                 Text(current.identifier)

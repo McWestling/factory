@@ -64,14 +64,18 @@ func runnerState(json: Data?, launchAgentLoaded: Bool, now: Date) -> RunnerStatu
           let updatedAt = isoDate(snapshot.updatedAt), now.timeIntervalSince(updatedAt) <= 30 else {
         return RunnerStatus(state: launchAgentLoaded ? .starting : .off, snapshot: nil)
     }
-    let state: RunnerState
-    if snapshot.paused { state = snapshot.current == nil ? .off : .turningOff }
-    else if let current = snapshot.current { state = .working(current.identifier) }
-    else if snapshot.inbox.status != "ok" { state = .cloudInboxUnreachable }
-    else if !snapshot.watching.isEmpty { state = .waiting }
-    else if snapshot.lastError != nil { state = .failed }
-    else { state = .ready }
-    return RunnerStatus(state: state, snapshot: snapshot)
+    return RunnerStatus(state: snapshot.state(paused: snapshot.paused), snapshot: snapshot)
+}
+
+extension RunnerSnapshot {
+    func state(paused: Bool) -> RunnerState {
+        if paused { return current == nil ? .off : .turningOff }
+        if let current { return .working(current.identifier) }
+        if inbox.status != "ok" { return .cloudInboxUnreachable }
+        if !watching.isEmpty { return .waiting }
+        if lastError != nil { return .failed }
+        return .ready
+    }
 }
 
 func isoDate(_ value: String) -> Date? {
