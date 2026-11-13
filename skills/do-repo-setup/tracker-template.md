@@ -41,6 +41,7 @@ The skills hold the procedure. This file holds only the values they look up, und
 
 - **Tool:** Linear, workspace **{{workspace}}**.
 - **Access:** Linear MCP only.
+- **Tools:** {{tracker tools}}.
 
 ## Team
 
