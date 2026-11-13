@@ -170,7 +170,7 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
   }
   try { await deps.exec('launchctl', ['bootout', service], 60_000); } catch {}
   if (!await wait(10, async () => await pid() === null)) {
-    return fail(`failed. The new Runner didn't confirm it started, and it couldn't be stopped, so both bundles were left in place: the new one at ${app}, the previous one at ${previous}. To roll back, run \`launchctl bootout ${service}\` until \`launchctl print ${service}\` fails, move the new bundle aside, rename the previous one to ${app}, then choose Start Runner. Don't rerun setup first; it replaces the previous bundle.`);
+    return fail(`failed. The new Runner didn't confirm it started, and it couldn't be stopped, so both bundles were left in place: the new one at ${app}, the previous one at ${previous}. To roll back, run \`launchctl bootout ${service}\` until \`launchctl print ${service}\` fails, move the new bundle aside, rename the previous one to ${app}, then turn the Runner On in the Factory Runner menu. Don't rerun setup first; it replaces the previous bundle.`);
   }
   rmSync(failed, { recursive: true, force: true });
   renameSync(app, failed);

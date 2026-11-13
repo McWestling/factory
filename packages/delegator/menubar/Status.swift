@@ -17,18 +17,18 @@ struct RunnerSnapshot: Decodable {
 }
 
 enum RunnerState: Equatable {
-    case ready, working(String), waiting, paused, cloudInboxUnreachable
-    case failed, stopped, starting
+    case ready, working(String), waiting, turningOff, off, cloudInboxUnreachable
+    case failed, starting
 
     var line: String {
         switch self {
         case .ready: "Runner ready"
         case .working(let id): "Working on \(id)"
         case .waiting: "Waiting for a PR"
-        case .paused: "Paused"
+        case .turningOff: "Turning off after the current job"
+        case .off: "Off"
         case .cloudInboxUnreachable: "Can't reach Cloud Inbox"
         case .failed: "Last job failed"
-        case .stopped: "Runner stopped"
         case .starting: "Starting Runner…"
         }
     }
@@ -38,10 +38,10 @@ enum RunnerState: Equatable {
         case .ready: "checkmark.circle.fill"
         case .working: "gearshape.2.fill"
         case .waiting: "clock.fill"
-        case .paused: "pause.circle.fill"
+        case .turningOff: "gearshape.2.fill"
+        case .off: "stop.circle.fill"
         case .cloudInboxUnreachable: "wifi.exclamationmark"
         case .failed: "exclamationmark.triangle.fill"
-        case .stopped: "stop.circle.fill"
         case .starting: "hourglass"
         }
     }
@@ -66,10 +66,10 @@ func runnerState(json: Data?, launchAgentLoaded: Bool, now: Date) -> RunnerStatu
     let snapshot = json.flatMap { try? JSONDecoder().decode(RunnerSnapshot.self, from: $0) }
     guard let snapshot, snapshot.version == 1,
           let updatedAt = isoDate(snapshot.updatedAt), now.timeIntervalSince(updatedAt) <= 30 else {
-        return RunnerStatus(state: launchAgentLoaded ? .starting : .stopped, snapshot: nil)
+        return RunnerStatus(state: launchAgentLoaded ? .starting : .off, snapshot: nil)
     }
     let state: RunnerState
-    if snapshot.paused { state = .paused }
+    if snapshot.paused { state = snapshot.current == nil ? .off : .turningOff }
     else if let current = snapshot.current { state = .working(current.identifier) }
     else if snapshot.inbox.status != "ok" { state = .cloudInboxUnreachable }
     else if !snapshot.watching.isEmpty { state = .waiting }
