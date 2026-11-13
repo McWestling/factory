@@ -22,6 +22,18 @@ The tool stack and its defaults live in Linear. [`docs/issue-tracker.md`](docs/i
 
 Write scripts in TypeScript by default, run directly with Node (no build step). Use Python 3 with only the standard library for tools that ship into repos regardless of their stack, like [Factory Verifier](https://linear.app/mcwestling/project/factory-verify-00114d9892fe/overview), or when Python's standard library makes the script much simpler, like parsing TOML. Don't add Ruby, or shell scripts longer than a few lines.
 
+## Checks
+
+Run these before every push; all three must pass.
+
+- **Delegator and setup:** `cd packages/delegator && npm test`. It typechecks, then runs every test. If `tsc` is missing, run `npm ci` there first.
+- **Verifier, Python:** `python3 packages/verifier/factory-verifier.test.py`. It needs Python 3.11 or newer. If `python3` is older, look for a newer one before calling it missing, for example `ls /opt/homebrew/bin | grep python3`.
+- **Verifier, Node:** `node --test packages/verifier/autopilot.test.mjs`.
+
+This repo holds Factory Verifier's source but doesn't adopt it: there is no `scripts/factory-verifier` and no preflight to run here. The checks above are the full check.
+
+A test that fails after your change is yours until you show it also fails on `main`.
+
 ## Where things go
 
 The repo is organised by kind of thing. Add a folder only when its first file lands; never commit empty folders.
