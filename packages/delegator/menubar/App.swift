@@ -197,7 +197,7 @@ private struct RunnerMenu: View {
         }
         Divider()
         if runner.runnerInstalled {
-            Toggle(runner.on ? "On" : "Off", isOn: Binding(
+            Toggle("Runner", isOn: Binding(
                 get: { runner.on },
                 set: { runner.turn(on: $0) }
             ))
