@@ -36,7 +36,7 @@ Each machine keeps a `models` map from model names to agent, model identifier an
 ```json
 {
   "levels": {
-    "light": "GPT-6 Luna",
+    "light": "GPT-6.1 Sol",
     "standard": "GPT-6.1 Sol",
     "deep": "Claude Opus 5.5"
   }
