@@ -8,6 +8,7 @@ The skills hold the procedure. This file holds only the values they look up, und
 
 - **Tool:** Linear, workspace **McWestling**.
 - **Access:** Linear MCP only.
+- **Tools:** `mcp__linear__whoami`, `mcp__linear__get_workspace`, `mcp__linear__list_teams`, `mcp__linear__list_issue_statuses`, `mcp__linear__list_issue_labels`, `mcp__linear__save_issue_label`, `mcp__linear__list_initiatives`, `mcp__linear__list_custom_views`, `mcp__linear__list_documents`, `mcp__linear__get_document`, `mcp__linear__list_issues`, `mcp__linear__get_issue`, `mcp__linear__list_comments`, `mcp__linear__save_issue`, `mcp__linear__save_comment`, `mcp__linear__list_projects`, `mcp__linear__get_project`, `mcp__linear__save_project`, and `mcp__linear__save_initiative`. Load these tools by exact name; do not search the tool catalog by keyword.
 
 ## Team
 
