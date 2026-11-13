@@ -2,7 +2,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "setup": "node packages/setup/setup.ts",
-    "menubar": "pkill -x FactoryRunnerMenuBar; open \"$HOME/Applications/Factory Runner.app\""
+    "setup": "node packages/setup/setup.ts"
   }
 }

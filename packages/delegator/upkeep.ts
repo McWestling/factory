@@ -158,15 +158,14 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
       !running ? '' : back ? ` and restarted (pid ${back})` : ' but didn\'t restart; check ~/Library/Logs/factory-delegator'}.`);
   }
   rmSync(drain, { force: true });
-  const reopen = ' Run `npm run menubar` to restart the menu bar app on its new version.';
   if (!running) {
     rmSync(previous, { recursive: true, force: true });
-    return { ok: true, line: `runner: refreshed${existsSync(plist) ? ' and left stopped' : ' the app; no Runner agent is installed'}.${reopen}` };
+    return { ok: true, line: `runner: refreshed${existsSync(plist) ? ' and left stopped' : ' the app; no Runner agent is installed'}.` };
   }
   const started = await start(stoppedAt);
   if (started) {
     rmSync(previous, { recursive: true, force: true });
-    return { ok: true, line: `runner: refreshed and restarted (pid ${running} → ${started}).${reopen}` };
+    return { ok: true, line: `runner: refreshed and restarted (pid ${running} → ${started}).` };
   }
   try { await deps.exec('launchctl', ['bootout', service], 60_000); } catch {}
   if (!await wait(10, async () => await pid() === null)) {

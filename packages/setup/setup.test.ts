@@ -119,6 +119,7 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) 
         if (!m.installed.includes(bins[file]!)) throw fail(`${file}: command not found`);
         return { stdout: '1.0.0' };
       }
+      if (file === 'pkill' || file === 'open') return { stdout: '' };
       if (file === 'swiftc' || call === 'git --version') return { stdout: 'ok' };
       if (call === 'orca --version') { if (!m.orca) throw fail('orca: command not found'); return { stdout: '1.4.0' }; }
       if (file === 'sh' && args.length === 1 && args[0] === join(root, 'packages/delegator/runner/launchd/install.sh')) {
@@ -536,6 +537,8 @@ test('a valid existing config is kept as it is and installed without Inbox quest
   assert.equal(runnerQuestions(mac).length, 1);
   assert.equal(readFileSync(runnerConfig(mac.home), 'utf8'), text);
   assert.match(runnerLine(mac.m.output)!, /installed and connected/);
+  assert.ok(mac.m.calls.includes('pkill -x FactoryRunnerMenuBar'));
+  assert.ok(mac.m.calls.includes('open ' + join(mac.home, 'Applications/Factory Runner.app')));
 });
 
 test('an invalid existing config is refused, never overwritten', async () => {
@@ -821,4 +824,39 @@ test('with nobody at the terminal, read roots are left alone', async () => {
   assert.equal(await mac.run(), 0);
   assert.ok(mac.m.output.includes('read roots: not changed. Run npm run setup at a terminal to choose them.'));
   assert.ok(!existsSync(join(mac.home, '.claude')));
+});
+
+for (const outcome of ['success', 'build failure', 'open failure', 'not running', 'skipped'] as const) test(`menu bar relaunch: ${outcome}`, async () => {
+  const mac = machine();
+  if (outcome !== 'skipped') installApp(mac.home);
+  const exec = mac.m.deps.exec;
+  mac.m.deps.exec = async (file, args, timeout) => {
+    if (file === 'sh' && args[1] === '--build-app' && outcome !== 'build failure') {
+      mac.m.calls.push(`${file} ${args.join(' ')}`);
+      for (const path of ['job.ts', 'parse-issue.ts', 'runner/runner.ts', 'runner/launchd/install.sh', 'runner/launchd/runner.plist', 'menubar/menubar.plist']) {
+        const source = join(mac.root, 'packages/delegator', path);
+        const target = join(args[2]!, 'Contents/Resources', path);
+        mkdirSync(join(source, '..'), { recursive: true });
+        mkdirSync(join(target, '..'), { recursive: true });
+        writeFileSync(source, 'fixture');
+        writeFileSync(target, 'fixture');
+      }
+      const binary = join(args[2]!, 'Contents/MacOS/FactoryRunnerMenuBar');
+      mkdirSync(join(binary, '..'), { recursive: true });
+      writeFileSync(binary, '', { mode: 0o755 });
+      return { stdout: '' };
+    }
+    if (file === 'pkill' || file === 'open') {
+      mac.m.calls.push(`${file} ${args.join(' ')}`);
+      if (file === 'pkill' && outcome === 'not running') throw Object.assign(new Error('no process'), { code: 1 });
+      if (file === 'open' && outcome === 'open failure') throw new Error('open failed');
+      return { stdout: '' };
+    }
+    return exec(file, args, timeout);
+  };
+  assert.equal(await mac.run(), outcome === 'build failure' ? 1 : 0, mac.m.output.join('\n'));
+  const relaunch = mac.m.calls.filter((call) => /^(pkill|open) /.test(call));
+  assert.deepEqual(relaunch, outcome === 'build failure' || outcome === 'skipped' ? []
+    : ['pkill -x FactoryRunnerMenuBar', 'open ' + join(mac.home, 'Applications/Factory Runner.app')]);
+  assert.equal(mac.m.output.some((line) => line.includes('Open ~/Applications/Factory Runner.app by hand.')), outcome === 'open failure');
 });
