@@ -95,7 +95,7 @@ async function watching() {
   await handleJob(config, f.deps, claim);
   f.requests.length = 0;
   f.updates.length = 0;
-  const status = { sessionStatus: 'active', pullRequests: [] as string[] };
+  const status = { sessionStatus: 'active', issueState: 'started', pullRequests: [] as string[] };
   const fetch = f.deps.fetch;
   f.deps.fetch = async (input, init) => {
     const path = new URL(String(input)).pathname;
@@ -1059,4 +1059,34 @@ test('a watch left open logs its session and why', async () => {
     { event: 'watch', session: 'session-1', outcome: 'no-pr-yet' },
     { event: 'watch', session: 'session-1', outcome: 'pr-unconfirmed' },
   ]);
+});
+
+for (const [issueState, body] of [
+  ['canceled', 'Issue canceled; stopped watching.'],
+  ['completed', 'Issue completed; stopped watching. No PR from this launch was recognized.'],
+]) {
+  test(`a ${issueState} issue without a PR ends its watch once`, async () => {
+    const f = await watching();
+    f.status.issueState = issueState!;
+    await watchJobs(config, f.deps);
+    await watchJobs(config, f.deps);
+    assert.deepEqual(f.updates, [['response', body]]);
+    assert.deepEqual(JSON.parse(readFileSync(f.deps.watches, 'utf8')), {});
+  });
+}
+
+test('a verified PR wins over a completed issue', async () => {
+  const f = await watching();
+  f.status.issueState = 'completed';
+  f.status.pullRequests = ['https://github.com/owner/repo/pull/7'];
+  await watchJobs(config, f.deps);
+  assert.deepEqual(f.updates, [['response', 'Opened https://github.com/owner/repo/pull/7.']]);
+  assert.deepEqual(JSON.parse(readFileSync(f.deps.watches, 'utf8')), {});
+});
+
+test('a started issue without a PR keeps its watch before 24 hours', async () => {
+  const f = await watching();
+  await watchJobs(config, f.deps);
+  assert.deepEqual(f.updates, []);
+  assert.ok(JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1']);
 });

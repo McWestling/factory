@@ -256,11 +256,11 @@ function inbox(config: RunnerConfig, deps: Deps) {
     },
     watch: async (claim: Claim) => {
       const value: unknown = await (await call('GET', job(claim, 'watch'))).json();
-      if (!isObject(value) || !isText(value.sessionStatus) || !Array.isArray(value.pullRequests)
+      if (!isObject(value) || !isText(value.sessionStatus) || (value.issueState !== undefined && !isText(value.issueState)) || !Array.isArray(value.pullRequests)
         || !value.pullRequests.every((url) => typeof url === 'string' && /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+(?:[/?#]|$)/.test(url))) {
         throw new Error('cloud-inbox-watch');
       }
-      return value as { sessionStatus: string; pullRequests: string[] };
+      return value as { sessionStatus: string; issueState?: string; pullRequests: string[] };
     },
     link: async (claim: Claim) => {
       const value: unknown = await (await call('POST', job(claim, 'pull-request'))).json();
@@ -465,6 +465,10 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
         if (!['pending', 'active', 'awaitingInput', 'stale'].includes(latest.sessionStatus)) throw new Error('unknown session status');
         if (!latest.pullRequests.includes(url)) { log('pr-unconfirmed'); continue; }
         body = `Opened ${url}.`;
+      } else if (status.issueState === 'canceled') {
+        body = 'Issue canceled; stopped watching.';
+      } else if (status.issueState === 'completed') {
+        body = 'Issue completed; stopped watching. No PR from this launch was recognized.';
       } else if ((deps.now ?? Date.now)() - job.at >= 24 * 60 * 60_000) {
         body = 'No PR after 24 h; check the Orca worktree.';
       } else { log('no-pr-yet'); continue; }
