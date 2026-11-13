@@ -78,22 +78,27 @@ export async function handleWebhook(request: Request, config: Config, machines: 
   if (!/^[0-9a-f]{64}$/i.test(signature)) return reject(401, 'signature');
   const raw = await readBounded(request, MAX_WEBHOOK_BYTES);
   if (!raw) return reject(413, 'too-large');
-  let payload: Payload | null;
+  let payload: Payload;
   try {
     payload = JSON.parse(new TextDecoder().decode(raw));
   } catch {
     return text(400, 'Bad request');
   }
+  if (typeof payload !== 'object' || payload === null) return text(400, 'Bad request');
 
-  const entry = Object.entries(config.machines).find(([, m]) => m.clientId === payload?.oauthClientId);
-  if (!entry) return reject(401, 'unknown-client');
-  const [machine, { webhookSecret }] = entry;
-  if (!(await signatureMatches(webhookSecret, raw, signature))) return reject(401, 'signature');
-  const sent = payload!.webhookTimestamp;
+  // The signature names the machine: data-change events such as `Attachment` carry no
+  // `oauthClientId`. Every secret is tried, so timing doesn't tell which one matched.
+  const machineList = Object.entries(config.machines);
+  const verified = await Promise.all(machineList.map(([, m]) => signatureMatches(m.webhookSecret, raw, signature)));
+  const entry = machineList.find((_, i) => verified[i]);
+  if (!entry) return reject(401, 'signature');
+  const [machine, { clientId }] = entry;
+  if (payload.oauthClientId != null && payload.oauthClientId !== clientId) return reject(401, 'unknown-client');
+  const sent = payload.webhookTimestamp;
   if (typeof sent !== 'number' || Math.abs(now - sent) > TIMESTAMP_WINDOW_MS) return reject(401, 'stale');
-  if (payload!.organizationId !== config.orgId) return reject(403, 'org');
+  if (payload.organizationId !== config.orgId) return reject(403, 'org');
 
-  const { type, action, appUserId, agentSession, agentActivity } = payload!;
+  const { type, action, appUserId, agentSession, agentActivity } = payload;
   if (type !== 'AgentSessionEvent' || (action !== 'created' && action !== 'prompted')) {
     log({ event: 'webhook', machine, outcome: 'ignored' });
     return text(200, 'OK');
