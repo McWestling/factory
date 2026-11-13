@@ -151,7 +151,7 @@ struct FactoryRunnerMenuBarApp: App {
         MenuBarExtra {
             RunnerMenu(runner: runner)
         } label: {
-            let state = !runner.runnerLoaded && !runner.paused ? RunnerState.starting : runner.status.state
+            let state = !runner.runnerLoaded && !runner.paused ? RunnerState.starting : runner.state
             Image(nsImage: factoryIcon(state: state))
                 .accessibilityLabel("Factory: \(state.line)")
         }
@@ -193,7 +193,7 @@ private struct RunnerMenu: View {
         }
         Divider()
         if runner.runnerInstalled {
-            Toggle(runner.on ? "On" : "Off", isOn: Binding(
+            Toggle("Runner", isOn: Binding(
                 get: { runner.on },
                 set: { runner.turn(on: $0) }
             ))

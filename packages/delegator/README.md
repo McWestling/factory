@@ -213,7 +213,7 @@ handles a job, **Waiting for a PR** while it watches a completed session,
 after a failed job. **Off** means the switch is off, or the Runner's LaunchAgent is
 not loaded and its status file is missing or stale.
 
-One **On** / **Off** switch controls the Runner. **Off** lets the current job
+One **Runner** menu item controls the Runner, checked when on and unchecked when off. **Off** lets the current job
 finish, showing **Turning off after the current job** meanwhile, and starts nothing
 new; the Runner stays off across a restart of the Mac. It sets the `paused` flag
 described below; open watches keep being checked. **On** clears
