@@ -13,7 +13,7 @@ Delegator's always-on hosted service, a Cloudflare Worker: it installs each mach
 _Avoid_: relay, proxy, server
 
 **Delegated run**:
-An agent session the Runner launched, with nobody watching it. Its prompt says so on a second line, and `do-implement` then makes default calls instead of stopping to ask, listing them under **Questions along the way**.
+An agent session the Runner launched, with nobody watching it. Its prompt says so on a second line, and `do-implement` then makes default calls instead of stopping to ask, listing them under **Questions along the way**. `do-closeout` runs the after-merge steps it can check without asking and leaves the rest open.
 _Avoid_: unattended run
 
 **Delegator**:

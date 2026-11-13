@@ -1,6 +1,6 @@
 ---
 name: do-closeout
-description: Check that an agent thread is good to close, and finish what's left. Close out the issue after merge, offer to run unticked after-merge and after-pulling steps, report local git state and loose ends, and give a Good to close or Not yet verdict with a next ticket when good to close.
+description: Check that an agent thread is good to close, and finish what's left. Close out the issue after merge, offer to run unticked after-merge and after-pulling steps (or run the checkable ones unattended in a delegated run), report local git state and loose ends, and give a Good to close or Not yet verdict with a next ticket when good to close.
 disable-model-invocation: true
 ---
 
@@ -11,6 +11,17 @@ This skill is one of the factory's `do-` skills and expects its siblings to be i
 ## Workspace values
 
 Workspace values live in the **tracker doc**: the file `AGENTS.md` names, or `docs/issue-tracker.md`. A doc in another repo is read from that repo's checkout, found through `orca repo list --json`. Read it once, before you touch the tracker; "per X" cites a heading in it. Reach the tracker only through the doc's **Tracker** access. If that access is unavailable, say so, skip the tracker check and mark it open in the verdict.
+
+## Delegated runs
+
+A run is **delegated** when its prompt says `Delegated run`. Nobody is in the session, so these rules replace the asking wherever a step names this section. A run without that line follows every step as written, including every **Ask first** rule.
+
+- **No questions.** Never ask. Each item below either runs or stays open.
+- **What runs.** Every unticked **After merge** and **After pulling** step in the PR body, and every after-merge item from the repo's `AGENTS.md`, that has an exact command and a clear pass condition, such as a step's `Pass:` line. The merge counts as approval. These stay open for the maintainer: git actions on the branch or worktree, manual checks, steps on another machine, and steps with no clear pass condition.
+- **After pulling.** Find the main checkout with `orca repo list --json`, matching the PR's remote. Run `git pull --ff-only` there only when all three guards hold: its working tree is clean, it is on the default branch, and it can fast-forward to the remote's default branch. Then run the **After pulling** steps from it. If any guard fails, the pull and every **After pulling** step stay open: no stash, no branch switch. This fast-forward is the only exception to **Never**, and only in delegated runs.
+- **Order and failure.** Run the `AGENTS.md` items, then the **After merge** steps, then the **After pulling** steps, each in checklist order. Stop at the first step that fails its pass condition; that step and every later one stay open. Tick each passed step in the PR body per the [checklist procedure](#pr-after-merge-checklist).
+- **Thread loose ends.** Skip [step 4](#4-thread-loose-ends): a fresh agent has no thread history.
+- **Report.** Post the completion comment after the steps have run, and list every open step under **Still open** in it. Give the usual [verdict](#6-verdict) in the session.
 
 ## 1. Find the issue
 
@@ -47,6 +58,8 @@ Report, and change nothing:
 
 ## 4. Thread loose ends
 
+A delegated run skips this step, per [Delegated runs](#delegated-runs).
+
 Read back through this session for:
 
 - Follow-ups promised but not filed ("I'll file a ticket for…", "worth a follow-up").
@@ -63,11 +76,11 @@ Do whatever the repo's `AGENTS.md` (and the docs it links) asks for after a merg
 
 Read the merged PR's current body with `gh pr view <n> --json body`. Under **What you need to do**, find the **After merge** and **After pulling** checklists, each stopping at the next group or section. A missing section or checklist adds nothing. Ticked boxes (`- [x]` or `- [X]`) count as done; leave them out of **Still open** and don't rerun them.
 
-List unticked steps and ask whether to run the runnable commands now. After the user approves a step:
+List unticked steps and ask whether to run the runnable commands now. A delegated run doesn't ask; it runs the steps [Delegated runs](#delegated-runs) allows, using the procedure below. After the user approves a step:
 
-1. Check the command and its effects against **Never** below. If it would touch git, branches or worktrees, report it for the maintainer instead of running it. Other approved after-merge commands may run; they aren't git actions on the thread's branch. An **After pulling** step runs only from a checkout of the default branch that already includes the merge. If the only such checkout needs a pull first, leave the pull and the step for the maintainer.
-2. Run the command, compare its result with the step's `Pass:` line, and report pass or fail. If the expected result is missing or unclear, ask before treating it as passed. Manual checks and steps on another machine stay for the maintainer.
-3. When a step passes, re-read the PR body, find that same step in the fresh body, and tick only its box. Save the fresh body to a file and use `gh pr edit <n> --body-file <path>`, preserving every other edit. If the step changed or can't be matched confidently, ask rather than overwriting it. If saving fails, report that its completion is still unrecorded.
+1. Check the command and its effects against **Never** below. If it would touch git, branches or worktrees, report it for the maintainer instead of running it. Other approved after-merge commands may run; they aren't git actions on the thread's branch. An **After pulling** step runs only from a checkout of the default branch that already includes the merge. If the only such checkout needs a pull first, leave the pull and the step for the maintainer, unless a delegated run's guards allow the pull, per [Delegated runs](#delegated-runs).
+2. Run the command, compare its result with the step's `Pass:` line, and report pass or fail. If the expected result is missing or unclear, ask before treating it as passed; a delegated run leaves the step open instead. Manual checks and steps on another machine stay for the maintainer.
+3. When a step passes, re-read the PR body, find that same step in the fresh body, and tick only its box. Save the fresh body to a file and use `gh pr edit <n> --body-file <path>`, preserving every other edit. If the step changed or can't be matched confidently, ask rather than overwriting it; a delegated run leaves it unticked and reports it as unrecorded. If saving fails, report that its completion is still unrecorded.
 
 A failed, unrun (including declined), non-runnable or unrecorded step stays under **Still open** and makes the verdict **Not yet**. If the user explicitly dismisses a step as no longer needed, it isn't open; declining to run it now alone isn't dismissal.
 
@@ -76,10 +89,11 @@ A failed, unrun (including declined), non-runnable or unrecorded step stays unde
 - **Fix by yourself:** tracker closeout items only, from [step 2](#2-tracker-closeout).
 - **Ask first:** list the loose ends, doc closeout items and unticked PR after-merge steps, ask about each item with AskUserQuestion where the client has it, otherwise in chat, and do each one only after the user says yes to it. For PR steps, run, verify and record completion per the checklist procedure above. File a follow-up as a new issue in the triage status per **Issue statuses**, linked to this issue as related.
 - **Never:** touch git, branches or worktrees. No commits, pushes, stash drops, branch deletes or worktree removal; report them and let the user act.
+- **Delegated runs:** nobody is asked. Do what [Delegated runs](#delegated-runs) allows and leave the rest open. Its guarded `git pull --ff-only` on the main checkout is the only exception to **Never**.
 
 ## 6. Verdict
 
-Before giving the verdict, ask about any remaining items you can act on per **Ask first**. After each approved action, recheck what is still open and ask the next questions until nothing actionable remains or the user declines or defers it. Then give the verdict below.
+Before giving the verdict, ask about any remaining items you can act on per **Ask first**; a delegated run skips the questions, per [Delegated runs](#delegated-runs). After each approved action, recheck what is still open and ask the next questions until nothing actionable remains or the user declines or defers it. Then give the verdict below.
 
 End with a bold verdict line, then two short bullet lists, as plain Markdown. It isn't a code block; don't fence it.
 
