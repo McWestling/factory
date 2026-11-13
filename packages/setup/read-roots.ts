@@ -1,6 +1,6 @@
 // Read roots: folders setup lets the chosen agents read, repos added beneath them later included. Claude gets scoped
-// `Read(//root/**)` allow rules in its user settings; Codex already reads anywhere. Each agent is then proven with a
-// fresh read of a new probe file. Nothing here grants edit, write or shell access.
+// `Read(//root/**)` allow rules in its user settings; Codex already reads anywhere. With --verify, each agent is then
+// proven with a fresh read of a new probe file. Nothing here grants edit, write or shell access.
 import { randomBytes } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -123,11 +123,17 @@ async function choose(deps: SetupDeps, ask: NonNullable<SetupDeps['ask']>): Prom
   }
 }
 
-/** Grants and proves read access to the chosen roots for each agent; at a terminal only. */
+const CODEX = ' Codex already reads anywhere, so nothing was added.';
+
+/** Grants read access to the chosen roots for each agent, and with --verify proves it; at a terminal only. */
 export async function readRoots(deps: SetupDeps, agents: string[]): Promise<Result[]> {
   if (!deps.ask) return [{ ok: true, line: 'read roots: not changed. Run npm run setup at a terminal to choose them.' }];
   const roots = await choose(deps, deps.ask);
   if (!roots.length) return [{ ok: true, line: 'read roots: none chosen, nothing changed.' }];
+  if (!deps.verify) {
+    return agents.map((name) => name === 'claude' ? grantClaudeReads(join(deps.home, '.claude/settings.json'), roots, deps.home)
+      : { ok: true, line: `read roots (${name}):${CODEX}` });
+  }
   const probes: (Probe & { dir: string })[] = [];
   try {
     // A new folder under each root, made after any grant, shows future repos are covered too.
@@ -158,7 +164,7 @@ export async function readRoots(deps: SetupDeps, agents: string[]): Promise<Resu
             '--output-format', 'stream-json', '--verbose', '--tools', 'Read', '--permission-mode', 'default', '--no-session-persistence']), probes)));
         } else {
           results.push(line(codexReadVerdict(await output('codex', ['exec', '--sandbox', 'read-only', '--ephemeral', '--json', '--skip-git-repo-check',
-            `Print each of these files with cat, then reply with the word done. Do not change any file.\n${list}`]), probes), ' Codex already reads anywhere, so nothing was added.'));
+            `Print each of these files with cat, then reply with the word done. Do not change any file.\n${list}`]), probes), CODEX));
         }
       } catch (error) {
         results.push(line(`couldn't run the check (${(error as Error).message}).`));

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { loadConfig } from '../delegator/runner/runner.ts';
-import { claudeVerdict, codexVerdict, setup, type SetupDeps } from './setup.ts';
+import { claudeVerdict, cliArgs, codexVerdict, setup, type SetupDeps } from './setup.ts';
 import { readRule } from './read-roots.ts';
 
 const HEAD = 'b'.repeat(40);
@@ -54,7 +54,7 @@ const installApp = (home: string) => {
 const PLIST = 'Library/LaunchAgents/com.factory.factory-delegator.runner.plist';
 const PENDING = '.local/state/factory/runner-install-pending';
 
-function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) {
+function machine({ agents = ['claude'], installed = ['claude', 'codex'], verify = true } = {}) {
   // Real, so it matches the resolved paths setup shows and grants.
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'setup-')));
   const root = join(home, 'factory');
@@ -100,7 +100,7 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) 
   const bins: Record<string, string> = { claude: 'claude', codex: 'codex', agent: 'agent' };
   m.deps = {
     home, root, stateDir: join(home, '.local/state/factory'), node: '/usr/bin/node', uid: 501,
-    platform: 'darwin', nodeVersion: '26.7.0', agents,
+    platform: 'darwin', nodeVersion: '26.7.0', agents, verify,
     sleep: async () => {},
     print: (line) => m.output.push(line),
     ask: null,
@@ -821,4 +821,47 @@ test('with nobody at the terminal, read roots are left alone', async () => {
   assert.equal(await mac.run(), 0);
   assert.ok(mac.m.output.includes('read roots: not changed. Run npm run setup at a terminal to choose them.'));
   assert.ok(!existsSync(join(mac.home, '.claude')));
+});
+
+/** A command that starts an agent run, which costs model usage. */
+const agentRuns = (calls: string[]) => calls.filter((call) => /^(claude -p|codex exec) /.test(call));
+
+test('without --verify, setup writes the configuration, launches no agent and says the live checks were skipped', async () => {
+  const mac = machine({ agents: ['claude', 'codex'], verify: false });
+  answer(mac, ['n', '']);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.deepEqual(agentRuns(mac.m.calls), []);
+  assert.ok(!mac.m.calls.some((call) => call.includes('app-server')), 'no Codex skill listing either');
+  assert.deepEqual(JSON.parse(readFileSync(settings(mac.home), 'utf8')).permissions.allow, [readRule(mac.home)], 'still grants the reads');
+  noProbes(mac.home);
+  assert.ok(!mac.m.output.some((line) => /verified/.test(line)), 'never reports a skipped check as passed');
+  assert.equal(mac.m.output.at(-1), 'live checks: skipped. Run npm run setup -- --verify to run them.');
+});
+
+test('without --verify, the exit code reflects the configuration steps only', async () => {
+  const mac = machine({ verify: false });
+  mac.m.claude = claudeRun({ status: 'needs-auth' });
+  mac.m.readDenied = true;
+  answer(mac, ['n', '']);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  mac.m.gh = false;
+  assert.equal(await mac.run(), 1, 'a failed configuration step still fails');
+});
+
+test('with --verify, setup runs the probe reads and each agent\'s check', async () => {
+  const mac = machine({ agents: ['claude', 'codex'], verify: true });
+  answer(mac, ['n', '']);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.deepEqual(agentRuns(mac.m.calls).map((call) => call.split(' ').slice(0, 3).join(' ')), [
+    'claude -p Use', 'codex exec --sandbox', 'claude -p Call', 'codex exec --sandbox']);
+  assert.deepEqual(mac.m.output.filter((line) => /verified/.test(line)).map((line) => line.split(':')[0]),
+    ['read roots (claude)', 'read roots (codex)', 'claude', 'codex']);
+  assert.ok(!mac.m.output.some((line) => /skipped/.test(line)));
+});
+
+test('--verify is read from either position and never taken for an agent', () => {
+  assert.deepEqual(cliArgs(['--verify', 'claude']), { agents: ['claude'], verify: true });
+  assert.deepEqual(cliArgs(['claude', '--verify']), { agents: ['claude'], verify: true });
+  assert.deepEqual(cliArgs(['claude', 'codex']), { agents: ['claude', 'codex'], verify: false });
+  assert.deepEqual(cliArgs([]), { agents: [], verify: false });
 });
