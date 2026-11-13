@@ -146,7 +146,9 @@ struct FactoryRunnerMenuBarApp: App {
         MenuBarExtra {
             RunnerMenu(runner: runner)
         } label: {
-            Label(runner.status.state.line, systemImage: runner.status.state.icon)
+            let state = !runner.runnerLoaded && !runner.paused ? RunnerState.starting : runner.status.state
+            Image(nsImage: factoryIcon(state: state))
+                .accessibilityLabel("Factory: \(state.line)")
         }
         .menuBarExtraStyle(.menu)
     }
@@ -207,4 +209,25 @@ private struct RunnerMenu: View {
         if let error = runner.actionError, !error.isEmpty { Text(error) }
         Button("Quit menu bar app") { NSApplication.shared.terminate(nil) }
     }
+}
+
+// Composite the badge into one template so macOS tints the whole icon for either menu bar style.
+private func factoryIcon(state: RunnerState) -> NSImage {
+    let image = NSImage(size: NSSize(width: 22, height: 18), flipped: false) { _ in
+        NSImage(systemSymbolName: "building.2", accessibilityDescription: nil)?
+            .draw(in: NSRect(x: 0, y: 1, width: 18, height: 16))
+        if let badge = state.badge {
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current?.compositingOperation = .copy
+            NSColor.clear.setFill()
+            NSBezierPath(ovalIn: NSRect(x: 13, y: 0, width: 9, height: 10)).fill()
+            NSGraphicsContext.restoreGraphicsState()
+            NSImage(systemSymbolName: badge, accessibilityDescription: nil)?
+                .draw(in: NSRect(x: 15, y: state.badge == "circle.fill" ? 2 : 1, width: 6, height: state.badge == "circle.fill" ? 6 : 8))
+        }
+        return true
+    }
+    image.isTemplate = true
+    image.accessibilityDescription = "Factory: \(state.line)"
+    return image
 }

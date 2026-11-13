@@ -33,16 +33,12 @@ enum RunnerState: Equatable {
         }
     }
 
-    var icon: String {
+    var badge: String? {
         switch self {
-        case .ready: "checkmark.circle.fill"
-        case .working: "gearshape.2.fill"
-        case .waiting: "clock.fill"
-        case .turningOff: "gearshape.2.fill"
-        case .off: "stop.circle.fill"
-        case .cloudInboxUnreachable: "wifi.exclamationmark"
-        case .failed: "exclamationmark.triangle.fill"
-        case .starting: "hourglass"
+        case .ready, .waiting: nil
+        case .working, .turningOff: "circle.fill"
+        case .off: "pause.fill"
+        case .cloudInboxUnreachable, .failed, .starting: "exclamationmark"
         }
     }
 }
