@@ -151,7 +151,7 @@ struct FactoryRunnerMenuBarApp: App {
         MenuBarExtra {
             RunnerMenu(runner: runner)
         } label: {
-            let state = !runner.runnerLoaded && !runner.paused ? RunnerState.starting : runner.status.state
+            let state = !runner.runnerLoaded && !runner.paused ? RunnerState.starting : runner.state
             Image(nsImage: factoryIcon(state: state))
                 .accessibilityLabel("Factory: \(state.line)")
         }
