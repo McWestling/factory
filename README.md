@@ -59,7 +59,7 @@ Factory is built for McWestling, not as a product: there is no support, and anyt
    npm run setup
    ```
 
-   It installs the Factory skills and the supporting skills for each agent CLI it finds, or only the ones you name (`npm run setup -- claude codex`), lets them read the folders holding your checkouts, then checks each agent can reach Linear and see them.
+   It installs the Factory skills and the supporting skills for each agent CLI it finds, or only the ones you name (`npm run setup -- claude codex`), and lets them read the folders holding your checkouts. Add `--verify` (`npm run setup -- --verify`) to also check each agent can reach Linear and see them.
 
 4. Run `/do-repo-setup` in each of your repos. It points the repo’s `AGENTS.md` at your fork’s tracker doc, and offers to install the supporting skills, dev ports and your Tool Stack’s service commands ([example](skills/do-repo-setup/adding-a-repo.example.toml)).
 5. Optionally, [deploy your own Cloud Inbox](packages/delegator/README.md#set-up-your-cloud-inbox) to delegate work from Linear.
@@ -81,11 +81,12 @@ One command sets up or refreshes Factory on a Mac: `npm run setup`, from a clean
 
 - It checks Git, Node.js, the GitHub CLI and your agent CLIs before changing anything, and installs none of them.
 - It installs or refreshes every Factory skill from the checkout’s `origin`, and the supporting skills in each agent’s existing form: the plugin for a new Claude Code or Codex install, the skills CLI otherwise. Agents you didn’t choose are left alone.
-- At a terminal, it asks which folders the agents may read, so a session in one checkout can read your others. It suggests the folder holding this checkout; you can remove it, or add others, such as where Orca keeps worktrees. Agents can then read every file under those folders, including repos you add later, but get no write or shell access. For Claude Code, it adds `Read(//folder/**)` rules to `~/.claude/settings.json`, writing through a symlink if the file is one. It leaves existing rules alone, and refuses to change a malformed file or one whose rules block those reads. Codex can already read them. Either way, a fresh session must read a new file in each folder before setup passes.
+- At a terminal, it asks which folders the agents may read, so a session in one checkout can read your others. It suggests the folder holding this checkout; you can remove it, or add others, such as where Orca keeps worktrees. Agents can then read every file under those folders, including repos you add later, but get no write or shell access. For Claude Code, it adds `Read(//folder/**)` rules to `~/.claude/settings.json`, writing through a symlink if the file is one. It leaves existing rules alone, and refuses to change a malformed file or one whose rules block those reads. Codex can already read them. With `--verify`, a fresh session must also read a new file in each folder before setup passes.
 - At a terminal, it can optionally guide you through Cloud Inbox and install the Runner on this Mac; see [Install with setup](packages/delegator/README.md#install-with-setup). Once the Runner is installed, the same command safely refreshes it; see [what it checks](packages/delegator/README.md#update-after-merging-factory-changes).
-- It starts each agent fresh to confirm Linear’s MCP `whoami` answers and every skill is discoverable.
+- With `--verify`, it starts each agent fresh to confirm Linear’s MCP `whoami` answers and every skill is discoverable. These live checks cost model usage, so setup skips them without the flag and says so; it then passes once the configuration is written.
 
-It exits non-zero until every step passes; at a terminal, it waits for each fix and checks again. Declining the Runner leaves it and Cloud Inbox untouched, and setup still passes. Setup relaunches the menu bar app after a successful Runner install or update.
+It exits non-zero until every step passes; at a terminal, it waits for each fix to a live check and checks again. Declining the Runner leaves it and Cloud Inbox untouched, and setup still passes. Setup relaunches the menu bar app after a successful Runner install or update.
+
 
 ## Contributing
 

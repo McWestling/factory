@@ -1,11 +1,12 @@
-// `npm run setup`: installs or refreshes Factory on a Mac from this checkout's origin, grants the chosen agents
-// read access to checkout folders, then proves each can reach Linear and discover the skills. Run it again any time to update.
+// `npm run setup`: installs or refreshes Factory on a Mac from this checkout's origin and grants the chosen agents
+// read access to checkout folders. With --verify it also runs paid live checks: each agent must read those folders,
+// reach Linear and discover the skills. Run it again any time to update.
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
-import { promisify } from 'node:util';
+import { parseArgs, promisify } from 'node:util';
 import { loadConfig } from '../delegator/runner/runner.ts';
 import { lastLine, outsideRunner, readJson, updateRunner, withLock, type Result, type UpkeepDeps } from '../delegator/upkeep.ts';
 import { readRoots } from './read-roots.ts';
@@ -15,6 +16,8 @@ export type SetupDeps = UpkeepDeps & {
   nodeVersion: string;
   /** Agents named on the command line; empty means every supported agent CLI found. */
   agents: string[];
+  /** Runs the live checks, which start agent runs that cost model usage. */
+  verify: boolean;
   /** Asks the person at the terminal, hiding the answer when it's secret; null when nobody is there. */
   ask: ((question: string, secret?: boolean) => Promise<string>) | null;
   /** Runs a command attached to the terminal, for steps the person takes part in; resolves whether it exited 0. */
@@ -383,7 +386,7 @@ async function offerRunner(deps: SetupDeps): Promise<Result> {
   return result;
 }
 
-/** Runs setup and returns the exit code: 0 only when every step and every chosen agent's verification passed. */
+/** Runs setup and returns the exit code: 0 only when every step passed, and with --verify every live check too. */
 export async function setup(deps: SetupDeps): Promise<number> {
   if (deps.platform !== 'darwin') { deps.print('setup: refused. Factory setup supports macOS only. Nothing was changed.'); return 1; }
   return withLock(deps, async () => {
@@ -422,9 +425,16 @@ export async function setup(deps: SetupDeps): Promise<number> {
       }
     }
     for (const result of await readRoots(deps, found)) { results.push(result); deps.print(result.line); }
-    for (const name of found) { results.push(await verify(deps, name)); deps.print(results.at(-1)!.line); }
+    if (deps.verify) for (const name of found) { results.push(await verify(deps, name)); deps.print(results.at(-1)!.line); }
+    else deps.print('live checks: skipped. Run npm run setup -- --verify to run them.');
     return results.every((result) => result.ok) ? 0 : 1;
   });
+}
+
+/** Splits the command line into agent names and the --verify flag, in any order. */
+export function cliArgs(args: string[]) {
+  const { values, positionals } = parseArgs({ args, options: { verify: { type: 'boolean', default: false } }, allowPositionals: true });
+  return { agents: positionals, verify: values.verify };
 }
 
 /** Runs a command with stdin closed, so agent CLIs never wait for input. */
@@ -489,7 +499,7 @@ if (process.argv[1] === import.meta.filename) {
     interact: (file, args) => new Promise((done) => {
       spawn(file, args, { stdio: 'inherit' }).on('error', () => done(false)).on('close', (code) => done(code === 0));
     }),
-    agents: process.argv.slice(2),
+    ...cliArgs(process.argv.slice(2)),
     platform: process.platform,
     nodeVersion: process.versions.node,
     home: homedir(),
