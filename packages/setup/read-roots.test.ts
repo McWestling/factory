@@ -147,3 +147,11 @@ test('Codex read verification needs each nonce in a completed command, and no ed
     ['a turn cut short', codex([]).split('\n').slice(0, -1).join('\n'), /without a complete turn/],
   ] as const) assert.match(String(codexReadVerdict(stdout, probes)), message, label);
 });
+
+test('checking existing grants never writes missing grants or ignores invalid settings', () => {
+  for (const text of ['{}', '{', JSON.stringify({ permissions: { allow: ['Read'], deny: ['Read'] } })]) {
+    const h = home(text);
+    assert.equal(grantClaudeReads(h.path, [h.dir], h.dir, true).ok, false);
+    assert.equal(h.read(), text);
+  }
+});

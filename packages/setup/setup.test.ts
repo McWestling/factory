@@ -100,7 +100,7 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'], verify 
   const bins: Record<string, string> = { claude: 'claude', codex: 'codex', agent: 'agent' };
   m.deps = {
     home, root, stateDir: join(home, '.local/state/factory'), node: '/usr/bin/node', uid: 501,
-    platform: 'darwin', nodeVersion: '26.7.0', agents, verify,
+    platform: 'darwin', nodeVersion: '26.7.0', agents, verify, readRoots: false,
     sleep: async () => {},
     print: (line) => m.output.push(line),
     ask: null,
@@ -898,8 +898,33 @@ test('with --verify, setup runs the probe reads and each agent\'s check', async 
 });
 
 test('--verify is read from either position and never taken for an agent', () => {
-  assert.deepEqual(cliArgs(['--verify', 'claude']), { agents: ['claude'], verify: true });
-  assert.deepEqual(cliArgs(['claude', '--verify']), { agents: ['claude'], verify: true });
-  assert.deepEqual(cliArgs(['claude', 'codex']), { agents: ['claude', 'codex'], verify: false });
-  assert.deepEqual(cliArgs([]), { agents: [], verify: false });
+  assert.deepEqual(cliArgs(['--verify', 'claude']), { agents: ['claude'], verify: true, readRoots: false });
+  assert.deepEqual(cliArgs(['claude', '--verify']), { agents: ['claude'], verify: true, readRoots: false });
+  assert.deepEqual(cliArgs(['claude', 'codex']), { agents: ['claude', 'codex'], verify: false, readRoots: false });
+  assert.deepEqual(cliArgs([]), { agents: [], verify: false, readRoots: false });
+});
+
+test('existing read grants skip the chooser and still get verified', async () => {
+  const mac = machine();
+  mkdirSync(join(mac.home, '.claude'));
+  writeFileSync(settings(mac.home), JSON.stringify({ permissions: { allow: [readRule(mac.home)] } }));
+  answer(mac, ['n']);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.ok(!mac.m.questions.some(({ question }) => question.startsWith('Press Enter to grant')));
+  assert.ok(mac.m.output.some((line) => /already granted.*npm run setup -- --read-roots/.test(line)));
+  assert.match(readLines(mac.m.output).at(-1)!, /verified/);
+});
+
+test('--read-roots parses in either position and reopens the chooser for existing grants', async () => {
+  for (const args of [['--read-roots', 'claude'], ['claude', '--read-roots']]) {
+    assert.deepEqual(cliArgs(args), { agents: ['claude'], verify: false, readRoots: true });
+  }
+  const mac = machine();
+  Object.assign(mac.m.deps, cliArgs(['claude', '--read-roots']));
+  mkdirSync(join(mac.home, '.claude'));
+  writeFileSync(settings(mac.home), JSON.stringify({ permissions: { allow: [readRule(mac.home)] } }));
+  answer(mac, ['n', 'none']);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.ok(mac.m.questions.some(({ question }) => question.startsWith('Press Enter to grant')));
+  assert.ok(mac.m.output.includes('read roots: none chosen, nothing changed.'));
 });
