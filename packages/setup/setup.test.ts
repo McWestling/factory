@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { loadConfig } from '../delegator/runner/runner.ts';
-import { claudeVerdict, codexVerdict, setup, type SetupDeps } from './setup.ts';
+import { claudeVerdict, cliArgs, codexVerdict, setup, type SetupDeps } from './setup.ts';
 import { readRule } from './read-roots.ts';
 
 const HEAD = 'b'.repeat(40);
@@ -54,7 +54,7 @@ const installApp = (home: string) => {
 const PLIST = 'Library/LaunchAgents/com.factory.factory-delegator.runner.plist';
 const PENDING = '.local/state/factory/runner-install-pending';
 
-function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) {
+function machine({ agents = ['claude'], installed = ['claude', 'codex'], verify = true } = {}) {
   // Real, so it matches the resolved paths setup shows and grants.
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'setup-')));
   const root = join(home, 'factory');
@@ -100,7 +100,7 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) 
   const bins: Record<string, string> = { claude: 'claude', codex: 'codex', agent: 'agent' };
   m.deps = {
     home, root, stateDir: join(home, '.local/state/factory'), node: '/usr/bin/node', uid: 501,
-    platform: 'darwin', nodeVersion: '26.7.0', agents,
+    platform: 'darwin', nodeVersion: '26.7.0', agents, verify,
     sleep: async () => {},
     print: (line) => m.output.push(line),
     ask: null,
@@ -119,6 +119,7 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'] } = {}) 
         if (!m.installed.includes(bins[file]!)) throw fail(`${file}: command not found`);
         return { stdout: '1.0.0' };
       }
+      if (file === 'pkill' || file === 'open') return { stdout: '' };
       if (file === 'swiftc' || call === 'git --version') return { stdout: 'ok' };
       if (call === 'orca --version') { if (!m.orca) throw fail('orca: command not found'); return { stdout: '1.4.0' }; }
       if (file === 'sh' && args.length === 1 && args[0] === join(root, 'packages/delegator/runner/launchd/install.sh')) {
@@ -536,6 +537,8 @@ test('a valid existing config is kept as it is and installed without Inbox quest
   assert.equal(runnerQuestions(mac).length, 1);
   assert.equal(readFileSync(runnerConfig(mac.home), 'utf8'), text);
   assert.match(runnerLine(mac.m.output)!, /installed and connected/);
+  assert.ok(mac.m.calls.includes('pkill -x FactoryRunnerMenuBar'));
+  assert.ok(mac.m.calls.includes('open ' + join(mac.home, 'Applications/Factory Runner.app')));
 });
 
 test('an invalid existing config is refused, never overwritten', async () => {
@@ -821,4 +824,82 @@ test('with nobody at the terminal, read roots are left alone', async () => {
   assert.equal(await mac.run(), 0);
   assert.ok(mac.m.output.includes('read roots: not changed. Run npm run setup at a terminal to choose them.'));
   assert.ok(!existsSync(join(mac.home, '.claude')));
+});
+
+for (const outcome of ['success', 'build failure', 'open failure', 'not running', 'skipped'] as const) test(`menu bar relaunch: ${outcome}`, async () => {
+  const mac = machine();
+  if (outcome !== 'skipped') installApp(mac.home);
+  const exec = mac.m.deps.exec;
+  mac.m.deps.exec = async (file, args, timeout) => {
+    if (file === 'sh' && args[1] === '--build-app' && outcome !== 'build failure') {
+      mac.m.calls.push(`${file} ${args.join(' ')}`);
+      for (const path of ['job.ts', 'parse-issue.ts', 'runner/runner.ts', 'runner/launchd/install.sh', 'runner/launchd/runner.plist', 'menubar/menubar.plist']) {
+        const source = join(mac.root, 'packages/delegator', path);
+        const target = join(args[2]!, 'Contents/Resources', path);
+        mkdirSync(join(source, '..'), { recursive: true });
+        mkdirSync(join(target, '..'), { recursive: true });
+        writeFileSync(source, 'fixture');
+        writeFileSync(target, 'fixture');
+      }
+      const binary = join(args[2]!, 'Contents/MacOS/FactoryRunnerMenuBar');
+      mkdirSync(join(binary, '..'), { recursive: true });
+      writeFileSync(binary, '', { mode: 0o755 });
+      return { stdout: '' };
+    }
+    if (file === 'pkill' || file === 'open') {
+      mac.m.calls.push(`${file} ${args.join(' ')}`);
+      if (file === 'pkill' && outcome === 'not running') throw Object.assign(new Error('no process'), { code: 1 });
+      if (file === 'open' && outcome === 'open failure') throw new Error('open failed');
+      return { stdout: '' };
+    }
+    return exec(file, args, timeout);
+  };
+  assert.equal(await mac.run(), outcome === 'build failure' ? 1 : 0, mac.m.output.join('\n'));
+  const relaunch = mac.m.calls.filter((call) => /^(pkill|open) /.test(call));
+  assert.deepEqual(relaunch, outcome === 'build failure' || outcome === 'skipped' ? []
+    : ['pkill -x FactoryRunnerMenuBar', 'open ' + join(mac.home, 'Applications/Factory Runner.app')]);
+  assert.equal(mac.m.output.some((line) => line.includes('Open ~/Applications/Factory Runner.app by hand.')), outcome === 'open failure');
+});
+
+/** A command that starts an agent run, which costs model usage. */
+const agentRuns = (calls: string[]) => calls.filter((call) => /^(claude -p|codex exec) /.test(call));
+
+test('without --verify, setup writes the configuration, launches no agent and says the live checks were skipped', async () => {
+  const mac = machine({ agents: ['claude', 'codex'], verify: false });
+  answer(mac, ['n', '']);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.deepEqual(agentRuns(mac.m.calls), []);
+  assert.ok(!mac.m.calls.some((call) => call.includes('app-server')), 'no Codex skill listing either');
+  assert.deepEqual(JSON.parse(readFileSync(settings(mac.home), 'utf8')).permissions.allow, [readRule(mac.home)], 'still grants the reads');
+  noProbes(mac.home);
+  assert.ok(!mac.m.output.some((line) => /verified/.test(line)), 'never reports a skipped check as passed');
+  assert.equal(mac.m.output.at(-1), 'live checks: skipped. Run npm run setup -- --verify to run them.');
+});
+
+test('without --verify, the exit code reflects the configuration steps only', async () => {
+  const mac = machine({ verify: false });
+  mac.m.claude = claudeRun({ status: 'needs-auth' });
+  mac.m.readDenied = true;
+  answer(mac, ['n', '']);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  mac.m.gh = false;
+  assert.equal(await mac.run(), 1, 'a failed configuration step still fails');
+});
+
+test('with --verify, setup runs the probe reads and each agent\'s check', async () => {
+  const mac = machine({ agents: ['claude', 'codex'], verify: true });
+  answer(mac, ['n', '']);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.deepEqual(agentRuns(mac.m.calls).map((call) => call.split(' ').slice(0, 3).join(' ')), [
+    'claude -p Use', 'codex exec --sandbox', 'claude -p Call', 'codex exec --sandbox']);
+  assert.deepEqual(mac.m.output.filter((line) => /verified/.test(line)).map((line) => line.split(':')[0]),
+    ['read roots (claude)', 'read roots (codex)', 'claude', 'codex']);
+  assert.ok(!mac.m.output.some((line) => /skipped/.test(line)));
+});
+
+test('--verify is read from either position and never taken for an agent', () => {
+  assert.deepEqual(cliArgs(['--verify', 'claude']), { agents: ['claude'], verify: true });
+  assert.deepEqual(cliArgs(['claude', '--verify']), { agents: ['claude'], verify: true });
+  assert.deepEqual(cliArgs(['claude', 'codex']), { agents: ['claude', 'codex'], verify: false });
+  assert.deepEqual(cliArgs([]), { agents: [], verify: false });
 });

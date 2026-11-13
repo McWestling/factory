@@ -349,7 +349,7 @@ one line for it, with no question asked. It exits non-zero when the update fails
   previous bundle and restarted.
 - **A stopped Runner** is refreshed and stays stopped, unless its `watching.json` is
   unreadable. The On / Off switch, **Start at login** and
-  config are never touched. Run `npm run menubar` from the repo root to restart the menu bar app on its new version.
+  config are never touched. Setup relaunches the menu bar app after a successful install or update.
 - **A Runner from before draining** is refused, with steps to pause, stop and rerun.
 
 Test it with `node --test upkeep.test.ts` from `packages/delegator`; the rest of setup is in [`packages/setup`](../setup/setup.ts).

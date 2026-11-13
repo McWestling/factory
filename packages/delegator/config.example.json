@@ -6,10 +6,10 @@
   "models": {
     "Claude Opus 5.5 medium": { "agent": "claude", "model": "<model id>", "effort": "medium" },
     "Claude Opus 5.5 low": { "agent": "claude", "model": "<model id>", "effort": "low" },
-    "GPT-6 Luna": { "agent": "codex", "model": "<model id>", "effort": "high" }
+    "GPT-6.1 Sol": { "agent": "codex", "model": "<model id>", "effort": "medium" }
   },
   "levels": {
-    "light": "GPT-6 Luna",
+    "light": "GPT-6.1 Sol",
     "standard": "Claude Opus 5.5 low",
     "deep": "Claude Opus 5.5 medium"
   },
