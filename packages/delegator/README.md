@@ -208,15 +208,21 @@ restarts if it exits; the app's **Start at login** toggle controls its own agent
 Runner logs are in `~/Library/Logs/factory-delegator/`.
 
 The menu shows **Runner ready** when it can accept work, **Working on …** while it
-handles a job, **Waiting for a PR** while it watches a completed session, **Paused**
-when new work is paused, **Can't reach Cloud Inbox** when its last request failed,
-and **Last job failed** after a failed job. **Runner stopped** means its LaunchAgent
-is not loaded and its status file is missing or stale. The menu can pause pickups,
-open the logs or config, start or stop the Runner, and install or remove its agent.
+handles a job, **Waiting for a PR** while it watches a completed session,
+**Can't reach Cloud Inbox** when its last request failed, and **Last job failed**
+after a failed job. **Off** means the switch is off, or the Runner's LaunchAgent is
+not loaded and its status file is missing or stale.
+
+One **On** / **Off** switch controls the Runner. **Off** lets the current job
+finish, showing **Turning off after the current job** meanwhile, and starts nothing
+new; the Runner stays off across a restart of the Mac. It sets the `paused` flag
+described below; open watches keep being checked. **On** clears
+the flag and starts the Runner if it isn't running. The menu also opens the logs or
+config, and shows **Install Runner** when no Runner is installed.
 
 The same operations remain available from the CLI. With `node` and `orca` on your
 shell's `PATH`, use the default command to install both the app and Runner, or use
-the Runner-specific commands:
+the Runner-specific commands. `--uninstall-runner` removes the Runner:
 
 ```sh
 sh packages/delegator/runner/launchd/install.sh
@@ -285,7 +291,7 @@ open watches recover independently. A successful job does not clear the last err
 Create an empty `paused` file in that directory to pause new claims; remove it to
 resume on the next poll. In-flight work continues, as do watch recovery and PR
 checks. Pausing leaves jobs queued in Cloud Inbox. The menu bar app reads status
-and toggles this flag; it needs no Cloud Inbox access.
+and its switch toggles this flag; it needs no Cloud Inbox access.
 
 ### Install with setup
 
@@ -342,7 +348,7 @@ one line for it, with no question asked. It exits non-zero when the update fails
   before anything is replaced. A Runner that doesn't come back is swapped for the
   previous bundle and restarted.
 - **A stopped Runner** is refreshed and stays stopped, unless its `watching.json` is
-  unreadable. Pause, **Start at login** and
+  unreadable. The On / Off switch, **Start at login** and
   config are never touched. Setup relaunches the menu bar app after a successful install or update.
 - **A Runner from before draining** is refused, with steps to pause, stop and rerun.
 

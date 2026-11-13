@@ -55,14 +55,19 @@ private final class RunnerModel: ObservableObject {
         }
     }
 
-    func pause(_ value: Bool) {
+    /// On while the Runner is loaded and takes work.
+    var on: Bool { runnerLoaded && !paused }
+
+    /// Off sets the `paused` flag: the current job finishes, nothing new starts, and the flag outlasts a restart.
+    /// On clears it and starts the Runner if it isn't loaded.
+    func turn(on value: Bool) {
         let flag = stateDirectory.appending(path: "paused")
         do {
             try FileManager.default.createDirectory(at: stateDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            if value { _ = FileManager.default.createFile(atPath: flag.path, contents: Data(), attributes: [.posixPermissions: 0o600]) }
-            else { try FileManager.default.removeItem(at: flag) }
-        } catch { actionError = error.localizedDescription }
-        refresh()
+            if !value { _ = FileManager.default.createFile(atPath: flag.path, contents: Data(), attributes: [.posixPermissions: 0o600]) }
+            else if paused { try FileManager.default.removeItem(at: flag) }
+        } catch { actionError = error.localizedDescription; return }
+        if value && !runnerLoaded { run("--start-runner") } else { refresh() }
     }
 
     func openOrca() {
@@ -184,10 +189,14 @@ private struct RunnerMenu: View {
             }
         }
         Divider()
-        Toggle("Pause new work", isOn: Binding(
-            get: { runner.paused },
-            set: { runner.pause($0) }
-        )).disabled(!runner.runnerInstalled)
+        if runner.runnerInstalled {
+            Toggle(runner.on ? "On" : "Off", isOn: Binding(
+                get: { runner.on },
+                set: { runner.turn(on: $0) }
+            ))
+        } else {
+            Button("Install Runner") { runner.run("--install-runner") }
+        }
         Button("Open logs") { runner.open(FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/factory-delegator")) }
         Button("Open config") { runner.open(FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/factory-delegator/config.json")) }
         Divider()
@@ -195,14 +204,6 @@ private struct RunnerMenu: View {
             get: { runner.loginEnabled },
             set: { runner.run($0 ? "--enable-app-login" : "--disable-app-login") }
         ))
-        if runner.runnerInstalled {
-            Button(runner.runnerLoaded ? "Stop Runner" : "Start Runner") {
-                runner.run(runner.runnerLoaded ? "--stop-runner" : "--start-runner")
-            }
-            Button("Remove Runner") { runner.run("--uninstall-runner") }
-        } else {
-            Button("Install Runner") { runner.run("--install-runner") }
-        }
         if let error = runner.actionError, !error.isEmpty { Text(error) }
         Button("Quit menu bar app") { NSApplication.shared.terminate(nil) }
     }

@@ -301,7 +301,7 @@ async function started(deps: SetupDeps, since: number): Promise<Result> {
       + 'then rerun npm run setup to finish; it won\'t reinstall over a loaded Runner.' };
   }
   return { ok: false, line: `runner: installed, but it didn't ${pid ? 'reach Cloud Inbox' : 'start'} within 60 s. Check ~/Library/Logs/factory-delegator/runner.log `
-    + 'and the config\'s inboxUrl and bearerSecret, then choose Start Runner in the Factory Runner menu.' };
+    + 'and the config\'s inboxUrl and bearerSecret, then turn the Runner On in the Factory Runner menu.' };
 }
 
 /** Offers a first Runner install: reuses a valid config or writes one for an existing or new Cloud Inbox, then proves it connects. */
