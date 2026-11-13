@@ -18,6 +18,8 @@ export type SetupDeps = UpkeepDeps & {
   agents: string[];
   /** Runs the live checks, which start agent runs that cost model usage. */
   verify: boolean;
+  /** Shows the read-root chooser even when the suggestion is already granted. */
+  readRoots: boolean;
   /** Asks the person at the terminal, hiding the answer when it's secret; null when nobody is there. */
   ask: ((question: string, secret?: boolean) => Promise<string>) | null;
   /** Runs a command attached to the terminal, for steps the person takes part in; resolves whether it exited 0. */
@@ -431,10 +433,10 @@ export async function setup(deps: SetupDeps): Promise<number> {
   });
 }
 
-/** Splits the command line into agent names and the --verify flag, in any order. */
+/** Splits the command line into agent names and the --verify / --read-roots flags, in any order. */
 export function cliArgs(args: string[]) {
-  const { values, positionals } = parseArgs({ args, options: { verify: { type: 'boolean', default: false } }, allowPositionals: true });
-  return { agents: positionals, verify: values.verify };
+  const { values, positionals } = parseArgs({ args, options: { verify: { type: 'boolean', default: false }, 'read-roots': { type: 'boolean', default: false } }, allowPositionals: true });
+  return { agents: positionals, verify: values.verify, readRoots: values['read-roots'] };
 }
 
 /** Runs a command with stdin closed, so agent CLIs never wait for input. */

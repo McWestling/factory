@@ -26,8 +26,8 @@ function covers(rule: string, root: string, home: string) {
 
 const strings = (value: unknown) => value === undefined || (Array.isArray(value) && value.every((item) => typeof item === 'string'));
 
-/** Merges read rules for the roots into Claude's user settings, writing nothing on malformed data or a conflicting restriction. */
-export function grantClaudeReads(path: string, roots: string[], home: string): Result {
+/** Merges read rules for the roots into Claude's user settings, writing nothing on malformed data or a conflicting restriction. checkOnly reports existing coverage without writing. */
+export function grantClaudeReads(path: string, roots: string[], home: string, checkOnly = false): Result {
   const failed = (why: string) => ({ ok: false, line: `read roots (claude): not granted. ${why} Nothing was changed.` });
   let linked = false;
   try { linked = lstatSync(path).isSymbolicLink(); } catch {}
@@ -54,6 +54,7 @@ export function grantClaudeReads(path: string, roots: string[], home: string): R
   const added = roots.filter((root) => !allow.some((rule) => covers(rule, root, home)) && !dirs.some((dir: string) => within(root, dir))).map(readRule);
   const where = linked ? `${path} (a link to ${target})` : path;
   if (!added.length) return { ok: true, line: `read roots (claude): ${where} already grants them.` };
+  if (checkOnly) return failed('The suggested root is not covered by existing grants.');
   settings.permissions = { ...permissions, allow: [...allow, ...added] };
   const temp = `${target}.factory-setup.tmp`;
   mkdirSync(dirname(target), { recursive: true });
@@ -105,8 +106,8 @@ async function suggestion(deps: SetupDeps) {
 
 /** Asks which roots to grant: the suggestion, edited, removed or added to. Returns absolute, real directories. */
 // ponytail: rules name the real path only, so reads through a symlinked path to a root still prompt; grant the link path too if that bites.
-async function choose(deps: SetupDeps, ask: NonNullable<SetupDeps['ask']>): Promise<string[]> {
-  const roots = [await suggestion(deps)];
+async function choose(deps: SetupDeps, ask: NonNullable<SetupDeps['ask']>, root: string): Promise<string[]> {
+  const roots = [root];
   deps.print('read roots: the chosen agents can read every file under these folders, including repos you add there later. '
     + 'Setup grants no write or shell access. Add other places your checkouts live, such as Orca worktrees.');
   for (;;) {
@@ -128,7 +129,11 @@ const CODEX = ' Codex already reads anywhere, so nothing was added.';
 /** Grants read access to the chosen roots for each agent, and with --verify proves it; at a terminal only. */
 export async function readRoots(deps: SetupDeps, agents: string[]): Promise<Result[]> {
   if (!deps.ask) return [{ ok: true, line: 'read roots: not changed. Run npm run setup at a terminal to choose them.' }];
-  const roots = await choose(deps, deps.ask);
+  const root = await suggestion(deps);
+  const granted = !deps.readRoots && agents.includes('claude')
+    && grantClaudeReads(join(deps.home, '.claude/settings.json'), [root], deps.home, true).ok;
+  if (granted) deps.print('read roots: already granted. Run npm run setup -- --read-roots to choose them again.');
+  const roots = granted ? [root] : await choose(deps, deps.ask, root);
   if (!roots.length) return [{ ok: true, line: 'read roots: none chosen, nothing changed.' }];
   if (!deps.verify) {
     return agents.map((name) => name === 'claude' ? grantClaudeReads(join(deps.home, '.claude/settings.json'), roots, deps.home)
