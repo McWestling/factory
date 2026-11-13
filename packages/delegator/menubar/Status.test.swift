@@ -3,6 +3,14 @@ import Foundation
 @main
 enum StatusCheck {
     static func main() {
+        assert(RunnerState.ready.badge == nil)
+        assert(RunnerState.waiting.badge == nil)
+        assert(RunnerState.working("ABC-123").badge == "circle.fill")
+        assert(RunnerState.turningOff.badge == "circle.fill")
+        assert(RunnerState.off.badge == "pause.fill")
+        assert(RunnerState.failed.badge == "exclamationmark")
+        assert(RunnerState.starting.badge == "exclamationmark")
+        assert(RunnerState.cloudInboxUnreachable.badge == "exclamationmark")
         let now = ISO8601DateFormatter().date(from: "2026-01-15T08:00:00Z")!
         func line(_ json: String?, loaded: Bool = true) -> String {
             runnerState(json: json.map { Data($0.utf8) }, launchAgentLoaded: loaded, now: now).state.line
