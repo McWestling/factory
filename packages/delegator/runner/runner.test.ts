@@ -255,7 +255,7 @@ const refusals: [string, Partial<Task>, string][] = [
   ['a null creator', { creatorId: null }, NOT_ALLOWED],
   ['a creator not on the allowlist', { creatorId: 'user-other' }, NOT_ALLOWED],
   ['no level tag', { description: '`[repo=owner/repo]`' },
-    'Refused `level`: expected a [level=…] tag with 1/light, 2/standard, 3/deep. Fix it and delegate again to retry.'],
+    'Refused `level`: expected a [level=…] tag with light, standard or deep. Fix it and delegate again to retry.'],
   ['a malformed repo tag', { description: description('Claude Opus 5.5', 'not a repo') },
     'Refused `repo`: expected a [repo=owner/name] tag matching ^[\\w.-]+/[\\w.-]+$. Fix it and delegate again to retry.'],
   ['a flag-like branch name', { branchName: '--upload-pack=evil' },

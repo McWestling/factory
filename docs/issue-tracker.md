@@ -78,7 +78,7 @@ Each product has an initiative with the same name as its Product label. Its desc
 | `Claude`        | Claude Code outside Orca                                                         |
 | `Codex`         | Codex outside Orca                                                               |
 
-The label records where the work was dispatched from, not where the session runs or which model ran. Set it when work starts: a session with any `ORCA_*` environment variable set is `Orca`. An issue's `[target=]` tag is the plan when it differs from the default; the label records what actually ran.
+The label records where the work was dispatched from, not where the session runs or which model ran. Set it when work starts: a session with any `ORCA_*` environment variable set is `Orca`.
 
 **Default target:** `Orca`. Never suggest a legacy target.
 

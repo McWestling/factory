@@ -1,24 +1,24 @@
 export const LEVELS = ['light', 'standard', 'deep'] as const;
 export type Level = typeof LEVELS[number];
-export type DelegatorIssue = { repo: string; level: Level; model?: string; target?: string };
+export type DelegatorIssue = { repo: string; level: Level; model?: string };
 export type Refusal = { field: 'level' | 'repo'; expected: string };
 
-function readTag(description: string, key: string): string | undefined {
-  const tag = new RegExp(String.raw`\\\[${key}=([^\]\r\n]*)\\\]|\[${key}=([^\]\r\n]*)\]`).exec(description);
-  return tag?.[1] ?? tag?.[2];
+function readTag(description: string, key: string, valid: (value: string) => boolean = value => !!value): string | undefined {
+  const tags = new RegExp(String.raw`\\\[${key}=([^\]\r\n]*)\\\]|\[${key}=([^\]\r\n]*)\]`, 'g');
+  for (const tag of description.matchAll(tags)) {
+    const value = tag[1] ?? tag[2];
+    if (valid(value)) return value;
+  }
 }
 
 export function parseIssue(description: string): DelegatorIssue | Refusal {
-  const raw = readTag(description, 'level')?.toLowerCase();
-  const level = LEVELS.find((name, i) => raw === name || raw === String(i + 1));
-  if (!level) return { field: 'level', expected: 'a [level=…] tag with 1/light, 2/standard, 3/deep' };
-  const repo = readTag(description, 'repo');
-  if (!repo || !/^[\w.-]+\/[\w.-]+$/.test(repo)) {
-    return { field: 'repo', expected: 'a [repo=owner/name] tag matching ^[\\w.-]+/[\\w.-]+$' };
-  }
-  const model = readTag(description, 'model') || undefined;
-  const target = readTag(description, 'target') || undefined;
-  return { repo, level, model, target };
+  const raw = readTag(description, 'level', value => LEVELS.some(name => value.toLowerCase() === name))?.toLowerCase();
+  const level = LEVELS.find(name => name === raw);
+  if (!level) return { field: 'level', expected: 'a [level=…] tag with light, standard or deep' };
+  const repo = readTag(description, 'repo', value => /^[\w.-]+\/[\w.-]+$/.test(value));
+  if (!repo) return { field: 'repo', expected: 'a [repo=owner/name] tag matching ^[\\w.-]+/[\\w.-]+$' };
+  const model = readTag(description, 'model');
+  return { repo, level, model };
 }
 
 export function matchModel(pin: string, names: readonly string[]): string | undefined {

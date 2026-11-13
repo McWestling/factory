@@ -65,7 +65,7 @@ The repo that holds your tracker doc and where planning sessions run; every othe
 _Avoid_: hub repo, main repo
 
 **Level**:
-One of `light`, `standard` or `deep` that tells the Runner which configured model to use for an implementation issue. The issue may also have an optional `[model=]` pin and a `[target=]` tag when it differs from the default; see [`docs/issue-format.md`](docs/issue-format.md).
+One of `light`, `standard` or `deep` that tells the Runner which configured model to use for an implementation issue. The issue may also have an optional `[model=]` pin; see [`docs/issue-format.md`](docs/issue-format.md).
 
 **Machine setup**:
 `npm run setup` from a checkout of the home repo. It installs or refreshes the Factory and supporting skills for the chosen agents, grants them read access to the chosen read roots, updates an existing Runner, and verifies each agent can reach Linear and discover the skills. `do-repo-setup` sets up a repo; machine setup sets up a computer.

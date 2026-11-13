@@ -4,39 +4,53 @@ import { matchModel, parseIssue } from './parse-issue.ts';
 
 const repo = '[repo=example/project]';
 
-test('reads level, optional model pin and target from tags', () => {
-  assert.deepEqual(parseIssue(`${repo} [level=standard] [model=astra] [target=Orca]`), {
-    repo: 'example/project', level: 'standard', model: 'astra', target: 'Orca',
+test('reads level and optional model pin from tags', () => {
+  assert.deepEqual(parseIssue(`${repo} [level=standard] [model=astra]`), {
+    repo: 'example/project', level: 'standard', model: 'astra',
   });
 });
 
 for (const [level, expected] of [
   ['light', 'light'], ['standard', 'standard'], ['deep', 'deep'],
-  ['1', 'light'], ['2', 'standard'], ['3', 'deep'],
   ['LIGHT', 'light'], ['Standard', 'standard'], ['DeEp', 'deep'],
 ]) {
   test(`accepts level ${level}`, () => {
     assert.deepEqual(parseIssue(`[level=${level}] ${repo}`), {
-      repo: 'example/project', level: expected, model: undefined, target: undefined,
+      repo: 'example/project', level: expected, model: undefined,
     });
   });
 }
 
-test('reads escaped tags and keeps the first of each kind', () => {
-  assert.deepEqual(parseIssue(String.raw`\[level=2\] \[repo=example/project\] \[model=astra\] \[target=Claude\]
-[level=deep] [repo=other/repo] [model=luna] [target=Orca]`), {
-    repo: 'example/project', level: 'standard', model: 'astra', target: 'Claude',
+test('reads escaped tags and keeps the first valid value of each kind', () => {
+  assert.deepEqual(parseIssue(String.raw`\[level=\] \[level=DEEP\] \[repo=invalid\] \[repo=example/project\] \[model=astra\]
+[level=deep] [repo=other/repo] [model=luna]`), {
+    repo: 'example/project', level: 'deep', model: 'astra',
   });
-  assert.deepEqual(parseIssue(`${repo} [level=light] [level=deep] [model=] [model=astra] [target=] [target=Orca]`), {
-    repo: 'example/project', level: 'light', model: undefined, target: undefined,
+  assert.deepEqual(parseIssue(`${repo} [level=light] [level=deep] [model=] [model=astra]`), {
+    repo: 'example/project', level: 'light', model: 'astra',
   });
 });
 
-for (const tags of ['', '[level=]', '[level=unknown] [level=light]', '[level=4]', '[level=standard',
+for (const tags of ['[level=] [level=light]', '[level=light|standard|deep] [level=light]',
+  '[level=unknown] [level=light]', '[level=2] [level=light]']) {
+  test(`skips invalid levels: ${tags}`, () => {
+    assert.deepEqual(parseIssue(`${repo} ${tags}`), {
+      repo: 'example/project', level: 'light', model: undefined,
+    });
+  });
+}
+
+test('skips an example level before deep', () => {
+  assert.deepEqual(parseIssue(`${repo} [level=light|standard|deep] [level=deep]`), {
+    repo: 'example/project', level: 'deep', model: undefined,
+  });
+});
+
+for (const tags of ['', '[level=]', '[level=unknown]', '[level=1]', '[level=2]', '[level=3]', '[level=4]', '[level=standard',
   '```factory-run\nmodel: Example Model\n```']) {
   test(`refuses missing or unknown level: ${JSON.stringify(tags)}`, () => {
     assert.deepEqual(parseIssue(`${repo} ${tags}`), {
-      field: 'level', expected: 'a [level=…] tag with 1/light, 2/standard, 3/deep',
+      field: 'level', expected: 'a [level=…] tag with light, standard or deep',
     });
   });
 }
@@ -50,9 +64,15 @@ for (const tag of ['', '[repo=]', '[repo=example]', '[repo=example/project/extra
   });
 }
 
+test('skips blank and malformed repos before the first valid repo', () => {
+  assert.deepEqual(parseIssue(`[level=standard] [repo=] [repo=example] ${repo} [repo=other/repo]`), {
+    repo: 'example/project', level: 'standard', model: undefined,
+  });
+});
+
 test('accepts unknown model pins', () => {
   assert.deepEqual(parseIssue(`${repo} [level=standard] [model=unknown]`), {
-    repo: 'example/project', level: 'standard', model: 'unknown', target: undefined,
+    repo: 'example/project', level: 'standard', model: 'unknown',
   });
 });
 
