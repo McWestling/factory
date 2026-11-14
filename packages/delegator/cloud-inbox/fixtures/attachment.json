@@ -1,0 +1,20 @@
+{
+  "action": "create",
+  "type": "Attachment",
+  "createdAt": "2026-11-04T12:30:00.000Z",
+  "organizationId": "org-example",
+  "webhookId": "webhook-example",
+  "webhookTimestamp": 0,
+  "url": "https://linear.app/example/issue/ABC-123",
+  "actor": { "id": "user-example", "type": "user", "name": "Example User" },
+  "data": {
+    "id": "attachment-1",
+    "createdAt": "2026-11-04T12:30:00.000Z",
+    "updatedAt": "2026-11-04T12:30:00.000Z",
+    "title": "Example pull request",
+    "url": "https://github.com/owner/repo/pull/1",
+    "issueId": "issue-1",
+    "sourceType": "github",
+    "metadata": { "status": "merged" }
+  }
+}

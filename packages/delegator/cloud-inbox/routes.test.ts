@@ -166,7 +166,8 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void) {
   };
 }
 
-const signed = (body: string) => createHmac('sha256', WEBHOOK_SECRET).update(body).digest('hex');
+const signedWith = (secret: string) => (body: string) => createHmac('sha256', secret).update(body).digest('hex');
+const signed = signedWith(WEBHOOK_SECRET);
 
 /** The slice of a Linear workspace the Runner API reads and edits. */
 function fakeWorld() {
@@ -256,6 +257,9 @@ for (const [label, tamper, status] of [
   ['a future timestamp', (p, now) => [{ ...p, webhookTimestamp: now + 60_001 }], 401],
   ['an unknown client', (p) => [{ ...p, oauthClientId: 'client-unknown' }], 401],
   ["another machine's client", (p) => [{ ...p, oauthClientId: 'client-other' }], 401],
+  ["another machine's secret", (p) => [p, signedWith('other')], 401],
+  ["no machine's secret", (p) => [p, signedWith('secret-unknown')], 401],
+  ["no machine's secret and no client", ({ oauthClientId: _, ...p }) => [p, signedWith('secret-unknown')], 401],
   ['a wrong org', (p) => [{ ...p, organizationId: 'org-other' }], 403],
   ['a wrong app user', (p) => [{ ...p, appUserId: 'app-user-other' }], 403],
 ] as [string, Tamper, number][]) {
@@ -263,6 +267,18 @@ for (const [label, tamper, status] of [
     const { clock, deliver, posts, rows } = setup();
     const [payload, sign] = tamper(fixture('created'), clock.now);
     assert.equal((await deliver(payload, sign)).status, status);
+    assert.deepEqual(rows(), { jobs: [], seen: [], outbox: [], ended: [] });
+    assert.equal(posts.length, 0);
+  });
+}
+
+for (const [machine, secret] of [['example-machine', WEBHOOK_SECRET], ['other-machine', 'other']]) {
+  test(`an Attachment event without oauthClientId signed by ${machine} gets 200 and is logged as ignored`, async (t) => {
+    const { send, posts, rows } = setup();
+    const logged = t.mock.method(console, 'log', () => {});
+    assert.equal((await send(fixture('attachment'), signedWith(secret!))).status, 200);
+    const lines = logged.mock.calls.map((call) => JSON.parse(String(call.arguments[0])));
+    assert.deepEqual(lines, [{ event: 'webhook', machine, outcome: 'ignored' }]);
     assert.deepEqual(rows(), { jobs: [], seen: [], outbox: [], ended: [] });
     assert.equal(posts.length, 0);
   });
@@ -683,6 +699,10 @@ test('a chunked webhook is accepted at exactly the limit and refused one byte ov
 
 test('a webhook with a well-formed signature and an empty body is a bad request', async () => {
   assert.equal((await handleWebhook(webhookRequest(null, WELL_FORMED), config, refuseQueue)).status, 400);
+});
+
+test('a correctly signed JSON body that is not an object is a bad request', async () => {
+  assert.equal((await handleWebhook(webhookRequest('null', { 'Linear-Signature': signed('null') }), config, refuseQueue)).status, 400);
 });
 
 test('an expired claim cannot change the outcome of the claim that replaced it', async () => {

@@ -70,8 +70,9 @@ Point each machine's Linear app webhook (Agent session events, delivery enabled)
 `cloud-inbox/routes.ts` handles it before the machine's queue sees anything: it answers 401
 to a missing or malformed `Linear-Signature` without reading the body, answers 413 once
 the body passes 1 MiB, counting as it reads whether or not `Content-Length` is sent,
-then finds the machine by `oauthClientId`, verifies `Linear-Signature` over the raw
-body, and requires
+then finds the machine whose webhook secret verifies `Linear-Signature` over the raw
+body, refuses an `oauthClientId` that isn't that machine's (data-change events such as
+`Attachment` carry none), and requires
 `webhookTimestamp` within 60 s and `organizationId` equal to `LINEAR_ORG_ID`. The queue
 then requires `appUserId` to match the install. A `created` event queues the job,
 deduped on the session id, and posts the queued `thought`; a newer delegation of the
