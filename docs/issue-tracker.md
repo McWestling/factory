@@ -116,7 +116,6 @@ Datelines in use:
 - **PR opened:** `YYYY-MM-DD — PR opened: <link>`
 - **Back to Triage:** `YYYY-MM-DD — Back to Triage: <reason>.`
 - **Decision resolved:** a `## Resolution (YYYY-MM-DD)` heading
-- **Kickoff prompt:** a fenced `text` block holding only `/do-implement DO-<number>`, with no lead-in. Any explanation goes outside the block.
 
 ## Pull requests
 

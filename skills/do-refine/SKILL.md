@@ -148,8 +148,10 @@ The user names an idea or a map (by URL or name), and maybe a ticket. Pick the m
 
 End every session by listing what changed, by name: tickets resolved, created or canceled, and issues sliced. Then add **What you can do next**, with a link on every line:
 
-- **Dispatch now:** each unblocked, ready implementation issue on the map, with its level tag and the **Kickoff prompt** per **Comment shape** (for example `/do-implement ABC-123`), to run on the target named in its tag or the default target. Compare the issues' **Touches:** lines, flag pairs that overlap, and say which to run first.
-- **Refine next:** the next decision ticket on the frontier, with `/do-refine <map URL>` to paste into a fresh session. Name any research tickets still running.
+- **Dispatch now:** each unblocked, ready implementation issue on the map to delegate to an agent in the tracker, with no command or level tag. Compare the issues' **Touches:** lines, flag pairs that overlap, and say which to delegate first.
+- **Refine next:** the next decision ticket on the frontier, with `/do-refine <map URL>` in a fenced `text` block holding only the command, to paste into a fresh session. Name any research tickets still running.
 - **Waiting on you:** HITL tickets and open questions.
+
+Only commands the user pastes get a fenced block.
 
 When the destination is reached and no open issues remain, set the map to its finished status. Open implementation issues keep a map open until their PRs merge; closing those out belongs to whoever merges, not to this skill.

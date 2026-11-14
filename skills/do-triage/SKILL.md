@@ -99,8 +99,8 @@ When the queue is empty, or the user stops, list Triage again to confirm what's 
 
 After the table, print **What you can do next**, grouped by action, with a name and link on every line:
 
-- **Dispatch now:** each ready implementation issue, with its level tag and the **Kickoff prompt** per **Comment shape** (for example `/do-implement ABC-123`), to run on the target named in its tag or the default target. Compare **Touches:** lines, flag pairs that overlap, and say which to run first.
-- **Chart next:** each stub map with a one-line why and `/do-refine <map URL>` to paste into a fresh session. Recommend which to chart first.
+- **Dispatch now:** each unblocked, ready implementation issue to delegate to an agent in the tracker, with no command or level tag. Compare **Touches:** lines, flag pairs that overlap, and say which to delegate first.
+- **Chart next:** each stub map with a one-line why and its own fenced `text` block holding only `/do-refine <map URL>`, to paste into a fresh session. Recommend which to chart first.
 - **Waiting on you:** skipped items and open questions.
 - **Where to see it:** the views per **Views** that now show these items, found by exact name. If an item won't show in any view, say so.
 
