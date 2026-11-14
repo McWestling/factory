@@ -119,9 +119,9 @@ Pick one ticket, read-only; change nothing in the tracker:
 2. Otherwise, the top issue in the `Factory: Ready` view per **Views** with the same Product label.
 3. If neither has one, say so in one line and stop.
 
-Print **Suggested next ticket** with the ticket's name and link, then one line telling the user to start a fresh session for it instead of continuing this thread, then the prompt to paste there, then where to run it:
+Print **Suggested next ticket** with the ticket's name and link, then:
 
-- **Implementation issue:** the **Kickoff prompt** per **Comment shape**. Under it, the issue's repo (its repo tag, or per **Repo routing**) and its `[level=]` tag, plus `[model=]` when present.
-- **Decision ticket** (a `wayfinder:` label): `/do-refine <map URL>` in a fenced `text` block, using the map URL the tracker returns, with the repo it routes to.
+- **Implementation issue:** one line telling the user to delegate it to an agent in the tracker, with no command, repo or level.
+- **Decision ticket** (a `wayfinder:` label): one line telling the user to start a fresh session in the home repo's checkout instead of continuing this thread, then `/do-refine <map URL>` in a fenced `text` block, using the map URL the tracker returns.
 
 The fenced block holds only the command; any explanation goes outside it. It is the one copyable block in the reply.
