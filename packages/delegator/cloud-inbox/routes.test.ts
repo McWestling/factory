@@ -232,7 +232,7 @@ function answer(world: World, query: string, variables: Record<string, any>) {
     };
   }
   if (query.includes('attachments')) {
-    return { issue: { attachments: { nodes: issue.attachments.map((url) => ({ url })) } }, agentSession: { status: session.status } };
+    return { issue: { state: query.includes('state { type }') ? { type: state().type } : undefined, attachments: { nodes: issue.attachments.map((url) => ({ url })) } }, agentSession: { status: session.status } };
   }
   assert.match(query, /delegate/);
   return { issue: { delegate: issue.delegateId && { id: issue.delegateId } } };
@@ -1202,6 +1202,7 @@ test('watch returns the session status and only verified GitHub pull request lin
   const res = await h.runner('GET', `/jobs/session-1/watch?claimId=${h.claimId}&issueId=issue-2`);
   assert.deepEqual(await res.json(), {
     sessionStatus: 'active',
+    issueState: 'unstarted',
     pullRequests: ['https://github.com/owner/repo/pull/7', 'https://github.com/owner/repo/pull/8/files'],
   });
   assert.deepEqual(h.linear.requests.map((r) => r.variables), [{ issue: 'issue-1', session: 'session-1' }]);
@@ -1392,7 +1393,7 @@ test('several slow metadata reads share one deadline and leave the watch retryab
   await second;
   t.mock.timers.tick(1_000);
   assert.equal(signals[1]!.aborted, true);
-  assert.deepEqual(await (await watching).json(), { sessionStatus: 'active', pullRequests: [] });
+  assert.deepEqual(await (await watching).json(), { sessionStatus: 'active', issueState: 'unstarted', pullRequests: [] });
   assert.equal(signals.length, 2);
   assert.equal((await (await h.runner('GET', '/jobs/watching')).json() as unknown[]).length, 1);
   h.linear.github = () => Response.json({ base: { repo: { full_name: 'owner/repo' } },

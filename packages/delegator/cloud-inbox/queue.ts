@@ -33,7 +33,7 @@ const TASK = `query ($issue: String!, $session: String!) {
   issue(id: $issue) { identifier description branchName state { type } delegate { id } }
   agentSession(id: $session) { creator { id } } }`;
 const WATCH = `query ($issue: String!, $session: String!) {
-  issue(id: $issue) { attachments { nodes { url } } } agentSession(id: $session) { status } }`;
+  issue(id: $issue) { state { type } attachments { nodes { url } } } agentSession(id: $session) { status } }`;
 const LINK = `mutation ($session: String!, $url: String!) {
   agentSessionUpdate(id: $session, input: { addedExternalUrls: [{ label: "Pull request", url: $url }] }) { success } }`;
 const LAUNCH = `query ($issue: String!, $session: String!) {
@@ -79,14 +79,14 @@ export type Task = {
   branchName: string;
   statusType: string;
 };
-export type Watch = { sessionStatus: string; pullRequests: string[] };
+export type Watch = { sessionStatus: string; issueState?: string; pullRequests: string[] };
 
 type Id = { id?: string } | null | undefined;
 type TaskData = {
   issue?: { identifier?: string; description?: string | null; branchName?: string; state?: { type?: string }; delegate?: Id };
   agentSession?: { creator?: Id };
 };
-type WatchData = { issue?: { attachments?: { nodes?: { url?: string }[] } }; agentSession?: { status?: string } };
+type WatchData = { issue?: { state?: { type?: string }; attachments?: { nodes?: { url?: string }[] } }; agentSession?: { status?: string } };
 type LaunchData = {
   issue?: {
     delegate?: Id;
@@ -348,7 +348,7 @@ export class MachineQueue {
     if (this.#sql.exec('SELECT 1 FROM ended WHERE session_id = ?', id).toArray().length) {
       return { sessionStatus: 'complete', pullRequests: [] };
     }
-    return { sessionStatus: status, pullRequests };
+    return { sessionStatus: status, issueState: data.issue.state?.type, pullRequests };
   }
 
   /** Links the first verified launch pull request on the session as "Pull request". */
