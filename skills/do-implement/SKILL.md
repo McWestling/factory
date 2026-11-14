@@ -22,7 +22,7 @@ Reach the tracker only through the doc's **Tracker** access. Probe it once befor
 
 A run is **delegated** when its prompt says `Delegated run`. Nobody is in the session, so these rules apply wherever a step names this section.
 
-- **Claim check.** It passes only when the issue's delegate is set to an agent app, whatever its assignee and whether it is still ready or already in progress. A delegate that is unset or isn't an agent app is an unrelated active claim: stop.
+- **Claim check.** It passes only when the issue's delegate is set to an agent app, whatever its assignee and whether it is still ready or already in progress. A delegate that is unset or isn't an agent app is an unrelated active claim: report it per **Stops** below, then stop.
 - **No field writes.** Cloud Inbox's `launched` write-back owns assignee and status. Only check the dispatch label per **Dispatch targets**.
 - **Default calls.** Never ask a product or design question. Pick the option closest to the brief, the decisions it links and the repo's existing patterns; between equals, pick the easiest to reverse. The accepted brief's test seams count as agreed; if it names none, pick an existing public seam consistent with the brief. Record each call (the question, what you chose, and why) for the **Questions along the way** list in [step 8](#8-open-the-draft-pr). A run that isn't delegated but has nobody in the session makes default calls the same way.
 - **Stops.** Default calls cover only those questions. Every other stop in this skill still holds: a failed dispatch gate, an unrelated active claim, the wrong repo, a failed tracker probe or missing permissions, a testing skill that can't be located or read, verification that won't pass, three failed fix rounds, and the [Boundaries](#boundaries). On any of them, comment per **Comment shape** with what stopped the run, what comes next, and "undelegate to release"; write no fields; then stop. Skip the comment only when the tracker probe itself has failed.
@@ -34,17 +34,17 @@ A run is **delegated** when its prompt says `Delegated run`. Nobody is in the se
 
 1. **One issue.** If the user names several, ask which to take first.
 2. **Fetch** the issue and its comments, and state its title. Comments can amend the brief; read them all.
-3. **Dispatchable.** It must be an implementation issue (no `wayfinder:` label), in the ready status (or claimed, as below) per **Issue statuses**, and pass every gate in [dispatch-gates.md](../do-refine/dispatch-gates.md): in particular, every blocker done and no open human gate. A delegated run uses the claim check in [Delegated runs](#delegated-runs). In a non-delegated run, an issue already in progress and assigned to you also counts; an issue assigned to someone else and not delegated is an unrelated active claim. If any gate fails, stop and say which gate.
+3. **Dispatchable.** It must be an implementation issue (no `wayfinder:` label), in the ready status (or claimed, as below) per **Issue statuses**, and pass every gate in [dispatch-gates.md](../do-refine/dispatch-gates.md): in particular, every blocker done and no open human gate. A delegated run uses the claim check in [Delegated runs](#delegated-runs). In a non-delegated run, an issue already in progress and assigned to you also counts; an issue assigned to someone else and not delegated is an unrelated active claim. For an unrelated active claim or a failed gate, stop and report which claim or gate, following the stop rule in [Delegated runs](#delegated-runs) when delegated.
 
    **Resuming:** if the issue already has your branch or PR, check it out and carry on from where it stands, usually [Build](#4-build) or [the hosted checks](#9-work-the-hosted-checks). Don't open a second PR.
-4. **Repo.** Read the repo tag from the description. If it has none, resolve it per **Repo routing** and add the tag before starting, as the first line of the **Agent brief**, where [brief-template.md](../do-refine/brief-template.md) puts it. Check that this checkout's `origin` is that repo, and run the cross-check **Repo routing** gives. If the repo can't be resolved, isn't this checkout, or anything disagrees, stop and say which repo the issue needs. Never guess, and never work in another repo.
+4. **Repo.** Read the repo tag from the description. If it has none, resolve it per **Repo routing** and add the tag before starting, as the first line of the **Agent brief**, where [brief-template.md](../do-refine/brief-template.md) puts it. Check that this checkout's `origin` is that repo, and run the cross-check **Repo routing** gives. If the repo can't be resolved, isn't this checkout, or anything disagrees, stop and report which repo the issue needs, following the stop rule in [Delegated runs](#delegated-runs) when delegated. Never guess, and never work in another repo.
 5. **Context.** Read the brief's Context, the decisions and specs it links, and the files on its **Touches:** line. Use the repo's domain language if it keeps a glossary.
 
 ## 2. Claim
 
 Before any other work:
 
-- **Delegated run:** run the claim check and write no fields, per [Delegated runs](#delegated-runs).
+- **Delegated run:** run the claim check and write no fields, per [Delegated runs](#delegated-runs). If it fails, report the unrelated active claim per its stop rule, then stop.
 - **Non-delegated run:** assign the issue to yourself, move it to the in-progress status, and set the dispatch target label per **Dispatch targets**.
 
 Pick the label from the host environment, not from the model you run on. The tracker doc says which signal maps to which label; hosts usually announce themselves through environment variables (for example an Orca workspace id). Use a plain CLI label (for example Claude or Codex) only when no orchestrator's signal is set. In a non-delegated run, if the issue is already in progress and claimed by you or a dispatch integration for this run, only check the label.
