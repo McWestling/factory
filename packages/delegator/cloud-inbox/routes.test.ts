@@ -1408,6 +1408,40 @@ test('two machines claim from one queue: each job goes to one claim, and only it
   assert.deepEqual(await watching(OTHER_BEARER), ['session-2']);
 });
 
+// A job whose lease expired is pinned to the machine that held it. Stopping or delegating
+// again must still clear it, whether or not a claim has settled the row back to `queued`.
+for (const action of ['stopped', 'delegated again'] as const) {
+  for (const settled of [false, true]) {
+    test(`an expired claim pinned to an absent machine clears when ${action} (${settled ? 'after' : 'before'} settling)`, async () => {
+      const h = setup();
+      await h.created('session-1');
+      assert.equal((await h.claimed(BEARER))?.sessionId, 'session-1');
+      h.clock.now += LEASE_MS;
+      if (settled) assert.equal(await h.claimed(OTHER_BEARER), undefined);
+      assert.deepEqual(h.rows().jobs, [{ id: 'session-1', issue_id: 'issue-1', state: settled ? 'queued' : 'claimed' }]);
+
+      if (action === 'stopped') {
+        await h.deliver(h.stoppedPayload('session-1'));
+        assert.equal(await h.claimed(OTHER_BEARER), undefined);
+        assert.equal(await h.claimed(BEARER), undefined);
+        assert.deepEqual(h.rows().jobs, []);
+        assert.deepEqual(h.posts.at(-1), {
+          auth: 'Bearer access-example', sessionId: 'session-1', type: 'response', body: MESSAGES.stopped,
+        });
+      } else {
+        await h.created('session-2');
+        const next = await h.claimed(OTHER_BEARER);
+        assert.equal(next?.sessionId, 'session-2');
+        assert.equal(await h.claimed(BEARER), undefined);
+        assert.equal((await h.report('session-2', 'launched', next?.claimId)).status, 409, 'not without its bearer');
+        assert.equal((await call(h, 'POST', 'launched', next!.claimId, undefined, 'session-2', OTHER_BEARER)).status, 204);
+        assert.deepEqual(h.rows().jobs, [{ id: 'session-2', issue_id: 'issue-1', state: 'launched' }]);
+        assert.ok(h.posts.some((post) => post.sessionId === 'session-1' && post.body === MESSAGES.replaced));
+      }
+    });
+  }
+}
+
 for (const status of ['complete', 'error', 'stopped']) {
   test(`a ${status} session returns before any GitHub metadata read`, async () => {
     const h = await claimedJob();
