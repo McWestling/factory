@@ -382,7 +382,7 @@ function realInbox() {
   } }, auth as unknown as AppAuth, () => {}, linear, () => clock.now);
   const inboxConfig = { orgId: 'org', adminSecret: 'admin',
     app: { clientId: 'client', clientSecret: 'secret', webhookSecret: 'webhook' },
-    machines: { 'example-machine': config.bearerSecret } };
+    machines: { 'example-machine': config.bearerSecret, 'other-machine': 'bearer-other' } };
   const ops: string[] = [];
   let loseLaunched = 0;
   let loseThought = 0;
@@ -498,6 +498,37 @@ for (const restart of [false, true]) {
     assert.deepEqual(inbox.thoughts, ['Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing`.']);
   });
 }
+
+test("another machine can't relaunch a job whose launch report was lost; the original machine recovers it", async () => {
+  const inbox = realInbox();
+  await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
+  const a = fakes();
+  a.deps.fetch = inbox.fetch;
+  inbox.lose(1);
+  assert.equal(await poll(config, a.deps), true);
+  assert.deepEqual(inbox.state(), ['claimed']);
+
+  // A's lease runs out while it's away. B has no access to A's launches.json.
+  inbox.clock.now += 10 * 60_000;
+  const b = fakes();
+  b.deps.fetch = inbox.fetch;
+  const other = { ...config, bearerSecret: 'bearer-other', machine: 'Other Mac' };
+  assert.equal(await poll(other, b.deps), false);
+  assert.deepEqual(b.argv, []);
+  assert.deepEqual(inbox.state(), ['queued']);
+
+  // A comes back: the watch loop runs first, as at startup, then A reclaims and recovers.
+  await checkWatches(config, a.deps);
+  assert.equal(await poll(config, a.deps), true);
+  await inbox.queue.deliver();
+  assert.deepEqual(inbox.state(), ['launched']);
+  assert.equal(a.argv.filter((args) => args[0] === 'worktree').length, 1);
+  assert.equal(readFileSync(a.deps.launches, 'utf8'), '{}');
+  assert.equal(JSON.parse(readFileSync(a.deps.watches, 'utf8'))['session-1'].ready, true);
+  assert.deepEqual(inbox.thoughts, ['Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing`.']);
+  assert.equal(await poll(other, b.deps), false);
+  assert.deepEqual(b.argv, []);
+});
 
 // The fields below mirror the read-only Orca CLI JSON, with no live launches.
 const repoInfo = JSON.stringify({ ok: true, result: { repo: { id: 'repo-1', path: '/repos/repo' } } });

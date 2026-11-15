@@ -156,7 +156,7 @@ It never requeues explicitly. Before create, the Runner saves an intent in
 `launches.json` beside the config; it refuses to launch if that write fails. It records
 a successful create and whether Cloud Inbox accepted the "Started …" thought. If either
 the thought or launch report fails, the lease expires and Cloud Inbox hands the session
-back. A restarted Runner reports the saved launch without creating another worktree,
+back to this machine only, since no other machine can see its `launches.json`. A restarted Runner reports the saved launch without creating another worktree,
 and posts the thought only if its saved flag says it wasn't accepted.
 
 If the Runner dies during create or before recording its result, the saved intent lets

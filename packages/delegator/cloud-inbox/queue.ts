@@ -103,9 +103,14 @@ type LaunchData = {
 const HEAD = 'NOT EXISTS (SELECT 1 FROM outbox p WHERE p.session_id = o.session_id AND p.id < o.id)';
 
 /**
- * A job's id is its session id. Any machine may claim a waiting job; the claim records
+ * A job's id is its session id. Any machine may claim a new job; the claim records
  * which one did, and only that machine can use it. A job is waiting while `queued` or
  * `claimed` with an expired lease; each issue keeps only its newest waiting job.
+ *
+ * An expired lease doesn't prove no agent started: the launch report may be what was
+ * lost, and only the claiming machine's local state can tell. So once claimed, a job
+ * goes back on the queue for that machine alone. If it never returns, the job waits
+ * until the session is stopped or the issue is delegated again.
  *
  * Queue changes write the activities they need to the outbox in the same synchronous
  * step and call `schedule`; `deliver()` (the Durable Object's alarm) sends them later.
@@ -197,15 +202,16 @@ export class JobQueue {
     return 'queued';
   }
 
-  /** Claims the oldest waiting job for `machine` with a fresh lease, or returns undefined. */
+  /** Claims the oldest waiting job new or last held by `machine`, with a fresh lease, or returns undefined. */
   async claim(machine: string): Promise<Claim | undefined> {
     const now = this.#now();
     if (this.#settle(now)) this.#wake();
     const claimId = crypto.randomUUID();
     const [row] = this.#sql.exec(
       `UPDATE jobs SET state = 'claimed', lease_until = ?, updated_at = ?, claim_id = ?, machine = ?
-       WHERE id = (SELECT id FROM jobs WHERE state = 'queued' ORDER BY rowid LIMIT 1) RETURNING id, issue_id`,
-      now + LEASE_MS, now, claimId, machine).toArray();
+       WHERE id = (SELECT id FROM jobs WHERE state = 'queued' AND (machine IS NULL OR machine = ?) ORDER BY rowid LIMIT 1)
+       RETURNING id, issue_id`,
+      now + LEASE_MS, now, claimId, machine, machine).toArray();
     if (!row) return undefined;
     // The Runner owns the session now, so its queued thought is obsolete. One already in
     // flight is never retried: a failure updates a row that is gone.
@@ -429,7 +435,7 @@ export class JobQueue {
   }
 
   /**
-   * Drops expired history, puts expired leases back on the queue, and keeps only the
+   * Drops expired history, puts expired leases back on their machine's queue, and keeps only the
    * newest waiting job per issue, ending each replaced session. True if it replaced any.
    */
   #settle(now: number): boolean {

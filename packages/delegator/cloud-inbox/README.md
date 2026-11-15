@@ -35,7 +35,7 @@ makes Cloud Inbox return 503 until the configuration is corrected; stored jobs a
 installation are preserved.
 
 A `MACHINES` key names the machine in claims and logs. Renaming a key while it holds
-a claim strands that claim until its lease expires and the job goes back on the queue,
+a claim strands that job until the session is stopped or the issue is delegated again,
 and its launched jobs no longer show in its `GET /jobs/watching`.
 
 Every route below lives under `/delegator`, so a hostname can be shared with other
@@ -119,8 +119,13 @@ operation sends a fixed Linear query or mutation. A Linear failure on a read ans
 
 - `POST /jobs/claim` returns the oldest waiting job as `{issueId, sessionId, claimId}`
   (204 when none) and leases it for 10 minutes. `claimId` is new for every claim attempt.
-  An expired lease goes back on the queue, unless a newer job for the same issue is
-  waiting, which replaces it.
+  An expired lease goes back on the queue for the machine that held it, and only that
+  machine can claim it again, unless a newer job for the same issue is waiting, which
+  replaces it. An expired lease doesn't prove no agent started: the lost request may
+  have been the launch report, and only that machine's `launches.json` can tell. The
+  cost is availability: a job whose machine never comes back waits until the session
+  is stopped or the issue is delegated again, which starts a fresh job any machine can
+  claim.
 - `GET /jobs/watching` returns the calling machine's launched jobs as
   `[{issueId, sessionId, claimId, at}]`, excluding sessions already ended or superseded.
   `at` is the launch-report timestamp. This lets an upgraded Runner recover completion

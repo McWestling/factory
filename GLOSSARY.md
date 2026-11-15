@@ -29,7 +29,7 @@ One of `queued`, `claimed`, `launched`, or `failed`, tracked by the queue separa
 _Avoid_: job status
 
 **Lease**:
-The 10 minutes a claimed job stays with the Runner that claimed it; when it expires, the job goes back on the queue.
+The 10 minutes a claimed job stays with the Runner that claimed it; when it expires, the job goes back on the queue for that machine only.
 _Avoid_: lock, timeout
 
 **Machine**:
