@@ -280,7 +280,7 @@ export class JobQueue {
    * `response` or `error` ends the session, so later updates are refused.
    */
   async update(machine: string, id: string, claimId: string, type: UpdateType, body: string): Promise<'queued' | Refusal> {
-    // Older Runners use the same completion message; they must pass ownership checks too.
+    // Completion messages must pass ownership checks before ending the session.
     if (type === 'response' && body.startsWith('Opened ')) {
       const found = await this.watch(machine, id, claimId);
       if (typeof found === 'string') return found;

@@ -65,17 +65,15 @@ but never Linear access or refresh tokens. Rerun setup after an interruption;
 it preserves credentials and machine keys and doesn't redeploy a completed setup.
 Never rename the Worker: it selects the stored installation and jobs.
 
-For an existing installation, restore its checkpoint, or import its **complete,
-original** secrets before setup:
+For an existing installation, restore its original checkpoint before setup:
 
 ```sh
-npm run inbox -- import /path/to/private/.dev.vars
 npm run inbox -- setup
 ```
 
-Use its original account, Worker name and machine key. Import preserves every
-machine entry. Setup refuses existing remote secrets without a checkpoint/import;
-Wrangler cannot download secret values for recovery. Don't generate replacements.
+Use its original account, Worker name and machine key. Setup refuses existing
+remote secrets without the checkpoint; Wrangler cannot download secret values
+for recovery. Don't generate replacements.
 
 ## Connect and check
 

@@ -104,8 +104,7 @@ export type Storage = {
 };
 
 type PendingState = { value: string; verifier: string; expiresAt: number; reinstall: boolean };
-// orgId and clientId bind the token to the config that installed it. appName is the
-// app's name in Linear; installs from before it was stored lack it.
+// orgId and clientId bind the token to the config that installed it.
 type StoredToken = {
   accessToken: string; refreshToken: string; expiresAt: number; appUserId: string; appName?: string;
   orgId: string; clientId: string; scopes: string[];
@@ -289,7 +288,6 @@ export class AppAuth {
     if (await this.#storage.get('disconnecting')) throw new Error('Delegator is disconnected; retry disconnect before reconnecting');
     const token = await this.#storage.get<StoredToken>('token');
     if (!token) throw new Error('Delegator is not installed');
-    // Also catches records from before the identity was stored.
     if (!cloudInboxScopes(token.scopes) || token.orgId !== this.#orgId || token.clientId !== this.#client.clientId) {
       throw new Error('Delegator must be reinstalled: its token has other or unverified permissions or belongs to another org or client');
     }

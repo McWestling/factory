@@ -622,7 +622,7 @@ test('recovery posts a lost thought once and remembers it across another reclaim
   assert.deepEqual(inbox.state(), ['launched']);
 });
 
-for (const contents of ['{broken', 'null', '{"session-1":{"at":42}}']) {
+for (const contents of ['{broken', 'null', '{"session-1":42}', '{"session-1":{"at":42}}']) {
   test(`a corrupt launch file logs once per read without throwing: ${contents}`, async () => {
     const f = fakes(null);
     const logs: Record<string, string>[] = [];
@@ -652,14 +652,6 @@ test('a failed intent write refuses before a worktree can be created', async () 
   assert.equal(await handleJob(config, f.deps, claim), 'launch-record-failed');
   assert.deepEqual(f.argv, [['open', '--json'], ['repo', 'list', '--json']]);
   assert.deepEqual(f.requests.slice(-2), ['POST /jobs/session-1/updates', 'POST /jobs/session-1/failed']);
-});
-
-test('the previous numeric launch file still recovers without Orca', async () => {
-  const f = fakes();
-  writeFileSync(f.deps.launches, JSON.stringify({ 'session-1': Date.now() }));
-  assert.equal(await handleJob(config, f.deps, claim), 'launched');
-  assert.deepEqual(f.argv, []);
-  assert.deepEqual(f.requests, ['POST /jobs/session-1/launched']);
 });
 
 test('an empty queue claims nothing more', async () => {
