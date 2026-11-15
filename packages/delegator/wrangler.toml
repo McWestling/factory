@@ -1,4 +1,5 @@
-# The Cloud Inbox Worker. Secrets (LINEAR_ORG_ID, ADMIN_SECRET, MACHINES) are set with
+# The Cloud Inbox Worker. Secrets (LINEAR_ORG_ID, ADMIN_SECRET, LINEAR_CLIENT_ID,
+# LINEAR_CLIENT_SECRET, LINEAR_WEBHOOK_SECRET, MACHINES) are set with
 # `wrangler secret put`; see .dev.vars.example for their shape. Nothing private here.
 name = "factory-cloud-inbox"
 main = "cloud-inbox/worker.ts"

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { isAdmin, MachineAuth, readConfig, type Storage } from './auth.ts';
+import { AppAuth, isAdmin, readConfig, type Storage } from './auth.ts';
 
 const ORG = 'org-example';
-const REDIRECT = 'https://cloud-inbox.example/callback/example-machine';
+const REDIRECT = 'https://cloud-inbox.example/callback';
 const client = { clientId: 'client-example', clientSecret: 'client-secret-example' };
 const secret = 'x'.repeat(32);
 
@@ -58,7 +58,7 @@ function setup(org = ORG) {
   const storage = memoryStorage();
   const linear = fakeLinear(org);
   const clock = { now: 1_000_000 };
-  const auth = new MachineAuth(storage, client, ORG, linear.fetchFn, () => clock.now);
+  const auth = new AppAuth(storage, client, ORG, linear.fetchFn, () => clock.now);
   return { storage, linear, clock, auth };
 }
 
@@ -169,43 +169,39 @@ test('isAdmin accepts only Basic auth with the admin secret', () => {
   assert.equal(isAdmin(new Request('https://cloud-inbox.example'), secret), false);
 });
 
-const machine = { clientId: 'c', clientSecret: 'cs', webhookSecret: 'w', bearerSecret: secret };
-const env = { LINEAR_ORG_ID: ORG, ADMIN_SECRET: secret, MACHINES: JSON.stringify({ 'example-machine': machine }) };
+const app = { clientId: 'c', clientSecret: 'cs', webhookSecret: 'w' };
+const env = { LINEAR_ORG_ID: ORG, ADMIN_SECRET: secret, LINEAR_CLIENT_ID: app.clientId,
+  LINEAR_CLIENT_SECRET: app.clientSecret, LINEAR_WEBHOOK_SECRET: app.webhookSecret,
+  MACHINES: JSON.stringify({ 'example-machine': secret }) };
 
-test('readConfig accepts a complete config', () => {
-  assert.deepEqual(readConfig(env), { orgId: ORG, adminSecret: secret, machines: { 'example-machine': machine } });
+test('readConfig accepts one app and a bearer secret per machine', () => {
+  assert.deepEqual(readConfig(env), { orgId: ORG, adminSecret: secret, app, machines: { 'example-machine': secret } });
+  const machines = { first: secret, second: 'z'.repeat(32) };
+  assert.deepEqual(readConfig({ ...env, MACHINES: JSON.stringify(machines) }), { orgId: ORG, adminSecret: secret, app, machines });
 });
 
-const otherMachine = { ...machine, clientId: 'other-client', bearerSecret: 'z'.repeat(32) };
-
-test('readConfig accepts machines with distinct routing credentials', () => {
-  const machines = { first: machine, second: otherMachine };
-  assert.deepEqual(readConfig({ ...env, MACHINES: JSON.stringify(machines) }), {
-    orgId: ORG, adminSecret: secret, machines,
-  });
+test('readConfig rejects duplicate bearer secrets without exposing them', () => {
+  const problem = readConfig({ ...env, MACHINES: JSON.stringify({ first: secret, second: secret }) });
+  assert.equal(problem, 'MACHINES has duplicate bearer secrets');
 });
 
-for (const key of ['bearerSecret', 'clientId'] as const) {
-  test(`readConfig rejects duplicate ${key} without exposing credentials`, () => {
-    const machines = { first: machine, second: { ...otherMachine, [key]: machine[key] } };
-    const problem = readConfig({ ...env, MACHINES: JSON.stringify(machines) });
-    assert.equal(problem, `MACHINES has duplicate ${key} values`);
-    for (const entry of Object.values(machines)) {
-      assert.equal((problem as string).includes(entry.bearerSecret), false);
-      assert.equal((problem as string).includes(entry.clientSecret), false);
-    }
-  });
-}
+test('readConfig rejects the old per-machine app shape, naming the new one', () => {
+  const old = { clientId: 'c', clientSecret: 'cs', webhookSecret: 'w', bearerSecret: secret };
+  assert.equal(readConfig({ ...env, MACHINES: JSON.stringify({ m: old }) }),
+    'MACHINES.m must be a bearer secret of at least 32 characters');
+  assert.equal(readConfig({ ...env, LINEAR_CLIENT_ID: undefined }), 'LINEAR_CLIENT_ID is missing');
+});
 
 for (const [label, bad] of Object.entries({
   'no org id': { ...env, LINEAR_ORG_ID: '' },
   'a short admin secret': { ...env, ADMIN_SECRET: 'short' },
   'no machines': { ...env, MACHINES: undefined },
   'empty machines': { ...env, MACHINES: '{}' },
-  'a bad machine name': { ...env, MACHINES: JSON.stringify({ 'Bad/Name': machine }) },
-  'a missing machine secret': { ...env, MACHINES: JSON.stringify({ m: { ...machine, webhookSecret: '' } }) },
-  'a missing client secret': { ...env, MACHINES: JSON.stringify({ m: { ...machine, clientSecret: '' } }) },
-  'a short bearer secret': { ...env, MACHINES: JSON.stringify({ m: { ...machine, bearerSecret: 'short' } }) },
+  'a bad machine name': { ...env, MACHINES: JSON.stringify({ 'Bad/Name': secret }) },
+  'a missing webhook secret': { ...env, LINEAR_WEBHOOK_SECRET: '' },
+  'a missing client secret': { ...env, LINEAR_CLIENT_SECRET: '' },
+  'a short bearer secret': { ...env, MACHINES: JSON.stringify({ m: 'short' }) },
+  'a machines array': { ...env, MACHINES: JSON.stringify([secret]) },
 })) {
   test(`readConfig fails closed on ${label}, without echoing values`, () => {
     const problem = readConfig(bad);
@@ -217,14 +213,14 @@ for (const [label, bad] of Object.entries({
 test('a failed or unparseable token exchange stores nothing', async () => {
   for (const response of [new Response('denied', { status: 400 }), new Response('<html>', { status: 200 })]) {
     const storage = memoryStorage();
-    const auth = new MachineAuth(storage, client, ORG, async () => response.clone());
+    const auth = new AppAuth(storage, client, ORG, async () => response.clone());
     const state = stateOf((await auth.startInstall(REDIRECT, true))!);
     assert.deepEqual(await auth.completeInstall(state, 'code', REDIRECT), { ok: false, reason: 'exchange' });
     assert.equal(storage.data.has('token'), false);
   }
 });
 
-const install = async (auth: MachineAuth, admin = true) =>
+const install = async (auth: AppAuth, admin = true) =>
   auth.completeInstall(stateOf((await auth.startInstall(REDIRECT, admin))!), 'code', REDIRECT);
 const storedAccess = (storage: { data: Map<string, unknown> }) =>
   (storage.data.get('token') as { accessToken: string }).accessToken;
@@ -281,7 +277,7 @@ for (const [label, orgId, clientId, legacy] of [
       storage.data.set('token', old);
     }
     const moved = setup(orgId === ORG ? ORG : 'org-new').linear;
-    const changed = new MachineAuth(storage, { ...client, clientId }, orgId, moved.fetchFn, () => clock.now);
+    const changed = new AppAuth(storage, { ...client, clientId }, orgId, moved.fetchFn, () => clock.now);
     await assert.rejects(changed.getAccessToken(), /reinstalled/);
     clock.now += 23 * 60 * 60_000 + 1;
     await assert.rejects(changed.getAccessToken(), /reinstalled/);
@@ -326,7 +322,7 @@ test('the exchange is bound to its PKCE challenge, and exchange and refresh send
 for (const scope of [undefined, 'read write admin app:assignable', 'read app:assignable', 'read issues:create app:assignable', 'read', ['read', 1]]) {
   test(`a grant with unapproved permissions is rejected: ${JSON.stringify(scope)}`, async () => {
     const storage = memoryStorage();
-    const auth = new MachineAuth(storage, client, ORG, async () => Response.json({
+    const auth = new AppAuth(storage, client, ORG, async () => Response.json({
       access_token: 'access', refresh_token: 'refresh', expires_in: 86400, scope,
     }));
     assert.deepEqual(await install(auth), { ok: false, reason: 'exchange' });
@@ -359,7 +355,7 @@ test('a refresh cannot widen the stored permissions', async () => {
   await install(auth);
   const before = structuredClone(storage.data.get('token'));
   clock.now += 24 * 60 * 60_000;
-  const changed = new MachineAuth(storage, client, ORG, async () => Response.json({
+  const changed = new AppAuth(storage, client, ORG, async () => Response.json({
     access_token: 'broad-access', refresh_token: 'broad-refresh', expires_in: 86400,
     scope: 'read write admin app:assignable',
   }), () => clock.now);
@@ -371,7 +367,7 @@ test('a refresh cannot widen the stored permissions', async () => {
 test('legacy array-form scope responses are accepted with the same allowlist', async () => {
   const storage = memoryStorage();
   const linear = fakeLinear();
-  const auth = new MachineAuth(storage, client, ORG, async (input, init) => {
+  const auth = new AppAuth(storage, client, ORG, async (input, init) => {
     if (String(input) === 'https://api.linear.app/oauth/token') {
       return Response.json({ access_token: 'access', refresh_token: 'refresh', expires_in: 86400,
         scope: ['app:assignable', 'write', 'read'] });
@@ -385,7 +381,7 @@ test('legacy array-form scope responses are accepted with the same allowlist', a
 test('status checks Linear without exposing credentials; disconnect preserves unrelated storage', async () => {
   const { storage, linear } = setup();
   let revoked = false;
-  const auth = new MachineAuth(storage, client, ORG, async (input, init) => {
+  const auth = new AppAuth(storage, client, ORG, async (input, init) => {
     if (String(input).endsWith('/oauth/revoke')) { revoked = true; return new Response(); }
     if (revoked) return String(input).endsWith('/oauth/token')
       ? Response.json({ error: 'invalid_grant' }, { status: 400 }) : new Response(null, { status: 401 });
@@ -405,7 +401,7 @@ test('failed revocation blocks use and install until retried, without losing the
   const { storage, linear } = setup();
   let revoke = false;
   let fail = true;
-  const auth = new MachineAuth(storage, client, ORG, async (input, init) => {
+  const auth = new AppAuth(storage, client, ORG, async (input, init) => {
     if (String(input).endsWith('/oauth/revoke')) {
       if (fail) return new Response(null, { status: 503 });
       revoke = true;
@@ -428,7 +424,7 @@ test('disconnect waits for an initial callback so its newly issued credentials a
   const storage = memoryStorage();
   const linear = fakeLinear();
   let revoked = false;
-  const auth = new MachineAuth(storage, client, ORG, async (input, init) => {
+  const auth = new AppAuth(storage, client, ORG, async (input, init) => {
     if (String(input).endsWith('/oauth/revoke')) { revoked = true; return new Response(); }
     if (revoked) return String(input).endsWith('/oauth/token')
       ? Response.json({ error: 'invalid_grant' }, { status: 400 }) : new Response(null, { status: 401 });
@@ -451,7 +447,7 @@ test('revocation can report already unauthorized; success still requires both in
   const storage = memoryStorage();
   const linear = fakeLinear();
   let revoked = false;
-  const auth = new MachineAuth(storage, client, ORG, async (input, init) => {
+  const auth = new AppAuth(storage, client, ORG, async (input, init) => {
     const url = String(input);
     if (url.endsWith('/oauth/revoke')) { revoked = true; return new Response(null, { status: 401 }); }
     if (revoked) return url.endsWith('/oauth/token')
@@ -472,7 +468,7 @@ test('overlapping disconnects share revocation and cannot remove a subsequent re
   let reached!: () => void;
   const held = new Promise<void>((resolve) => { release = resolve; });
   const waiting = new Promise<void>((resolve) => { reached = resolve; });
-  const auth = new MachineAuth(storage, client, ORG, async (input, init) => {
+  const auth = new AppAuth(storage, client, ORG, async (input, init) => {
     const url = String(input);
     if (url.endsWith('/oauth/revoke')) {
       revocations++;
