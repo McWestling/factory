@@ -3,12 +3,11 @@ import { spawn, spawnSync } from 'node:child_process';
 import { chmod, readFile, rename, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
-import { parseEnv } from 'node:util';
 import { readConfig, sha256, type Config } from './auth.ts';
 
 type State = Partial<Record<'accountId' | 'name' | 'machine' | 'orgId' | 'adminSecret' | 'bearerSecret' |
   'clientId' | 'clientSecret' | 'webhookSecret' | 'origin' | 'registrationUrl', string>> & {
-  config?: Config; uploading?: boolean; uploaded?: boolean; imported?: boolean;
+  config?: Config; uploading?: boolean; uploaded?: boolean;
 };
 export type SetupIO = {
   ask(key: string, label: string, secret?: boolean): Promise<string>;
@@ -72,8 +71,8 @@ export async function setup(file: string, io: SetupIO): Promise<void> {
   if (!state.origin) {
     // Check before deploying: a lost checkpoint must never rotate existing remote secrets.
     const remote = JSON.parse(await run(['secret', 'list'])) as unknown[];
-    if (remote.length && !state.imported) {
-      throw new Error('This Worker already has secrets. Restore the checkpoint or run import with its original .dev.vars before setup.');
+    if (remote.length) {
+      throw new Error('This Worker already has secrets. Restore the original checkpoint before setup.');
     }
     const deployed = await run(['deploy', '--keep-vars']);
     const origin = deployed.match(/https:\/\/[a-z0-9.-]+\.workers\.dev\b/)?.[0];
@@ -111,8 +110,8 @@ export async function setup(file: string, io: SetupIO): Promise<void> {
   const config = validate(state);
   if (!state.uploaded) {
     const remote = JSON.parse(await run(['secret', 'list'])) as unknown[];
-    if (remote.length && !state.uploading && !state.imported) {
-      throw new Error('Remote secrets appeared during setup. Restore/import original configuration before continuing.');
+    if (remote.length && !state.uploading) {
+      throw new Error('Remote secrets appeared during setup. Restore the original checkpoint before continuing.');
     }
     state.uploading = true;
     await save(file, state);
@@ -122,7 +121,7 @@ export async function setup(file: string, io: SetupIO): Promise<void> {
   }
   io.say(`Setup URL: ${state.origin}/delegator/install`);
   io.say('Run npm run inbox -- connect to authorize, then npm run inbox -- status to check access.');
-  io.say('Owner authentication is saved in the private checkpoint. Back it up securely. Runner pairing is not implemented yet.');
+  io.say('Owner authentication is saved in the private checkpoint. Back it up securely.');
 }
 
 /** Deliberate correction/rotation of app credentials, preserving all machine authorities. */
@@ -192,20 +191,6 @@ async function main() {
     });
     return;
   }
-  if (action === 'import') {
-    if (Object.keys(await load(file)).length) throw new Error('Checkpoint exists. Restore a backup rather than overwriting it.');
-    const env = parseEnv(await readFile(process.argv[3] ?? '.dev.vars', 'utf8'));
-    const config = readConfig(env);
-    if (typeof config === 'string') throw new Error(config);
-    const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false });
-    try {
-      const machine = await rl.question('Existing stable machine key: ');
-      if (!Object.hasOwn(config.machines, machine)) throw new Error('Machine is not in imported config.');
-      await save(file, { config, machine, imported: true });
-    } finally { rl.close(); }
-    console.log('Imported original configuration. Run setup with the original Worker name and account.');
-    return;
-  }
   if (action === 'setup' || action === 'credentials') {
     const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false });
     try {
@@ -230,7 +215,7 @@ async function main() {
       async ask() { throw new Error('Run setup first.'); } });
     return;
   }
-  if (!['update', 'connect', 'reconnect', 'status', 'disconnect'].includes(action)) throw new Error('Use login, setup, import, credentials, viewer <name>, update, connect, reconnect, status or disconnect.');
+  if (!['update', 'connect', 'reconnect', 'status', 'disconnect'].includes(action)) throw new Error('Use login, setup, credentials, viewer <name>, update, connect, reconnect, status or disconnect.');
   const state = await load(file);
   const config = validate(state);
   if (!state.uploaded || !state.origin) throw new Error('Run setup first.');

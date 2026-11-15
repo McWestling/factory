@@ -107,8 +107,6 @@ export function startStatusHeartbeat(deps: Deps) {
   return setInterval(() => { writeStatus(deps); acknowledgeDrain(deps); }, 10_000);
 }
 
-/** Setup reads this from the installed bundle to know the Runner can drain. */
-export const DRAIN_PROTOCOL = 1;
 const active = new WeakMap<Deps, number>();
 
 /** Counts claim and watch work, so a drain is acknowledged only between operations. */
@@ -323,14 +321,13 @@ type Launch = {
   thoughtPosted: boolean;
   githubRepo?: string;
 };
-// Numbers are the previous file format: a confirmed local launch without thought metadata.
-type Launches = Record<string, Launch | number>;
+type Launches = Record<string, Launch>;
 
 function readLaunches(deps: Deps): Launches {
   try {
     const launches: unknown = JSON.parse(readFileSync(deps.launches, 'utf8'));
     if (!isObject(launches) || !Object.values(launches).every((entry) =>
-      typeof entry === 'number' ? Number.isFinite(entry) : isObject(entry)
+      isObject(entry)
         && typeof entry.at === 'number' && Number.isFinite(entry.at)
         && typeof entry.repo === 'string' && isAbsolute(entry.repo)
         && typeof entry.branch === 'string' && entry.branch.length <= 200 && BRANCH.test(entry.branch) && !entry.branch.includes('..')
@@ -351,7 +348,7 @@ function record(deps: Deps, log: (outcome: string) => void, change: (launches: L
     const launches = readLaunches(deps);
     change(launches);
     for (const [session, entry] of Object.entries(launches)) {
-      if (!((typeof entry === 'number' ? entry : entry.at) > Date.now() - LAUNCH_KEEP_MS)) delete launches[session];
+      if (!(entry.at > Date.now() - LAUNCH_KEEP_MS)) delete launches[session];
     }
     // Renamed into place, so a crash mid-write never leaves half a file.
     writeFileSync(`${deps.launches}.tmp`, JSON.stringify(launches), { mode: 0o600 });
@@ -497,8 +494,8 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
 }
 
 /** Reports a recorded launch, retaining its claim for completion watching. */
-async function reportLaunch(api: ReturnType<typeof inbox>, deps: Deps, claim: Claim, log: (outcome: string) => void, launch: Launch | number) {
-  if (typeof launch !== 'number' && !launch.thoughtPosted) {
+async function reportLaunch(api: ReturnType<typeof inbox>, deps: Deps, claim: Claim, log: (outcome: string) => void, launch: Launch) {
+  if (!launch.thoughtPosted) {
     const posted = await api.update(claim, 'thought', `Started ${launch.model} in Orca on \`${launch.branch}\`.`)
       .then(() => true, () => false);
     if (!posted) {
@@ -513,8 +510,8 @@ async function reportLaunch(api: ReturnType<typeof inbox>, deps: Deps, claim: Cl
     changeWatches(deps, (watches) => {
       if (watches[claim.sessionId]?.claimId !== claim.claimId) {
         const identifier = status(deps).current?.identifier;
-        watches[claim.sessionId] = { ...claim, at: typeof launch === 'number' ? launch : launch.at, ready: false,
-          ...(typeof launch !== 'number' && launch.githubRepo ? { launch: { repo: launch.githubRepo, branch: launch.branch } } : {}),
+        watches[claim.sessionId] = { ...claim, at: launch.at, ready: false,
+          ...(launch.githubRepo ? { launch: { repo: launch.githubRepo, branch: launch.branch } } : {}),
           ...(identifier && IDENTIFIER.test(identifier) ? { identifier } : {}) };
       }
     });
@@ -522,7 +519,7 @@ async function reportLaunch(api: ReturnType<typeof inbox>, deps: Deps, claim: Cl
     log('watch-save-failed');
     return 'launched';
   }
-  const evidence = typeof launch !== 'number' && launch.githubRepo ? { repo: launch.githubRepo, branch: launch.branch } : undefined;
+  const evidence = launch.githubRepo ? { repo: launch.githubRepo, branch: launch.branch } : undefined;
   if (await api.finish(claim, 'launched', evidence).then(() => true, () => false)) {
     try { changeWatches(deps, (watches) => { watches[claim.sessionId]!.ready = true; }); }
     catch { log('watch-save-failed'); }
@@ -585,7 +582,7 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
   };
 
   const saved = readLaunches(deps)[claim.sessionId];
-  if (saved !== undefined && (typeof saved === 'number' || saved.launched)) {
+  if (saved?.launched) {
     // Launched under an earlier claim whose report was lost: the agent is already running.
     log('launch-recovered');
     return reportLaunch(api, deps, claim, log, saved);
@@ -655,7 +652,7 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
   }
   const repoPath = paths[0]!;
 
-  if (saved && typeof saved !== 'number' && saved.repo === repoPath
+  if (saved && saved.repo === repoPath
     && saved.branch === branchName && Object.hasOwn(config.models, saved.model) && await hasWorktree(deps, saved)) {
     saved.launched = true;
     record(deps, log, (launches) => { launches[claim.sessionId] = saved; });
