@@ -22,13 +22,6 @@ const LABEL = 'com.factory.factory-delegator.runner';
 // Everything the installer bundles from source, checked byte for byte after staging.
 const BUNDLED = ['job.ts', 'parse-issue.ts', 'runner/runner.ts', 'runner/launchd/install.sh',
   'runner/launchd/runner.plist', 'menubar/menubar.plist'];
-const OLD_RUNNER = `The installed Runner predates safe draining, so setup won't restart it. Nothing was changed. To update it safely:
-  1. In the Factory Runner menu, turn on Pause new work.
-  2. Wait until the menu shows Paused, with no current job, for at least a minute.
-  3. Choose Stop Runner.
-  4. Rerun this command. It refreshes the stopped Runner and leaves it stopped.
-  5. Choose Start Runner, then turn off Pause new work.`;
-
 export type Result = { ok: boolean; line: string };
 export const lastLine = (error: unknown) =>
   String((error as { stderr?: unknown }).stderr ?? '').trim().split('\n').pop()?.slice(0, 300) || 'no output';
@@ -90,9 +83,6 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
 
   const running = await pid();
   if (running === 0) return fail('refused. The Runner agent is loaded but not running. Check ~/Library/Logs/factory-delegator, then rerun.');
-  if (running && !readFileSync(join(app, 'Contents/Resources/runner/runner.ts'), 'utf8').includes('DRAIN_PROTOCOL = 1')) {
-    return fail(`refused. ${OLD_RUNNER}`);
-  }
   /** Why a stopped Runner can't be refreshed now, or null when it's still stopped with readable state. */
   const stoppedRefusal = async () => {
     if (await pid() !== null) return fail('refused. The stopped Runner was started while setup was building. Nothing was replaced; rerun when it\'s idle.');
@@ -136,7 +126,7 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
       return ack?.nonce === nonce && ack.pid === running;
     });
     if (!acked || await pid() !== running) {
-      return fail('refused. The Runner is busy (a claim, job or watch check is in progress) or didn\'t confirm it was idle within 60 s. Nothing was changed; rerun when the menu shows nothing in progress. A Runner installed before saved watches stopped blocking updates also waits for Waiting for a PR to clear; to update it now, choose Stop Runner and rerun.');
+      return fail('refused. The Runner is busy (a claim, job or watch check is in progress) or didn\'t confirm it was idle within 60 s. Nothing was changed; rerun when the menu shows nothing in progress.');
     }
     try { await deps.exec('launchctl', ['bootout', service], 60_000); } catch {}
     if (!await wait(10, async () => await pid() === null)) {

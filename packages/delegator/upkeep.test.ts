@@ -12,7 +12,7 @@ const BUNDLED = ['job.ts', 'parse-issue.ts', 'runner/runner.ts', 'runner/launchd
   'runner/launchd/runner.plist', 'menubar/menubar.plist'];
 
 /** A disposable machine: real files under a temp home, with the installer and launchd faked. */
-function machine({ runner = 'running' as 'running' | 'stopped' | 'none', oldRunner = false } = {}) {
+function machine({ runner = 'running' as 'running' | 'stopped' | 'none' } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'upkeep-'));
   const stateDir = join(home, '.local/state/factory');
   const app = join(home, 'Applications/Factory Runner.app');
@@ -23,7 +23,7 @@ function machine({ runner = 'running' as 'running' | 'stopped' | 'none', oldRunn
     for (const file of BUNDLED) {
       mkdirSync(dirname(join(dir, 'Contents/Resources', file)), { recursive: true });
       writeFileSync(join(dir, 'Contents/Resources', file), version === 'source'
-        ? readFileSync(join(root, 'packages/delegator', file)) : `${oldRunner ? '' : 'export const DRAIN_PROTOCOL = 1;'} ${version}`);
+        ? readFileSync(join(root, 'packages/delegator', file)) : version);
     }
     mkdirSync(join(dir, 'Contents/MacOS'), { recursive: true });
     writeFileSync(join(dir, 'Contents/MacOS/FactoryRunnerMenuBar', ''), version);
@@ -252,14 +252,6 @@ test('an incompatible config refuses before the Runner is drained or replaced', 
   assert.match(machineA.m.output[0]!, /^runner: refused\. The installed config doesn't fit the new Runner \(--check-config broke\)/);
   assert.deepEqual(machineA.launchctl(), []);
   assert.match(machineA.bundled(), /old/);
-});
-
-test('an older Runner without drain support refuses with the safe manual procedure', async () => {
-  const machineA = machine({ oldRunner: true });
-  assert.equal(await machineA.run(), 1);
-  assert.match(machineA.m.output[0]!, /predates safe draining[\s\S]*Pause new work[\s\S]*Stop Runner[\s\S]*Rerun this command[\s\S]*Start Runner/);
-  assert.deepEqual(machineA.launchctl(), []);
-  assert.equal(machineA.m.calls.some((call) => call.startsWith('sh')), false);
 });
 
 test('a second setup refuses while one is running', async () => {
