@@ -535,8 +535,13 @@ const reports = new WeakMap<Deps, { next: Status | null }>();
 
 /**
  * Sends the status snapshot to Cloud Inbox's pool in the background, one report at a
- * time, so an older one can't land after a newer one. A report sent while one is in
- * flight replaces any still waiting. A slow or lost report never holds up a claim or a job.
+ * time, so they usually land in order. A report sent while one is in flight replaces any
+ * still waiting. A slow or lost report never holds up a claim or a job.
+ *
+ * shortcut: ordering is best effort within one process. A report that timed out here can
+ * still land after a newer one, and two processes for one machine can interleave. Fine
+ * for a status display; if the pool ever drives dispatch, have Cloud Inbox check a
+ * process generation and sequence number instead.
  */
 function report(config: RunnerConfig, deps: Deps) {
   const snapshot = structuredClone(status(deps));

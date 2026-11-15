@@ -178,9 +178,12 @@ operation sends a fixed Linear query or mutation. A Linear failure on a read ans
 
 Each Runner poll sends that machine's `status.json` to `PUT /pool/snapshot` (204), with
 no timer of its own, and once more when a job's issue is read, so the current job
-shows. A Runner sends one report at a time, and one waiting behind a slow report is
-replaced by any newer one, so an older status never lands after a newer one. The body must be a JSON object of at most 64 KiB (400 or 413 otherwise). Cloud
-Inbox keeps only the latest snapshot per machine and when it arrived. Only a machine's
+shows. A Runner sends one report at a time, and any newer report replaces one still
+waiting behind a slow one. Ordering is best effort, within one Runner process: a report
+the Runner gave up on after its 30-second timeout can still reach Cloud Inbox after a
+newer one, and two Runner processes for the same machine can interleave. Either leaves
+an older status until the next poll. The body must be a JSON object of at most 64 KiB
+(400 or 413 otherwise). Cloud Inbox keeps only the latest snapshot per machine and when it arrived. Only a machine's
 bearer secret can send one, and only for itself.
 
 `GET /pool` returns every machine in `MACHINES` with `Cache-Control: no-store`:
