@@ -51,7 +51,9 @@ an automatic installation. Setup asks for the Cloudflare account ID, Worker name
 stable machine key and Linear organization UUID (from your admin or Linear MCP).
 It deploys storage, generates owner and machine secrets, opens a prefilled private
 app-registration page, asks for the app's three credentials with hidden input,
-uploads configuration and returns the permanent setup URL. Keep webhook delivery
+uploads configuration, asks for an optional GitHub token for private repos (see the
+[technical reference](cloud-inbox/README.md#cloud-inbox) for which token to make) and
+returns the permanent setup URL. Keep webhook delivery
 enabled. No personal Linear API key or JSON editing is needed.
 
 The supported guided path uses the Worker's `workers.dev` HTTPS address. Custom
@@ -91,7 +93,8 @@ password (any username). Status checks the workspace and app identity against Li
 without returning a token. If access is missing or revoked, check the app and workspace,
 then reconnect; don't add scopes to bypass a failure. Correct a pasted app credential
 with `npm run inbox -- credentials`, then reconnect. This preserves owner/machine
-secrets and jobs; use the same app, not a replacement installation.
+secrets and jobs; use the same app, not a replacement installation. Set or replace the
+GitHub token, for example when it expires, with `npm run inbox -- github-token`.
 
 Deployment is separate from the intended everyday two-step connection: visit Cloud
 Inbox and authorize with Linear, then open the running Mac Runner and redeem a

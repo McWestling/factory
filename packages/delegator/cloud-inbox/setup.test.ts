@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { setup, credentials, type SetupIO } from './setup.ts';
+import { setup, credentials, githubToken, type SetupIO } from './setup.ts';
 
 test('setup resumes an interrupted registration and reruns without changing credentials or redeploying', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'inbox-test-'));
@@ -12,7 +12,7 @@ test('setup resumes an interrupted registration and reruns without changing cred
   let interrupted = true;
   const answers: Record<string, string> = {
     accountId: 'account-example', name: 'factory-cloud-inbox', machine: 'example-machine',
-    orgId: 'org-example', clientId: 'client-example', clientSecret: 'private-client', webhookSecret: 'private-webhook',
+    orgId: 'org-example', clientId: 'client-example', clientSecret: 'private-client', webhookSecret: 'private-webhook', githubToken: '',
   };
   const io: SetupIO = {
     async ask(key) {
@@ -68,7 +68,7 @@ test('an interrupted secret upload retries the identical complete configuration'
   let uploaded: string | undefined;
   let fail = true;
   const answers: Record<string, string> = { accountId: 'account-example', name: 'factory-cloud-inbox',
-    machine: 'example-machine', orgId: 'org-example', clientId: 'client-example', clientSecret: 'secret', webhookSecret: 'webhook' };
+    machine: 'example-machine', orgId: 'org-example', clientId: 'client-example', clientSecret: 'secret', webhookSecret: 'webhook', githubToken: '' };
   const io: SetupIO = {
     async ask(key) { return answers[key]!; }, say() {}, async open() {},
     async command(args, input) {
@@ -98,7 +98,7 @@ test('guided credential correction preserves owner, machine authority and identi
   const dir = await mkdtemp(join(tmpdir(), 'inbox-test-'));
   const file = join(dir, 'setup.local.json');
   const answers: Record<string, string> = { accountId: 'account-example', name: 'factory-cloud-inbox',
-    machine: 'example-machine', orgId: 'org-example', clientId: 'client-example', clientSecret: 'wrong-secret', webhookSecret: 'webhook' };
+    machine: 'example-machine', orgId: 'org-example', clientId: 'client-example', clientSecret: 'wrong-secret', webhookSecret: 'webhook', githubToken: '' };
   let upload = '';
   const io: SetupIO = {
     async ask(key) { return answers[key]!; }, say() {}, async open() {},
@@ -121,3 +121,34 @@ test('guided credential correction preserves owner, machine authority and identi
     assert.equal(JSON.parse(upload).LINEAR_CLIENT_SECRET, 'corrected-secret');
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+for (const token of ['', 'github-token-example']) {
+  test(`setup asks once for the GitHub token with hidden input and ${token ? 'stores it as a Worker secret' : 'skips an empty answer'}`, async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'inbox-test-'));
+    const file = join(dir, 'setup.local.json');
+    const answers: Record<string, string> = { accountId: 'account-example', name: 'factory-cloud-inbox',
+      machine: 'example-machine', orgId: 'org-example', clientId: 'client-example', clientSecret: 'secret', webhookSecret: 'webhook',
+      githubToken: token };
+    const hidden: string[] = [];
+    const puts: [string[], string | undefined][] = [];
+    const io: SetupIO = {
+      async ask(key, _label, secret) { if (secret) hidden.push(key); return answers[key]!; }, say() {}, async open() {},
+      async command(args, input) {
+        if (args.includes('deploy')) return 'https://factory-cloud-inbox.example.workers.dev';
+        if (args.includes('bulk')) assert.equal(JSON.parse(input!).GITHUB_TOKEN, undefined);
+        if (args.includes('put')) puts.push([args.slice(0, 3), input]);
+        return args.includes('list') ? '[]' : '';
+      },
+    };
+    try {
+      await setup(file, io);
+      assert.ok(hidden.includes('githubToken'));
+      assert.deepEqual(puts, token ? [[['secret', 'put', 'GITHUB_TOKEN'], token]] : []);
+      assert.doesNotMatch(await readFile(file, 'utf8'), /github-token-example/);
+      await setup(file, { ...io, async ask() { throw new Error('rerun must not prompt'); } });
+      answers.githubToken = 'github-token-rotated';
+      await githubToken(file, io);
+      assert.deepEqual(puts.at(-1), [['secret', 'put', 'GITHUB_TOKEN'], 'github-token-rotated']);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+}

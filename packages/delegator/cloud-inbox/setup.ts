@@ -8,7 +8,7 @@ import { readConfig, type Config } from './auth.ts';
 
 type State = Partial<Record<'accountId' | 'name' | 'machine' | 'orgId' | 'adminSecret' | 'bearerSecret' |
   'clientId' | 'clientSecret' | 'webhookSecret' | 'origin' | 'registrationUrl', string>> & {
-  config?: Config; uploading?: boolean; uploaded?: boolean; imported?: boolean;
+  config?: Config; uploading?: boolean; uploaded?: boolean; imported?: boolean; githubAsked?: boolean;
 };
 export type SetupIO = {
   ask(key: string, label: string, secret?: boolean): Promise<string>;
@@ -51,6 +51,15 @@ async function wranglerConfig(file: string, state: State) {
     .replace(/^main = .*$/m, `main = ${JSON.stringify(fileURLToPath(new URL('./worker.ts', import.meta.url)))}`);
   await writeFile(`${file}.toml`, toml, { mode: 0o600 });
   return ['--config', `${file}.toml`];
+}
+
+/** Asks for the GitHub token and stores it only as a Worker secret, never in the checkpoint. An empty answer skips it. */
+async function askGithubToken(file: string, state: State, io: SetupIO, run: SetupIO['command']) {
+  const token = (await io.ask('githubToken',
+    'GitHub fine-grained token with read-only Pull requests access, for private repos (Enter to skip)', true)).trim();
+  if (token) await run(['secret', 'put', 'GITHUB_TOKEN'], token);
+  state.githubAsked = true;
+  await save(file, state);
 }
 
 export async function setup(file: string, io: SetupIO): Promise<void> {
@@ -119,6 +128,7 @@ export async function setup(file: string, io: SetupIO): Promise<void> {
     state.uploaded = true;
     await save(file, state);
   }
+  if (!state.githubAsked) await askGithubToken(file, state, io, run);
   io.say(`Setup URL: ${state.origin}/delegator/install`);
   io.say('Run npm run inbox -- connect to authorize, then npm run inbox -- status to check access.');
   io.say('Owner authentication is saved in the private checkpoint. Back it up securely. Runner pairing is not implemented yet.');
@@ -137,6 +147,15 @@ export async function credentials(file: string, io: SetupIO): Promise<void> {
   state.uploading = true;
   await save(file, state);
   await setup(file, io);
+}
+
+/** Sets or replaces the GitHub token, for example when it expires. */
+export async function githubToken(file: string, io: SetupIO): Promise<void> {
+  const state = await load(file);
+  validate(state);
+  if (!state.uploaded) throw new Error('Run setup first.');
+  const flags = await wranglerConfig(file, state);
+  await askGithubToken(file, state, io, (args, input) => io.command([...args, ...flags], input));
 }
 
 async function main() {
@@ -184,10 +203,10 @@ async function main() {
     console.log('Imported original configuration. Run setup with the original Worker name and account.');
     return;
   }
-  if (action === 'setup' || action === 'credentials') {
+  if (action === 'setup' || action === 'credentials' || action === 'github-token') {
     const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false });
     try {
-      await (action === 'credentials' ? credentials : setup)(file, { command, open, say: console.log, async ask(_key, label, secret) {
+      await ({ setup, credentials, 'github-token': githubToken }[action])(file, { command, open, say: console.log, async ask(_key, label, secret) {
         if (!secret) return rl.question(`${label}: `);
         // Disable terminal echo while reading credentials; never put them in argv or logs.
         console.log(`${label} (input hidden):`);
@@ -203,7 +222,7 @@ async function main() {
     } finally { rl.close(); }
     return;
   }
-  if (!['update', 'connect', 'reconnect', 'status', 'disconnect'].includes(action)) throw new Error('Use login, setup, import, credentials, update, connect, reconnect, status or disconnect.');
+  if (!['update', 'connect', 'reconnect', 'status', 'disconnect'].includes(action)) throw new Error('Use login, setup, import, credentials, github-token, update, connect, reconnect, status or disconnect.');
   const state = await load(file);
   const config = validate(state);
   if (!state.uploaded || !state.origin) throw new Error('Run setup first.');

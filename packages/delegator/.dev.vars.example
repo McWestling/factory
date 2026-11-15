@@ -5,3 +5,5 @@ LINEAR_CLIENT_ID="replace-me"
 LINEAR_CLIENT_SECRET="replace-me"
 LINEAR_WEBHOOK_SECRET="replace-me"
 MACHINES='{"example-machine":"replace-with-at-least-32-random-characters"}'
+# Optional: a fine-grained token with read-only Pull requests access, for private repos.
+# GITHUB_TOKEN="replace-me"

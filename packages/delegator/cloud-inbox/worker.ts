@@ -16,6 +16,8 @@ interface Env {
   LINEAR_CLIENT_SECRET?: string;
   LINEAR_WEBHOOK_SECRET?: string;
   MACHINES?: string;
+  /** Optional: lets the PR check read private repos. */
+  GITHUB_TOKEN?: string;
 }
 
 /**
@@ -112,7 +114,8 @@ export class Machine extends DurableObject<Env> {
   }
 
   get #jobs(): JobQueue {
-    return (this.#queue ??= new JobQueue(this.ctx.storage.sql, this.#app, (at) => void this.ctx.storage.setAlarm(at)));
+    return (this.#queue ??= new JobQueue(this.ctx.storage.sql, this.#app, (at) => void this.ctx.storage.setAlarm(at),
+      undefined, undefined, this.env.GITHUB_TOKEN || undefined));
   }
 
   startInstall(redirectUri: string, admin: boolean) { return this.#app.startInstall(redirectUri, admin); }

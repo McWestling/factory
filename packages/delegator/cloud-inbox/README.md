@@ -34,6 +34,17 @@ characters and distinct. A missing or invalid secret, or a duplicate bearer secr
 makes Cloud Inbox return 503 until the configuration is corrected; stored jobs and the
 installation are preserved.
 
+An optional `GITHUB_TOKEN` secret lets the PR check below read pull requests in private
+repos. Without it, only public repos' PRs are seen. Make a fine-grained token (not a
+classic one) whose resource owner is the account or org that owns the repos, with
+**Only select repositories** set to the private repos Delegator works in and
+repository permission **Pull requests: Read-only**, nothing else. Add each new private
+repo to the token. One token covers one owner. If the org requires approval for
+fine-grained tokens, the PR check keeps getting 404 until it's approved; a token an org
+owner makes is approved automatically. The org may cap its lifetime (366 days by
+default), so note when it expires. Setup asks for it with hidden input; an empty answer
+skips it. Set or replace it later with `npm run inbox -- github-token`.
+
 A `MACHINES` key names the machine in claims and logs. Renaming a key while it holds
 a claim strands that job until the session is stopped or the issue is delegated again,
 and its launched jobs no longer show in its `GET /jobs/watching`.
@@ -163,7 +174,12 @@ operation sends a fixed Linear query or mutation. A Linear failure on a read ans
   not yet sent; once a session has ended, including by a stop, updates get 409.
 - `GET /jobs/<id>/watch` returns `{sessionStatus, pullRequests}`: Linear's session
   status and the issue's attachment URLs that are GitHub pull requests
-  (`https://github.com/<owner>/<repo>/pull/<n>`), oldest first.
+  (`https://github.com/<owner>/<repo>/pull/<n>`), oldest first. Each PR counts only once
+  GitHub's API confirms its base and head repo are the launch repo and its head branch is
+  the launch branch. That read sends `Authorization: Bearer <GITHUB_TOKEN>` when the
+  secret is set. If GitHub answers 401, 403 or 404 and no PR is confirmed, the session
+  gets the thought "Can't read the PR; check the GitHub token." once, and the job stays
+  watched.
 - `POST /jobs/<id>/pull-request` adds the first of those to the session as the
   "Pull request" link, waiting on Linear, and returns `{url}`; 409 when the issue has
   none. It takes no input. The Runner then posts the "Opened" `response` itself.
@@ -186,7 +202,9 @@ Linear's documented schema, not captured); check the Worker bundle with `npx wra
 ### Trust model
 
 Cloud Inbox is the middleman between Linear and the machines. It alone holds Linear
-credentials: its `read,write,app:assignable` grant and the app's client secret.
+credentials: its `read,write,app:assignable` grant and the app's client secret. It also
+holds the optional read-only `GITHUB_TOKEN`, sent only to `api.github.com` and never
+logged or returned.
 Machines hold only a bearer secret, and there is no Runner API or Durable Object method
 for lending a token. It rejects any other grant at installation and refresh, and refuses
 stored tokens with other or missing scopes.
