@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
@@ -15,11 +15,13 @@ const ORG = 'org-example';
 const WEBHOOK_SECRET = 'webhook-secret-example';
 const BEARER = 'b'.repeat(32);
 const OTHER_BEARER = 'o'.repeat(32);
+const VIEWER = 'v'.repeat(32);
 const config: Config = {
   orgId: ORG,
   adminSecret: 'a'.repeat(32),
   app: { clientId: 'client-example', clientSecret: 'client-secret-example', webhookSecret: WEBHOOK_SECRET },
   machines: { 'example-machine': BEARER, 'other-machine': OTHER_BEARER },
+  viewers: { 'example-viewer': createHash('sha256').update(VIEWER).digest('hex') },
 };
 const LEASE_MS = 10 * 60_000;
 
@@ -388,6 +390,67 @@ test('history and dedupe records are kept for 30 days', async () => {
   clock.now += 1;
   await claim();
   assert.deepEqual(rows(), { jobs: [], seen: [], outbox: [], ended: [] });
+});
+
+test('the pool lists every machine with its latest snapshot, offline once unseen for five minutes', async () => {
+  const { runner, clock, created } = setup();
+  await created('session-1');
+  const idle = { paused: false, current: null, recent: [] };
+  const paused = { paused: true, current: null, recent: [{ identifier: 'ABC-1', outcome: 'launched', time: 'earlier' }] };
+  assert.equal((await runner('PUT', '/pool/snapshot', BEARER, { ...idle, paused: true })).status, 204);
+  assert.equal((await runner('PUT', '/pool/snapshot', BEARER, idle)).status, 204);
+  const first = new Date(clock.now).toISOString();
+  clock.now += 60_000;
+  assert.equal((await runner('PUT', '/pool/snapshot', OTHER_BEARER, paused)).status, 204);
+  const second = new Date(clock.now).toISOString();
+  clock.now += 4 * 60_000 - 1;
+  const online = async () =>
+    (await (await runner('GET', '/pool')).json() as { machines: { online: boolean }[] }).machines.map((m) => m.online);
+  assert.deepEqual(await online(), [true, true]);
+  clock.now += 1;
+  const res = await runner('GET', '/pool');
+  assert.equal(res.headers.get('Cache-Control'), 'no-store');
+  assert.deepEqual(await res.json(), {
+    queueDepth: 1,
+    machines: [
+      { name: 'example-machine', online: false, lastSeenAt: first, snapshot: idle },
+      { name: 'other-machine', online: true, lastSeenAt: second, snapshot: paused },
+    ],
+  });
+});
+
+test('a configured machine that never reported is listed offline, and the queue depth counts waiting jobs', async () => {
+  const { runner, created, claim } = setup();
+  await created('session-1', 'issue-1');
+  await created('session-2', 'issue-2');
+  await claim();
+  assert.deepEqual(await (await runner('GET', '/pool')).json(), {
+    queueDepth: 1,
+    machines: [
+      { name: 'example-machine', online: false, lastSeenAt: null, snapshot: null },
+      { name: 'other-machine', online: false, lastSeenAt: null, snapshot: null },
+    ],
+  });
+});
+
+test('a viewer reads the pool and nothing else; no credential reads nothing', async () => {
+  const { runner, created, claimed, rows } = setup();
+  await created('session-1');
+  const pool = await runner('GET', '/pool', VIEWER);
+  assert.equal(pool.status, 200);
+  assert.equal((await pool.json() as { queueDepth: number }).queueDepth, 1);
+  assert.equal((await runner('POST', '/jobs/claim', VIEWER)).status, 403);
+  assert.equal((await runner('PUT', '/pool/snapshot', VIEWER, { paused: false })).status, 403);
+  assert.equal((await runner('GET', '/jobs/watching', VIEWER)).status, 403);
+  const job = await claimed();
+  for (const [method, op] of [['GET', 'task'], ['POST', 'launched'], ['POST', 'failed']]) {
+    assert.equal((await runner(method!, `/jobs/session-1/${op}?claimId=${job!.claimId}`, VIEWER)).status, 403, op);
+  }
+  assert.deepEqual(rows().jobs.map((j) => j.state), ['claimed']);
+  // Only the secret is accepted, never its stored hash.
+  assert.equal((await runner('GET', '/pool', config.viewers!['example-viewer'])).status, 401);
+  assert.equal((await runner('GET', '/pool', '')).status, 401);
+  assert.equal((await handleRunner(new Request('https://cloud-inbox.example/pool'), config, setup().inbox())).status, 401);
 });
 
 test('even an authenticated machine cannot retrieve a Linear token', async () => {
@@ -1318,7 +1381,7 @@ async function worker(h: Harness) {
   const names = new Set<string>();
   const env = { LINEAR_ORG_ID: config.orgId, ADMIN_SECRET: config.adminSecret, LINEAR_CLIENT_ID: config.app.clientId,
     LINEAR_CLIENT_SECRET: config.app.clientSecret, LINEAR_WEBHOOK_SECRET: config.app.webhookSecret,
-    MACHINES: JSON.stringify(config.machines),
+    MACHINES: JSON.stringify(config.machines), VIEWERS: JSON.stringify(config.viewers),
     MACHINE: { idFromName: (name: string) => { names.add(name); return name; }, get: () => inbox } };
   const inbox = new module.Machine({ storage: { ...h.storage, sql: h.sql, setAlarm: async () => {} } }, env);
   const owner = `Basic ${btoa(`owner:${config.adminSecret}`)}`;
@@ -1337,6 +1400,16 @@ test('Worker launch acknowledgement forwards evidence through the Durable Object
   assert.equal((await request('POST', `/jobs/session-1/launched?claimId=${claim.claimId}`, { body: launch })).status, 204);
   const recovered = await (await request('GET', '/jobs/watching')).json();
   assert.deepEqual(recovered[0].launch, launch);
+});
+
+test('the Worker keeps snapshots in the Durable Object and serves the pool to a viewer', async () => {
+  const { request } = await worker(setup());
+  assert.equal((await request('PUT', '/pool/snapshot', { body: { paused: true } })).status, 204);
+  const pool = await (await request('GET', '/pool', { auth: `Bearer ${VIEWER}` })).json();
+  assert.deepEqual(pool.machines.map((m: { name: string; snapshot: unknown }) => [m.name, m.snapshot]),
+    [['example-machine', { paused: true }], ['other-machine', null]]);
+  assert.equal((await request('POST', '/jobs/claim', { auth: `Bearer ${VIEWER}` })).status, 403);
+  assert.equal((await request('GET', '/pool', { auth: '' })).status, 401);
 });
 
 test('the Worker has one install, callback, status and disconnect, with no machine segment', async (t) => {

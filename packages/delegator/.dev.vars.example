@@ -5,3 +5,5 @@ LINEAR_CLIENT_ID="replace-me"
 LINEAR_CLIENT_SECRET="replace-me"
 LINEAR_WEBHOOK_SECRET="replace-me"
 MACHINES='{"example-machine":"replace-with-at-least-32-random-characters"}'
+# Optional: viewer name to the SHA-256 hex of its secret. `npm run inbox -- viewer <name>` adds one.
+VIEWERS='{}'

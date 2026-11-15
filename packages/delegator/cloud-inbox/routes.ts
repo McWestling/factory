@@ -2,14 +2,16 @@
 // a way to reach the shared queue, so `node:test` can drive the whole route.
 
 import { isLaunchEvidence } from '../job.ts';
-import { hex, timingSafeEqual, type Config } from './auth.ts';
-import { MAX_UPDATE_CHARS, type AgentEvent, type JobQueue, type Refusal, type UpdateType } from './queue.ts';
+import { hex, sha256, timingSafeEqual, type Config } from './auth.ts';
+import { MAX_UPDATE_CHARS, type AgentEvent, type JobQueue, type Refusal, type Snapshot, type UpdateType } from './queue.ts';
 
 const TIMESTAMP_WINDOW_MS = 60_000;
 /** Far above any agent session event; anything larger is refused before it's parsed. */
 export const MAX_WEBHOOK_BYTES = 1024 * 1024;
 /** Room for the longest status update in JSON, escapes included. */
 const MAX_UPDATE_BYTES = 16 * 1024;
+/** Far above a Runner's `status.json`, which keeps ten recent jobs. */
+const MAX_SNAPSHOT_BYTES = 64 * 1024;
 
 /** Every Cloud Inbox route lives here, so a shared hostname can route `/delegator/*` to this Worker. */
 export const BASE_PATH = '/delegator';
@@ -23,7 +25,7 @@ export function underBasePath(request: Request): Request | null {
 }
 
 /** The shared queue, as the Durable Object exposes it. */
-export type Inbox = Pick<JobQueue, 'webhook' | 'claim' | 'finish' | 'task' | 'update' | 'watch' | 'watching' | 'linkPullRequest'>;
+export type Inbox = Pick<JobQueue, 'webhook' | 'claim' | 'finish' | 'task' | 'update' | 'watch' | 'watching' | 'linkPullRequest' | 'report' | 'pool'>;
 
 // Logs ids and outcomes only: never bodies, headers, tokens or state.
 export const log = (fields: Record<string, string>) => console.log(JSON.stringify(fields));
@@ -144,20 +146,26 @@ async function readUpdate(request: Request): Promise<{ type: UpdateType; body: s
 }
 
 /**
- * `POST /jobs/claim`, and named operations on a claimed job:
- * `GET /jobs/<id>/task|watch`, `POST /jobs/<id>/updates|pull-request|launched|failed`,
- * each with `?claimId=<claimId>`. The machine comes only from the bearer secret that
- * matched, and the issue and session only from the job, never from the request.
+ * `GET /pool` for a viewer or a machine. For a machine only: `PUT /pool/snapshot`,
+ * `POST /jobs/claim`, and named operations on a claimed job: `GET /jobs/<id>/task|watch`,
+ * `POST /jobs/<id>/updates|pull-request|launched|failed`, each with `?claimId=<claimId>`.
+ * The machine comes only from the bearer secret that matched, and the issue and session
+ * only from the job, never from the request.
  */
 export async function handleRunner(request: Request, config: Config, inbox: Inbox) {
   const header = request.headers.get('Authorization') ?? '';
   const secret = header.startsWith('Bearer ') ? header.slice(7) : '';
   let machine: string | undefined;
-  // Compare against every machine, so the time taken doesn't say which matched.
+  let viewer = false;
+  // Compare against every machine and viewer, so the time taken doesn't say which matched.
   for (const [name, bearerSecret] of Object.entries(config.machines)) {
     if (timingSafeEqual(secret, bearerSecret)) machine = name;
   }
-  if (!machine) {
+  const hash = await sha256(secret);
+  for (const viewerHash of Object.values(config.viewers ?? {})) {
+    if (secret && timingSafeEqual(hash, viewerHash)) viewer = true;
+  }
+  if (!machine && !viewer) {
     log({ event: 'runner', outcome: 'unauthorized' });
     return text(401, 'Unauthorized', { 'WWW-Authenticate': 'Bearer' });
   }
@@ -165,6 +173,26 @@ export async function handleRunner(request: Request, config: Config, inbox: Inbo
   const url = new URL(request.url);
   const [, route, id, op, ...rest] = url.pathname.split('/');
   const method = request.method;
+
+  if (route === 'pool' && method === 'GET' && id === undefined) {
+    return Response.json(await inbox.pool(Object.keys(config.machines)), { headers: { 'Cache-Control': 'no-store' } });
+  }
+  // A viewer reads the pool and nothing else.
+  if (!machine) {
+    log({ event: 'runner', outcome: 'viewer-refused' });
+    return text(403, 'Forbidden');
+  }
+
+  if (route === 'pool') {
+    if (method !== 'PUT' || id !== 'snapshot' || op !== undefined) return text(404, 'Not found');
+    const raw = await readBounded(request, MAX_SNAPSHOT_BYTES);
+    if (!raw) return text(413, 'Payload too large');
+    let snapshot: unknown;
+    try { snapshot = JSON.parse(new TextDecoder().decode(raw)); } catch { snapshot = null; }
+    if (typeof snapshot !== 'object' || snapshot === null || Array.isArray(snapshot)) return text(400, 'Expected a JSON object');
+    await inbox.report(machine, snapshot as Snapshot);
+    return new Response(null, { status: 204 });
+  }
 
   if (method === 'GET' && route === 'jobs' && id === 'watching' && op === undefined) {
     return Response.json(await inbox.watching(machine));

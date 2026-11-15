@@ -4,7 +4,7 @@ import { chmod, readFile, rename, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
-import { readConfig, type Config } from './auth.ts';
+import { readConfig, sha256, type Config } from './auth.ts';
 
 type State = Partial<Record<'accountId' | 'name' | 'machine' | 'orgId' | 'adminSecret' | 'bearerSecret' |
   'clientId' | 'clientSecret' | 'webhookSecret' | 'origin' | 'registrationUrl', string>> & {
@@ -36,7 +36,8 @@ async function save(file: string, state: State) {
 /** The Worker secrets that hold `config`, as `readConfig` reads them. */
 const secrets = (config?: Partial<Config>) => ({ LINEAR_ORG_ID: config?.orgId, ADMIN_SECRET: config?.adminSecret,
   LINEAR_CLIENT_ID: config?.app?.clientId, LINEAR_CLIENT_SECRET: config?.app?.clientSecret,
-  LINEAR_WEBHOOK_SECRET: config?.app?.webhookSecret, MACHINES: JSON.stringify(config?.machines) });
+  LINEAR_WEBHOOK_SECRET: config?.app?.webhookSecret, MACHINES: JSON.stringify(config?.machines),
+  VIEWERS: JSON.stringify(config?.viewers ?? {}) });
 function validate(state: State): Config {
   const result = readConfig(secrets(state.config));
   if (typeof result === 'string') throw new Error(result);
@@ -139,6 +140,27 @@ export async function credentials(file: string, io: SetupIO): Promise<void> {
   await setup(file, io);
 }
 
+/**
+ * Issues a viewer secret, which reads the pool and nothing else, and prints it once.
+ * Cloud Inbox and the checkpoint keep only its hash. Reusing a name replaces that viewer.
+ */
+export async function viewer(file: string, name: string, io: SetupIO): Promise<void> {
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(name)) {
+    throw new Error('Name the viewer with lowercase letters, digits and hyphens, at most 63 characters.');
+  }
+  const state = await load(file);
+  const config = validate(state);
+  if (!state.uploaded || !state.origin) throw new Error('Run setup first.');
+  const secret = random();
+  state.config = { ...config, viewers: { ...config.viewers, [name]: await sha256(secret) } };
+  state.uploaded = false;
+  state.uploading = true;
+  await save(file, state);
+  await setup(file, io);
+  io.say(`Viewer ${name}: ${secret}`);
+  io.say('This is the only time it is shown. It reads GET /delegator/pool and nothing else.');
+}
+
 async function main() {
   process.umask(0o077);
   const action = process.argv[2] ?? 'setup';
@@ -203,7 +225,12 @@ async function main() {
     } finally { rl.close(); }
     return;
   }
-  if (!['update', 'connect', 'reconnect', 'status', 'disconnect'].includes(action)) throw new Error('Use login, setup, import, credentials, update, connect, reconnect, status or disconnect.');
+  if (action === 'viewer') {
+    await viewer(file, process.argv[3] ?? '', { command, open, say: console.log,
+      async ask() { throw new Error('Run setup first.'); } });
+    return;
+  }
+  if (!['update', 'connect', 'reconnect', 'status', 'disconnect'].includes(action)) throw new Error('Use login, setup, import, credentials, viewer <name>, update, connect, reconnect, status or disconnect.');
   const state = await load(file);
   const config = validate(state);
   if (!state.uploaded || !state.origin) throw new Error('Run setup first.');

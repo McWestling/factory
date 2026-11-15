@@ -34,6 +34,10 @@ characters and distinct. A missing or invalid secret, or a duplicate bearer secr
 makes Cloud Inbox return 503 until the configuration is corrected; stored jobs and the
 installation are preserved.
 
+An optional `VIEWERS` secret holds read-only viewers, as a JSON object of viewer name
+to the SHA-256 hex digest of that viewer's secret. Cloud Inbox never stores a viewer's
+secret itself.
+
 A `MACHINES` key names the machine in claims and logs. Renaming a key while it holds
 a claim strands that job until the session is stopped or the issue is delegated again,
 and its launched jobs no longer show in its `GET /jobs/watching`.
@@ -170,6 +174,36 @@ operation sends a fixed Linear query or mutation. A Linear failure on a read ans
 - A failed job takes no further operations.
 - There is no token-sharing endpoint; `GET /token` returns 404.
 
+### Pool status
+
+Each Runner poll sends that machine's `status.json` to `PUT /pool/snapshot` (204), with
+no timer of its own, and once more when a job's issue is read, so the current job
+shows. The body must be a JSON object of at most 64 KiB (400 or 413 otherwise). Cloud
+Inbox keeps only the latest snapshot per machine and when it arrived. Only a machine's
+bearer secret can send one, and only for itself.
+
+`GET /pool` returns every machine in `MACHINES` with `Cache-Control: no-store`:
+
+```json
+{
+  "queueDepth": 1,
+  "machines": [
+    { "name": "example-machine", "online": true, "lastSeenAt": "2026-01-01T00:00:00.000Z", "snapshot": { "paused": false, "current": null } }
+  ]
+}
+```
+
+A machine is offline once no snapshot has arrived for 5 minutes, and a machine that
+never sent one has null `lastSeenAt` and `snapshot`. A long job sends nothing until
+it ends, so its machine can show offline meanwhile. `queueDepth` counts the issues
+waiting to be claimed, expired leases included.
+
+A machine's bearer secret or a viewer secret can read the pool. A viewer secret reads
+`GET /pool` and nothing else: every other Runner API request gets 403, and a request
+with neither secret gets 401. Issue one with `npm run inbox -- viewer <name>` after
+setup. It prints the secret once and uploads only its hash to `VIEWERS`; running it
+again for the same name replaces that viewer's secret.
+
 Launched and failed jobs, the dedupe records and the ended sessions are kept 30 days. `cloud-inbox/queue.ts`
 holds the queue and outbox, on the Durable Object's SQLite storage.
 
@@ -194,6 +228,8 @@ stored tokens with other or missing scopes.
 A live check showed Linear refuses both agent activities and issue edits without
 `write`, so no narrower grant can acknowledge a task. The boundary is Cloud Inbox's code,
 not Linear's permissions: a compromised Cloud Inbox can edit issues in the workspace.
+
+A viewer secret reads the pool's snapshots and queue depth and nothing else.
 
 A machine's bearer secret allows only the named operations above, on jobs its own
 claims hold. It can't send GraphQL, pick an issue or session, or set a field outside an

@@ -13,6 +13,8 @@ const POST_TIMEOUT_MS = 10_000;
 // Leave room for Linear reads and linking within the Runner's 30-second deadline.
 const METADATA_TIMEOUT_MS = 5_000;
 const RETRY_MAX_MS = 60 * 60_000;
+/** A machine unseen this long is reported offline: many missed 15-second polls. */
+const OFFLINE_MS = 5 * 60_000;
 /** The longest status update a machine may post, in characters. */
 export const MAX_UPDATE_CHARS = 2000;
 /** The Dispatch target label a launch sets. The Runner only launches in Orca. */
@@ -80,6 +82,12 @@ export type Task = {
   statusType: string;
 };
 export type Watch = { sessionStatus: string; issueState?: string; pullRequests: string[] };
+/** What a Runner last reported, as it writes its local `status.json`. Cloud Inbox doesn't read it. */
+export type Snapshot = Record<string, unknown>;
+export type Pool = {
+  queueDepth: number;
+  machines: { name: string; online: boolean; lastSeenAt: string | null; snapshot: Snapshot | null }[];
+};
 
 type Id = { id?: string } | null | undefined;
 type TaskData = {
@@ -155,6 +163,33 @@ export class JobQueue {
     sql.exec(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL,
       type TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
       next_at INTEGER NOT NULL, queued INTEGER NOT NULL DEFAULT 0)`);
+    // Each machine's latest snapshot only; no history.
+    sql.exec('CREATE TABLE IF NOT EXISTS machines (name TEXT PRIMARY KEY, snapshot TEXT NOT NULL, seen_at INTEGER NOT NULL)');
+  }
+
+  /** Keeps `machine`'s latest snapshot and when it arrived. */
+  async report(machine: string, snapshot: Snapshot): Promise<void> {
+    this.#sql.exec(`INSERT INTO machines (name, snapshot, seen_at) VALUES (?, ?, ?)
+      ON CONFLICT (name) DO UPDATE SET snapshot = excluded.snapshot, seen_at = excluded.seen_at`,
+      machine, JSON.stringify(snapshot), this.#now());
+  }
+
+  /** Every named machine's latest snapshot, and how many issues wait for a claim. */
+  async pool(names: string[]): Promise<Pool> {
+    const now = this.#now();
+    const seen = new Map(this.#sql.exec('SELECT name, snapshot, seen_at FROM machines').toArray()
+      .map((row) => [String(row.name), row]));
+    const [waiting] = this.#sql.exec(`SELECT COUNT(DISTINCT issue_id) AS n FROM jobs
+      WHERE state = 'queued' OR (state = 'claimed' AND lease_until <= ?)`, now).toArray();
+    return {
+      queueDepth: Number(waiting?.n ?? 0),
+      machines: names.map((name) => {
+        const row = seen.get(name);
+        if (!row) return { name, online: false, lastSeenAt: null, snapshot: null };
+        const at = Number(row.seen_at);
+        return { name, online: now - at < OFFLINE_MS, lastSeenAt: new Date(at).toISOString(), snapshot: JSON.parse(String(row.snapshot)) };
+      }),
+    };
   }
 
   /** Acts on a webhook whose signature, timestamp and org the Worker already checked. */
