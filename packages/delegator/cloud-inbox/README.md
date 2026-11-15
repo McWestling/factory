@@ -178,7 +178,8 @@ operation sends a fixed Linear query or mutation. A Linear failure on a read ans
 
 Each Runner poll sends that machine's `status.json` to `PUT /pool/snapshot` (204), with
 no timer of its own, and once more when a job's issue is read, so the current job
-shows. The body must be a JSON object of at most 64 KiB (400 or 413 otherwise). Cloud
+shows. A Runner sends one report at a time, and one waiting behind a slow report is
+replaced by any newer one, so an older status never lands after a newer one. The body must be a JSON object of at most 64 KiB (400 or 413 otherwise). Cloud
 Inbox keeps only the latest snapshot per machine and when it arrived. Only a machine's
 bearer secret can send one, and only for itself.
 

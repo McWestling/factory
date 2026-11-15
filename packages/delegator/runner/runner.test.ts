@@ -829,6 +829,33 @@ test('a job reports its issue as current once the task is read, and a failed rep
   assert.deepEqual(JSON.parse(readFileSync(g.deps.status, 'utf8')).recent.map((entry: { outcome: string }) => entry.outcome), ['launched']);
 });
 
+test('reports go out one at a time, so a slow older report never lands after a newer one', async () => {
+  const f = fakes();
+  const fetch = f.deps.fetch;
+  const arrived: { paused: boolean; current: { identifier: string } | null }[] = [];
+  let inFlight = 0;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  f.deps.fetch = async (input, init) => {
+    if (!String(input).endsWith('/pool/snapshot')) return fetch(input, init);
+    assert.equal(++inFlight, 1, 'one report at a time');
+    if (!arrived.length) await held; // The first, idle report is slow to reach Cloud Inbox.
+    arrived.push(JSON.parse(String(init?.body)));
+    inFlight--;
+    return new Response(null, { status: 204 });
+  };
+  assert.equal(await poll(config, f.deps), true, 'a slow report never holds up the job');
+  writeFileSync(f.deps.paused, '');
+  assert.equal(await poll(config, f.deps), false);
+  release();
+  for (let i = 0; i < 50 && arrived.length < 2; i++) await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  // The job's report was superseded while it waited, so only the newest state follows the slow one.
+  assert.deepEqual(arrived.map((snapshot) => [snapshot.paused, snapshot.current?.identifier ?? null]),
+    [[false, null], [true, null]]);
+  assert.deepEqual(arrived[1], JSON.parse(readFileSync(f.deps.status, 'utf8')));
+});
+
 test('a status write failure logs once without stopping polls and later writes recover', async () => {
   const f = fakes();
   const logs: Record<string, string>[] = [];

@@ -419,6 +419,38 @@ test('the pool lists every machine with its latest snapshot, offline once unseen
   });
 });
 
+test('a refused snapshot leaves the previous one in place', async () => {
+  const { runner, inbox } = setup();
+  const previous = { paused: false, current: null };
+  assert.equal((await runner('PUT', '/pool/snapshot', BEARER, previous)).status, 204);
+  const put = (body: BodyInit, headers?: Record<string, string>) =>
+    handleRunner(new Request('https://cloud-inbox.example/pool/snapshot', {
+      method: 'PUT', headers: { Authorization: `Bearer ${BEARER}`, ...headers }, body, duplex: 'half',
+    } as RequestInit), config, inbox());
+  const chunk = new Uint8Array(16 * 1024).fill(0x20);
+  let pulled = 0;
+  let cancelled = false;
+  const endless = new ReadableStream<Uint8Array>({
+    pull(controller) { pulled += chunk.length; controller.enqueue(chunk); },
+    cancel() { cancelled = true; },
+  }, { highWaterMark: 0 });
+  for (const [body, status, headers] of [
+    ['{"paused": tru', 400],
+    ['null', 400],
+    ['[]', 400],
+    ['"text"', 400],
+    [`{"pad":"${'x'.repeat(64 * 1024)}"}`, 413],
+    ['{}', 413, { 'Content-Length': String(64 * 1024 + 1) }],
+    [endless, 413],
+  ] as [BodyInit, number, Record<string, string>?][]) {
+    assert.equal((await put(body, headers)).status, status, String(body).slice(0, 20));
+  }
+  assert.equal(cancelled, true);
+  assert.ok(pulled <= 64 * 1024 + chunk.length, `read ${pulled} bytes`);
+  const { machines } = await (await runner('GET', '/pool')).json() as { machines: { snapshot: unknown }[] };
+  assert.deepEqual(machines[0]!.snapshot, previous);
+});
+
 test('a configured machine that never reported is listed offline, and the queue depth counts waiting jobs', async () => {
   const { runner, created, claim } = setup();
   await created('session-1', 'issue-1');

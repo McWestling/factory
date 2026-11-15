@@ -533,10 +533,28 @@ async function reportLaunch(api: ReturnType<typeof inbox>, deps: Deps, claim: Cl
   return 'launched';
 }
 
-/** Sends the status snapshot to Cloud Inbox's pool, unawaited: a slow or lost report never holds up a claim or a job. */
-async function report(config: RunnerConfig, deps: Deps) {
-  await inbox(config, deps).report(status(deps)).catch((error: Error) =>
-    deps.log({ event: 'report', outcome: error.message.startsWith('cloud-inbox-') ? error.message : 'unreachable' }));
+/** The newest snapshot waiting behind each Runner's report in flight. */
+const reports = new WeakMap<Deps, { next: Status | null }>();
+
+/**
+ * Sends the status snapshot to Cloud Inbox's pool in the background, one report at a
+ * time, so an older one can't land after a newer one. A report sent while one is in
+ * flight replaces any still waiting. A slow or lost report never holds up a claim or a job.
+ */
+function report(config: RunnerConfig, deps: Deps) {
+  const snapshot = structuredClone(status(deps));
+  const queued = reports.get(deps);
+  if (queued) { queued.next = snapshot; return; }
+  const state: { next: Status | null } = { next: snapshot };
+  reports.set(deps, state);
+  void (async () => {
+    for (let next; (next = state.next);) {
+      state.next = null;
+      await inbox(config, deps).report(next).catch((error: Error) =>
+        deps.log({ event: 'report', outcome: error.message.startsWith('cloud-inbox-') ? error.message : 'unreachable' }));
+    }
+    reports.delete(deps);
+  })();
 }
 
 /** Checks one claimed job, launches it if it passes, and reports the outcome. */
@@ -583,7 +601,7 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
   } catch {
     return refuse('task-unreadable', `Couldn't read the issue from Cloud Inbox. Check that Cloud Inbox is connected. ${RETRY}`);
   }
-  void report(config, deps);
+  report(config, deps);
   if (task.delegated !== true) {
     // Reporting ends the claim; Cloud Inbox clears the delegate only while it's still this app.
     log('undelegated');
@@ -673,7 +691,7 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
 /** One poll: claims a job and handles it. Returns whether there was one. */
 export async function poll(config: RunnerConfig, deps: Deps): Promise<boolean> {
   writeStatus(deps);
-  void report(config, deps);
+  report(config, deps);
   const value = status(deps);
   // Checked and counted with no await between, so a drain can't slip in before the claim.
   if (value.paused || drainRequest(deps)) return false;
