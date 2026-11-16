@@ -46,8 +46,9 @@ Also requiring the deployed Inbox and checkpoint: `npm run inbox -- update`
 deploys code while preserving configuration, tokens and jobs;
 `npm run inbox -- credentials` corrects the original app's credentials;
 `npm run inbox -- disconnect` blocks token use and verifies revocation at Linear;
-`npm run inbox -- reconnect` starts browser approval again. A failed disconnect
-leaves credentials blocked for retry. Jobs survive disconnection. These commands
+`npm run inbox -- reconnect` starts browser approval again;
+`npm run inbox -- viewer <name>` issues a read-only [viewer secret](#pool-status).
+A failed disconnect leaves credentials blocked for retry. Jobs survive disconnection. These commands
 do not remove Cloudflare resources or Linear app registrations.
 
 Delegate a disposable issue to the app and check for its queued thought while the
@@ -63,6 +64,7 @@ bundle validation are in [Test locally](../README.md#test-locally); they need no
 - `ADMIN_SECRET`: owner password for HTTP Basic authentication (any username).
 - `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`, `LINEAR_WEBHOOK_SECRET`: one app.
 - `MACHINES`: JSON map of machine key to unique bearer secret, at least 32 characters.
+- `VIEWERS` (optional): JSON map of viewer name to the SHA-256 hex of its secret.
 
 Invalid configuration returns 503 without deleting jobs or installation state.
 Only Cloud Inbox stores and refreshes Linear access and refresh tokens.
@@ -70,7 +72,8 @@ Only Cloud Inbox stores and refreshes Linear access and refresh tokens.
 ## Routes
 
 All routes are under `/delegator`. Owner routes require the Basic password;
-Runner routes require `Authorization: Bearer <machine secret>`.
+Runner routes require `Authorization: Bearer <machine secret>`; `GET /pool` also
+accepts a viewer secret.
 
 | Method and path | Purpose |
 | --- | --- |
@@ -86,8 +89,25 @@ Runner routes require `Authorization: Bearer <machine secret>`.
 | `POST /jobs/<id>/launched` or `/jobs/<id>/failed` | Records outcome and queues field writes. |
 | `GET /jobs/<id>/watch` | Reads session, issue and verified PR status. |
 | `POST /jobs/<id>/pull-request` | Links a verified PR from this launch. |
+| `PUT /pool/snapshot` | Stores this machine's latest `status.json` (JSON object, at most 64 KiB). |
+| `GET /pool` | Lists every machine's latest snapshot, last-seen time and online state, plus queue depth. |
 
 Per-job routes require `?claimId=<claimId>` and reject another machine's claim.
 Expired leases return to the same machine only. Stop or delegate again if that
 machine cannot return. Webhook activities and field writes retry through a durable
 outbox; delivery is at least once. There is no token-sharing endpoint.
+
+### Pool status
+
+Each Runner poll sends its `status.json` to `PUT /pool/snapshot`, plus once when a
+job's issue is read. Cloud Inbox keeps only each machine's latest snapshot. A machine
+is offline after 5 minutes unseen, so a long job can show offline until it ends.
+`queueDepth` counts issues waiting to be claimed, expired leases included.
+
+A Runner sends one report at a time and keeps only the newest waiting. Ordering is
+best effort within one process: a report the Runner timed out on, or a second Runner
+process for the same machine, can leave an older status until the next poll.
+
+`npm run inbox -- viewer <name>` prints a viewer secret once and uploads only its
+hash. A viewer secret reads `GET /pool` and gets 403 everywhere else; running the
+command again for the same name replaces the secret.

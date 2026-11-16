@@ -262,6 +262,7 @@ function inbox(config: RunnerConfig, deps: Deps) {
       }
       return value as { sessionStatus: string; issueState?: string; pullRequests: string[] };
     },
+    report: (snapshot: Status) => call('PUT', '/pool/snapshot', snapshot),
     link: async (claim: Claim) => {
       const value: unknown = await (await call('POST', job(claim, 'pull-request'))).json();
       if (!isObject(value) || typeof value.url !== 'string'
@@ -531,6 +532,35 @@ async function reportLaunch(api: ReturnType<typeof inbox>, deps: Deps, claim: Cl
   return 'launched';
 }
 
+/** The newest snapshot waiting behind each Runner's report in flight. */
+const reports = new WeakMap<Deps, { next: Status | null }>();
+
+/**
+ * Sends the status snapshot to Cloud Inbox's pool in the background, one report at a
+ * time, so they usually land in order. A report sent while one is in flight replaces any
+ * still waiting. A slow or lost report never holds up a claim or a job.
+ *
+ * shortcut: ordering is best effort within one process. A report that timed out here can
+ * still land after a newer one, and two processes for one machine can interleave. Fine
+ * for a status display; if the pool ever drives dispatch, have Cloud Inbox check a
+ * process generation and sequence number instead.
+ */
+function report(config: RunnerConfig, deps: Deps) {
+  const snapshot = structuredClone(status(deps));
+  const queued = reports.get(deps);
+  if (queued) { queued.next = snapshot; return; }
+  const state: { next: Status | null } = { next: snapshot };
+  reports.set(deps, state);
+  void (async () => {
+    for (let next; (next = state.next);) {
+      state.next = null;
+      await inbox(config, deps).report(next).catch((error: Error) =>
+        deps.log({ event: 'report', outcome: error.message.startsWith('cloud-inbox-') ? error.message : 'unreachable' }));
+    }
+    reports.delete(deps);
+  })();
+}
+
 /** Checks one claimed job, launches it if it passes, and reports the outcome. */
 export async function handleJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<string> {
   const value = status(deps);
@@ -575,6 +605,7 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
   } catch {
     return refuse('task-unreadable', `Couldn't read the issue from Cloud Inbox. Check that Cloud Inbox is connected. ${RETRY}`);
   }
+  report(config, deps);
   if (task.delegated !== true) {
     // Reporting ends the claim; Cloud Inbox clears the delegate only while it's still this app.
     log('undelegated');
@@ -664,6 +695,7 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
 /** One poll: claims a job and handles it. Returns whether there was one. */
 export async function poll(config: RunnerConfig, deps: Deps): Promise<boolean> {
   writeStatus(deps);
+  report(config, deps);
   const value = status(deps);
   // Checked and counted with no await between, so a drain can't slip in before the claim.
   if (value.paused || drainRequest(deps)) return false;

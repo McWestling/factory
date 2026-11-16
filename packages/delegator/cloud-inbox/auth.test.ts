@@ -175,9 +175,14 @@ const env = { LINEAR_ORG_ID: ORG, ADMIN_SECRET: secret, LINEAR_CLIENT_ID: app.cl
   MACHINES: JSON.stringify({ 'example-machine': secret }) };
 
 test('readConfig accepts one app and a bearer secret per machine', () => {
-  assert.deepEqual(readConfig(env), { orgId: ORG, adminSecret: secret, app, machines: { 'example-machine': secret } });
+  assert.deepEqual(readConfig(env), { orgId: ORG, adminSecret: secret, app, machines: { 'example-machine': secret }, viewers: {} });
   const machines = { first: secret, second: 'z'.repeat(32) };
-  assert.deepEqual(readConfig({ ...env, MACHINES: JSON.stringify(machines) }), { orgId: ORG, adminSecret: secret, app, machines });
+  assert.deepEqual(readConfig({ ...env, MACHINES: JSON.stringify(machines) }), { orgId: ORG, adminSecret: secret, app, machines, viewers: {} });
+});
+
+test('readConfig accepts viewers stored as secret hashes', () => {
+  const viewers = { 'example-viewer': 'ab'.repeat(32) };
+  assert.deepEqual((readConfig({ ...env, VIEWERS: JSON.stringify(viewers) }) as { viewers: unknown }).viewers, viewers);
 });
 
 test('readConfig rejects duplicate bearer secrets without exposing them', () => {
@@ -202,6 +207,9 @@ for (const [label, bad] of Object.entries({
   'a missing client secret': { ...env, LINEAR_CLIENT_SECRET: '' },
   'a short bearer secret': { ...env, MACHINES: JSON.stringify({ m: 'short' }) },
   'a machines array': { ...env, MACHINES: JSON.stringify([secret]) },
+  'unparseable viewers': { ...env, VIEWERS: secret },
+  'a viewer secret instead of its hash': { ...env, VIEWERS: JSON.stringify({ v: secret }) },
+  'a bad viewer name': { ...env, VIEWERS: JSON.stringify({ 'Bad/Name': 'ab'.repeat(32) }) },
 })) {
   test(`readConfig fails closed on ${label}, without echoing values`, () => {
     const problem = readConfig(bad);

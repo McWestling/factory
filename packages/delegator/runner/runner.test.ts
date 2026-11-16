@@ -45,6 +45,7 @@ const orcaError = (code: string) => Object.assign(new Error('exit 1'), { stdout:
 function fakes(task: Partial<Task> | null = goodTask, orca: (string | Error)[] = [ok, ok]) {
   const requests: string[] = [];
   const updates: [string, string][] = [];
+  const snapshots: { paused: boolean; current: { identifier: string } | null }[] = [];
   const argv: string[][] = [];
   const stateDir = mkdtempSync(join(tmpdir(), 'runner-watch-'));
   const deps: Deps = {
@@ -52,6 +53,11 @@ function fakes(task: Partial<Task> | null = goodTask, orca: (string | Error)[] =
       const url = new URL(String(input));
       assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer bearer-example');
       const path = url.pathname.replace('/delegator', '');
+      if (path === '/pool/snapshot') {
+        assert.equal(init?.method, 'PUT');
+        snapshots.push(JSON.parse(String(init?.body)));
+        return new Response(null, { status: 204 });
+      }
       requests.push(`${init?.method} ${path}`);
       if (path === '/jobs/claim') return Response.json(claim);
       assert.equal(url.searchParams.get('claimId'), 'claim-1');
@@ -77,7 +83,7 @@ function fakes(task: Partial<Task> | null = goodTask, orca: (string | Error)[] =
     status: join(stateDir, 'status.json'),
     paused: join(stateDir, 'paused'),
   };
-  return { deps, requests, updates, argv };
+  return { deps, requests, updates, snapshots, argv };
 }
 
 test('a launched job keeps its claim for completion watching after a restart', async () => {
@@ -787,6 +793,59 @@ test('pause prevents claims while recovery and PR watching continue, and removal
   fs.unlinkSync(f.deps.paused);
   assert.equal(await poll(config, f.deps), true);
   assert.equal(JSON.parse(readFileSync(f.deps.status, 'utf8')).paused, false);
+});
+
+test('each poll reports the status snapshot to Cloud Inbox, even while paused', async () => {
+  const f = fakes();
+  writeFileSync(f.deps.paused, '');
+  assert.equal(await poll(config, f.deps), false);
+  assert.deepEqual(f.requests, []);
+  assert.equal(f.snapshots.length, 1);
+  assert.equal(f.snapshots[0]!.paused, true);
+  assert.deepEqual(f.snapshots[0], JSON.parse(readFileSync(f.deps.status, 'utf8')));
+});
+
+test('a job reports its issue as current once the task is read, and a failed report never stops it', async () => {
+  const f = fakes();
+  await poll(config, f.deps);
+  assert.deepEqual(f.snapshots.map((snapshot) => snapshot.current?.identifier ?? null), [null, 'ABC-123']);
+
+  const g = fakes();
+  const fetch = g.deps.fetch;
+  const logged: string[] = [];
+  g.deps.log = (fields) => { logged.push(`${fields.event} ${fields.outcome}`); };
+  g.deps.fetch = async (input, init) => String(input).endsWith('/pool/snapshot')
+    ? new Response(null, { status: 404 }) : fetch(input, init);
+  assert.equal(await poll(config, g.deps), true);
+  assert.ok(logged.includes('report cloud-inbox-404'));
+  assert.deepEqual(JSON.parse(readFileSync(g.deps.status, 'utf8')).recent.map((entry: { outcome: string }) => entry.outcome), ['launched']);
+});
+
+test('reports go out one at a time, so a slow older report never lands after a newer one', async () => {
+  const f = fakes();
+  const fetch = f.deps.fetch;
+  const arrived: { paused: boolean; current: { identifier: string } | null }[] = [];
+  let inFlight = 0;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  f.deps.fetch = async (input, init) => {
+    if (!String(input).endsWith('/pool/snapshot')) return fetch(input, init);
+    assert.equal(++inFlight, 1, 'one report at a time');
+    if (!arrived.length) await held; // The first, idle report is slow to reach Cloud Inbox.
+    arrived.push(JSON.parse(String(init?.body)));
+    inFlight--;
+    return new Response(null, { status: 204 });
+  };
+  assert.equal(await poll(config, f.deps), true, 'a slow report never holds up the job');
+  writeFileSync(f.deps.paused, '');
+  assert.equal(await poll(config, f.deps), false);
+  release();
+  for (let i = 0; i < 50 && arrived.length < 2; i++) await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  // The job's report was superseded while it waited, so only the newest state follows the slow one.
+  assert.deepEqual(arrived.map((snapshot) => [snapshot.paused, snapshot.current?.identifier ?? null]),
+    [[false, null], [true, null]]);
+  assert.deepEqual(arrived[1], JSON.parse(readFileSync(f.deps.status, 'utf8')));
 });
 
 test('a status write failure logs once without stopping polls and later writes recover', async () => {
