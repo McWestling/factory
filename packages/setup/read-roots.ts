@@ -7,7 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import type { Result } from '../delegator/upkeep.ts';
 import type { SetupDeps } from './setup.ts';
 
-const events = (stdout: string): any[] => stdout.split('\n').filter((line) => line.trim()).map((line) => JSON.parse(line));
+export const events = (stdout: string): any[] => stdout.split('\n').filter((line) => line.trim()).map((line) => JSON.parse(line));
 const within = (path: string, root: string) => path === root || root === '/' || path.startsWith(`${root}/`);
 const GLOB = /[\\*?[\]{}]/g;
 
@@ -124,6 +124,9 @@ async function choose(deps: SetupDeps, ask: NonNullable<SetupDeps['ask']>, root:
   }
 }
 
+export const output = (deps: SetupDeps, file: string, args: string[]) => deps.exec(file, args, 180_000).then(({ stdout }) => stdout,
+  (error) => { if ((error as { killed?: boolean }).killed) throw new Error(`${file} timed out`); return String((error as { stdout?: unknown }).stdout ?? ''); });
+
 const CODEX = ' Codex already reads anywhere, so nothing was added.';
 
 /** Grants read access to the chosen roots for each agent, and with --verify proves it; at a terminal only. */
@@ -153,8 +156,6 @@ export async function readRoots(deps: SetupDeps, agents: string[]): Promise<Resu
     return [{ ok: false, line: `read roots: couldn't write a probe file to check them (${(error as Error).message}).` }];
   }
   const list = probes.map((probe) => probe.path).join('\n');
-  const output = (file: string, args: string[]) => deps.exec(file, args, 180_000).then(({ stdout }) => stdout,
-    (error) => { if ((error as { killed?: boolean }).killed) throw new Error(`${file} timed out`); return String((error as { stdout?: unknown }).stdout ?? ''); });
   const results: Result[] = [];
   try {
     for (const name of agents) {
@@ -165,10 +166,10 @@ export async function readRoots(deps: SetupDeps, agents: string[]): Promise<Resu
           if (!grant.ok) { results.push(grant); continue; }
           deps.print(grant.line);
           // Default mode and only the Read tool, so the settings alone decide, and nothing can be edited or run.
-          results.push(line(claudeReadVerdict(await output('claude', ['-p', `Use the Read tool to read each of these files, then reply with the word done. Do not call any other tool.\n${list}`,
+          results.push(line(claudeReadVerdict(await output(deps, 'claude', ['-p', `Use the Read tool to read each of these files, then reply with the word done. Do not call any other tool.\n${list}`,
             '--output-format', 'stream-json', '--verbose', '--tools', 'Read', '--permission-mode', 'default', '--no-session-persistence']), probes)));
         } else {
-          results.push(line(codexReadVerdict(await output('codex', ['exec', '--sandbox', 'read-only', '--ephemeral', '--json', '--skip-git-repo-check',
+          results.push(line(codexReadVerdict(await output(deps, 'codex', ['exec', '--sandbox', 'read-only', '--ephemeral', '--json', '--skip-git-repo-check',
             `Print each of these files with cat, then reply with the word done. Do not change any file.\n${list}`]), probes), CODEX));
         }
       } catch (error) {
