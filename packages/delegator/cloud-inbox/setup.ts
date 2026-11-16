@@ -7,7 +7,7 @@ import { parseEnv } from 'node:util';
 import { readConfig, type Config } from './auth.ts';
 
 type State = Partial<Record<'accountId' | 'name' | 'machine' | 'orgId' | 'adminSecret' | 'bearerSecret' |
-  'clientId' | 'clientSecret' | 'webhookSecret' | 'origin' | 'registrationUrl', string>> & {
+  'clientId' | 'clientSecret' | 'webhookSecret' | 'origin' | 'registrationUrl' | 'githubOwner', string>> & {
   config?: Config; uploading?: boolean; uploaded?: boolean; imported?: boolean; githubAsked?: boolean;
 };
 export type SetupIO = {
@@ -53,11 +53,28 @@ async function wranglerConfig(file: string, state: State) {
   return ['--config', `${file}.toml`];
 }
 
-/** Asks for the GitHub token and stores it only as a Worker secret, never in the checkpoint. An empty answer skips it. */
+/**
+ * Opens GitHub's token page prefilled for the PR check, then stores the pasted token only as
+ * a Worker secret, never in the checkpoint. An empty owner or token skips it.
+ */
 async function askGithubToken(file: string, state: State, io: SetupIO, run: SetupIO['command']) {
-  const token = (await io.ask('githubToken',
-    'GitHub fine-grained token with read-only Pull requests access, for private repos (Enter to skip)', true)).trim();
-  if (token) await run(['secret', 'put', 'GITHUB_TOKEN'], token);
+  const owner = state.githubOwner
+    ?? (await io.ask('githubOwner', 'GitHub user or org that owns the private repos Delegator works in (Enter to skip)')).trim();
+  if (owner) {
+    if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(owner)) throw new Error('Use a GitHub user or org name. Rerun setup.');
+    state.githubOwner = owner;
+    await save(file, state);
+    // GitHub can't preselect repositories, so the operator picks them.
+    const url = new URL('https://github.com/settings/personal-access-tokens/new');
+    url.search = new URLSearchParams({ name: 'Delegator PR check',
+      description: 'Lets Cloud Inbox read pull requests in private repos for Delegator.',
+      target_name: owner, expires_in: '366', pull_requests: 'read' }).toString();
+    io.say('Create the GitHub token on this prefilled page: under Repository access, choose Only select repositories and pick the private repos Delegator works in, then generate it.');
+    io.say(url.href);
+    await io.open(url.href).catch(() => io.say('Could not open a browser; open the link above.'));
+    const token = (await io.ask('githubToken', 'GitHub token', true)).trim();
+    if (token) await run(['secret', 'put', 'GITHUB_TOKEN'], token);
+  }
   state.githubAsked = true;
   await save(file, state);
 }

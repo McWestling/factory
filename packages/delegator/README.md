@@ -51,9 +51,9 @@ an automatic installation. Setup asks for the Cloudflare account ID, Worker name
 stable machine key and Linear organization UUID (from your admin or Linear MCP).
 It deploys storage, generates owner and machine secrets, opens a prefilled private
 app-registration page, asks for the app's three credentials with hidden input,
-uploads configuration, asks for an optional GitHub token for private repos (see the
-[technical reference](cloud-inbox/README.md#cloud-inbox) for which token to make) and
-returns the permanent setup URL. Keep webhook delivery
+uploads configuration, opens a prefilled GitHub page for an optional token for private
+repos (see the [technical reference](cloud-inbox/README.md#cloud-inbox)) and returns the
+permanent setup URL. Keep webhook delivery
 enabled. No personal Linear API key or JSON editing is needed.
 
 The supported guided path uses the Worker's `workers.dev` HTTPS address. Custom

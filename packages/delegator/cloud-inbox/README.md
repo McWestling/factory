@@ -42,8 +42,11 @@ repository permission **Pull requests: Read-only**, nothing else. Add each new p
 repo to the token. One token covers one owner. If the org requires approval for
 fine-grained tokens, the PR check keeps getting 404 until it's approved; a token an org
 owner makes is approved automatically. The org may cap its lifetime (366 days by
-default), so note when it expires. Setup asks for it with hidden input; an empty answer
-skips it. Set or replace it later with `npm run inbox -- github-token`.
+default), so note when it expires. Setup asks for the owner, then opens GitHub's token
+page with the name, owner, a 366-day expiry and the Pull requests permission filled in.
+GitHub can't preselect repositories, so pick them there and generate the token. Setup
+then reads it with hidden input. An empty owner or token skips it. Set or replace it
+later with `npm run inbox -- github-token`, which reuses the saved owner.
 
 A `MACHINES` key names the machine in claims and logs. Renaming a key while it holds
 a claim strands that job until the session is stopped or the issue is delegated again,
