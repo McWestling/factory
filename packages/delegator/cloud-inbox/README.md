@@ -74,16 +74,18 @@ Only Cloud Inbox stores and refreshes Linear access and refresh tokens.
 
 `GITHUB_TOKEN` (optional) lets the PR check read pull requests in private repos;
 without it only public repos' PRs are seen. Use a fine-grained token, not a classic
-one, owned by the account or org that owns the repos, with **Only select
-repositories** and **Pull requests: Read-only**, nothing else. One token covers one
-owner; add each new private repo to it. An org that requires approval returns 404
-until it approves the token (an org owner's token is approved automatically), and may
-cap its lifetime (366 days by default).
+one, owned by the account or org that owns the repos, with **All repositories** and
+**Pull requests: Read-only**, nothing else, so new repos need no change. The token can
+read PRs and repo metadata in that owner's repos, not code or issues. One token covers
+one owner. An org that requires approval returns 404 until it approves the token (an
+org owner's token is approved automatically). An org that caps token lifetime makes
+GitHub ask for an expiry; replace the token before it ends.
 
-Setup asks for the owner and opens GitHub's token page with the name, owner, a
-366-day expiry and the permission filled in. GitHub can't preselect repositories, so
-pick them there, generate the token and paste it; setup reads it with hidden input and
-stores it only as a Worker secret. An empty owner or token skips it. Replace it, for
+Setup asks for the owner and opens GitHub's token page with the name, owner, no
+expiry and the permission filled in. GitHub can't preselect repository access, so
+choose **All repositories** there, check that **Pull requests: Read-only** is still
+listed, generate the token and paste it; setup reads it with hidden input and stores
+it only as a Worker secret. An empty owner or token skips it. Replace it, for
 example when it expires, with `npm run inbox -- github-token`, which reuses the saved
 owner. Cloud Inbox sends it only to `api.github.com` and never logs or returns it.
 

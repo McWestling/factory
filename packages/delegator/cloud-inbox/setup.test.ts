@@ -155,7 +155,7 @@ for (const owner of ['', 'example-org']) {
         assert.equal(page.origin + page.pathname, 'https://github.com/settings/personal-access-tokens/new');
         assert.deepEqual(Object.fromEntries(page.searchParams), { name: 'Delegator PR check',
           description: 'Lets Cloud Inbox read pull requests in private repos for Delegator.',
-          target_name: 'example-org', expires_in: '366', pull_requests: 'read' });
+          target_name: 'example-org', expires_in: 'none', pull_requests: 'read' });
         assert.ok(hidden.includes('githubToken'));
         assert.deepEqual(puts, [[['secret', 'put', 'GITHUB_TOKEN'], 'github-token-example']]);
       }

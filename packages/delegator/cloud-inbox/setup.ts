@@ -64,12 +64,12 @@ async function askGithubToken(file: string, state: State, io: SetupIO, run: Setu
     if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(owner)) throw new Error('Use a GitHub user or org name. Rerun setup.');
     state.githubOwner = owner;
     await save(file, state);
-    // GitHub can't preselect repositories, so the operator picks them.
+    // GitHub can't preselect repository access, so the operator chooses it.
     const url = new URL('https://github.com/settings/personal-access-tokens/new');
     url.search = new URLSearchParams({ name: 'Delegator PR check',
       description: 'Lets Cloud Inbox read pull requests in private repos for Delegator.',
-      target_name: owner, expires_in: '366', pull_requests: 'read' }).toString();
-    io.say('Create the GitHub token on this prefilled page: under Repository access, choose Only select repositories and pick the private repos Delegator works in, then generate it.');
+      target_name: owner, expires_in: 'none', pull_requests: 'read' }).toString();
+    io.say('Create the GitHub token on this prefilled page: under Repository access, choose All repositories, check that Pull requests is still Read-only, then generate it.');
     io.say(url.href);
     await io.open(url.href).catch(() => io.say('Could not open a browser; open the link above.'));
     const token = (await io.ask('githubToken', 'GitHub token', true)).trim();
