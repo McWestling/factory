@@ -36,6 +36,10 @@ export const outsideRunner = (stateDir: string): number => {
   return alive(status?.pid) && Date.now() - Date.parse(status.updatedAt) < 30_000 ? status.pid : 0;
 };
 
+/** The Runner's pid from launchd: 0 when loaded but not running (KeepAlive may restart it any moment), null when not loaded. */
+export const runnerPid = (deps: UpkeepDeps) => deps.exec('launchctl', ['print', `gui/${deps.uid}/${LABEL}`], 30_000)
+  .then(({ stdout }) => Number(/^\s*pid = (\d+)$/m.exec(stdout)?.[1] ?? 0), () => null);
+
 /** Rebuilds an installed Runner app, swapping it in only once the Runner is proven idle. */
 export async function updateRunner(deps: UpkeepDeps): Promise<Result> {
   try { return await runner(deps); } catch (error) {
@@ -59,13 +63,6 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
   if (!existsSync(app) && existsSync(previous)) renameSync(previous, app);
   if (!existsSync(app)) return { ok: true, line: 'runner: skipped. No Factory Runner app is installed.' };
 
-  /** The loaded Runner's pid, 0 when loaded but not running, or null when not loaded. */
-  const pid = async () => {
-    try {
-      const { stdout } = await deps.exec('launchctl', ['print', service], 30_000);
-      return Number(/^\s*pid = (\d+)$/m.exec(stdout)?.[1] ?? 0);
-    } catch { return null; }
-  };
   const wait = async (seconds: number, done: () => Promise<boolean>) => {
     for (let i = 0; i < seconds; i++) { if (await done()) return true; await deps.sleep(1000); }
     return done();
@@ -74,18 +71,18 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
     try { await deps.exec('launchctl', ['bootstrap', `gui/${deps.uid}`, plist], 30_000); } catch { return 0; }
     let started = 0;
     await wait(30, async () => {
-      const current = await pid(), status = readJson(join(deps.stateDir, 'status.json'));
+      const current = await runnerPid(deps), status = readJson(join(deps.stateDir, 'status.json'));
       if (current && status?.pid === current && Date.parse(status.updatedAt) >= after - 1000) started = current;
       return started > 0;
     });
     return started;
   };
 
-  const running = await pid();
+  const running = await runnerPid(deps);
   if (running === 0) return fail('refused. The Runner agent is loaded but not running. Check ~/Library/Logs/factory-delegator, then rerun.');
   /** Why a stopped Runner can't be refreshed now, or null when it's still stopped with readable state. */
   const stoppedRefusal = async () => {
-    if (await pid() !== null) return fail('refused. The stopped Runner was started while setup was building. Nothing was replaced; rerun when it\'s idle.');
+    if (await runnerPid(deps) !== null) return fail('refused. The stopped Runner was started while setup was building. Nothing was replaced; rerun when it\'s idle.');
     const outside = outsideRunner(deps.stateDir);
     if (outside) return fail(`refused. A Runner process (pid ${outside}) is running outside launchd. Stop it, then rerun.`);
     // Saved watches resume after a restart, but only if the new Runner can read them.
@@ -125,11 +122,11 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
       const ack = readJson(`${drain}.ack`);
       return ack?.nonce === nonce && ack.pid === running;
     });
-    if (!acked || await pid() !== running) {
+    if (!acked || await runnerPid(deps) !== running) {
       return fail('refused. The Runner is busy (a claim, job or watch check is in progress) or didn\'t confirm it was idle within 60 s. Nothing was changed; rerun when the menu shows nothing in progress.');
     }
     try { await deps.exec('launchctl', ['bootout', service], 60_000); } catch {}
-    if (!await wait(10, async () => await pid() === null)) {
+    if (!await wait(10, async () => await runnerPid(deps) === null)) {
       return fail('failed. Couldn\'t stop the Runner to replace it. The installed bundle is unchanged.');
     }
   }
@@ -158,7 +155,7 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
     return { ok: true, line: `runner: refreshed and restarted (pid ${running} → ${started}).` };
   }
   try { await deps.exec('launchctl', ['bootout', service], 60_000); } catch {}
-  if (!await wait(10, async () => await pid() === null)) {
+  if (!await wait(10, async () => await runnerPid(deps) === null)) {
     return fail(`failed. The new Runner didn't confirm it started, and it couldn't be stopped, so both bundles were left in place: the new one at ${app}, the previous one at ${previous}. To roll back, run \`launchctl bootout ${service}\` until \`launchctl print ${service}\` fails, move the new bundle aside, rename the previous one to ${app}, then turn the Runner On in the Factory Runner menu. Don't rerun setup first; it replaces the previous bundle.`);
   }
   rmSync(failed, { recursive: true, force: true });

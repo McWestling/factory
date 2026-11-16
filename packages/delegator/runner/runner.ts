@@ -11,6 +11,8 @@ import { isLaunchEvidence, type Claim, type LaunchEvidence } from '../job.ts';
 import { LEVELS, matchModel, parseIssue, type Level } from '../parse-issue.ts';
 
 export const CONFIG_PATH = join(homedir(), '.config', 'factory-delegator', 'config.json');
+const ENDED_STATUSES = ['complete', 'error', 'stopped'];
+const LIVE_STATUSES = ['pending', 'active', 'awaitingInput', 'stale'];
 const POLL_MS = 15_000;
 /** Cloud Inbox's history window: a session not reclaimed by then never will be. */
 const LAUNCH_KEEP_MS = 30 * 24 * 60 * 60_000;
@@ -24,7 +26,7 @@ export type RunnerConfig = {
   /** The Linear app's name, as Cloud Inbox's queued thought shows it. */
   machine: string;
   allowedCreatorIds: readonly string[];
-  /** Preferred models name → how Orca starts it. */
+  /** Model name selected by a level or [model=] pin → how Orca starts it. */
   models: Readonly<Record<string, ModelSettings>>;
   levels: Readonly<Record<Level, string>>;
   skill: string;
@@ -442,12 +444,12 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
         });
       }
       const status = await api.watch(job);
-      if (['complete', 'error', 'stopped'].includes(status.sessionStatus)) {
+      if (ENDED_STATUSES.includes(status.sessionStatus)) {
         change((current) => delete current[job.sessionId]);
         log('ended');
         continue;
       }
-      if (!['pending', 'active', 'awaitingInput', 'stale'].includes(status.sessionStatus)) {
+      if (!LIVE_STATUSES.includes(status.sessionStatus)) {
         throw new Error('unknown session status');
       }
       if (!job.ready) change((current) => { current[job.sessionId]!.ready = true; });
@@ -456,11 +458,11 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
         const url = await api.link(job);
         // A stop or final reply can land while the link is being added.
         const latest = await api.watch(job);
-        if (['complete', 'error', 'stopped'].includes(latest.sessionStatus)) {
+        if (ENDED_STATUSES.includes(latest.sessionStatus)) {
           change((current) => delete current[job.sessionId]);
           continue;
         }
-        if (!['pending', 'active', 'awaitingInput', 'stale'].includes(latest.sessionStatus)) throw new Error('unknown session status');
+        if (!LIVE_STATUSES.includes(latest.sessionStatus)) throw new Error('unknown session status');
         if (!latest.pullRequests.includes(url)) { log('pr-unconfirmed'); continue; }
         body = `Opened ${url}.`;
       } else if (status.issueState === 'canceled') {
@@ -478,7 +480,7 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
         // 409 can also mean the PR attachment vanished; keep an otherwise active watch.
         try {
           const latest = await api.watch(job);
-          if (['complete', 'error', 'stopped'].includes(latest.sessionStatus)) {
+          if (ENDED_STATUSES.includes(latest.sessionStatus)) {
             change((current) => delete current[job.sessionId]);
           }
         } catch (retryError) {

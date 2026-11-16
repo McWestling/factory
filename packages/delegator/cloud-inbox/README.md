@@ -1,250 +1,113 @@
-# Delegator technical reference
+# Cloud Inbox
 
-For architecture and setup, see the [Delegator README](../README.md).
-Paths below are relative to `packages/delegator`.
+Cloud Inbox is Delegator's hosted service: one Cloudflare Worker, one
+SQLite-backed Durable Object, one Linear app installation and a shared job queue.
+The [Delegator guide](../README.md) covers Runner setup, recovery and security.
 
-## Shared types and issue parser
+## Deploy and connect
 
-`job.ts` exports `Job` (`issueId`, `sessionId`), `Claim` (a `Job` plus `claimId`) and
-`JobState` (`queued`, `claimed`, `launched`, `failed`). Queue metadata belongs to the
-queue, not the job payload.
+Use Node.js 26. You need a Cloudflare account with Workers and SQLite-backed
+Durable Objects, plus a Linear workspace admin to create and authorize a private
+app. From `packages/delegator`:
 
-`parse-issue.ts` exports `parseIssue(description)`. It returns
-`{repo, level, model?}` or a refusal `{field, expected}`. Test for
-`field` to distinguish a refusal. The required `[repo=owner/name]` and
-`[level=…]` tags accept Linear's escaped form; the first valid tag of each kind wins.
-The parser checks syntax only; the Runner resolves repos from Orca registrations at pickup.
+```sh
+npm ci --ignore-scripts
+npm run inbox -- login
+npm run inbox -- setup
+```
 
-The exported `matchModel(pin, names)` matches model pins after lowercasing and
-removing punctuation: exact first, then a unique substring match. The Runner
-uses a matched pin or falls back to the level's configured model, posting a
-thought when a pin cannot be matched.
-See [the issue format contract](../../../docs/issue-format.md).
+Setup asks for the account ID, Worker name, stable machine key and Linear workspace
+UUID. It deploys to a `workers.dev` HTTPS address, generates owner and machine
+secrets, and opens a prefilled app registration page. Keep Agent session event
+webhooks enabled. Enter the app credentials when asked; setup uploads the config.
+Custom domains require manual configuration.
 
-## Cloud Inbox
+Back up `.cloud-inbox.local.json` in your secret manager. It and its generated
+`.toml` are gitignored and owner-only. The checkpoint contains app credentials and
+machine authority, but no Linear tokens. Rerun setup to resume; restore the original
+checkpoint before operating an existing deployment. Setup refuses remote secrets
+without it. Keep the Worker name and machine keys stable to preserve stored state
+and claim access. Adding machines requires manual `MACHINES` configuration.
 
-`cloud-inbox/worker.ts` is the Cloudflare Worker, configured in `wrangler.toml`. It holds
-one SQLite-backed Durable Object, which holds the one `Delegator` Linear app's token
-and one queue that every machine claims from. It refuses every request until these
-secrets are set (`.dev.vars.example` shows their shape): `LINEAR_ORG_ID`, `ADMIN_SECRET`,
-the app's `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET` and `LINEAR_WEBHOOK_SECRET`, and
-`MACHINES`, a JSON object of machine name to that machine's bearer secret. Adding a
-machine means adding an entry to `MACHINES`. Bearer secrets must be at least 32
-characters and distinct. A missing or invalid secret, or a duplicate bearer secret,
-makes Cloud Inbox return 503 until the configuration is corrected; stored jobs and the
-installation are preserved.
+These commands require the deployed Cloud Inbox and its saved checkpoint:
 
-An optional `VIEWERS` secret holds read-only viewers, as a JSON object of viewer name
-to the SHA-256 hex digest of that viewer's secret. Cloud Inbox never stores a viewer's
-secret itself.
+```sh
+npm run inbox -- connect
+npm run inbox -- status
+```
 
-A `MACHINES` key names the machine in claims and logs. Renaming a key while it holds
-a claim strands that job until the session is stopped or the issue is delegated again,
-and its launched jobs no longer show in its `GET /jobs/watching`.
+Approve `read,write,app:assignable` in the browser, then run status to verify the
+workspace and app identity. The Runner receives a machine bearer secret, never
+Linear tokens; there is no pairing flow.
 
-Every route below lives under `/delegator`, so a hostname can be shared with other
-Workers by routing `<hostname>/delegator/*` here. Paths are shown without that prefix.
+## Operate and check
 
-- `GET /install` redirects to Linear's authorize URL as the app, with
-  `read,write,app:assignable`, S256 PKCE and a single-use state that expires in 10 minutes.
-  Every install requires the admin secret as the HTTP Basic password. The PKCE
-  verifier stays in storage until the callback. Linear also requires the client secret
-  for app-actor tokens, so the exchange and every refresh send both.
-- `GET /callback` checks the state, exchanges the code, and stores the
-  tokens and app user id only when the workspace is `LINEAR_ORG_ID` and the grant
-  contains exactly the requested scopes. It stores them
-  with the org id and the app's client id, and only if no other install landed
-  while it waited on Linear.
+Also requiring the deployed Inbox and checkpoint: `npm run inbox -- update`
+deploys code while preserving configuration, tokens and jobs;
+`npm run inbox -- credentials` corrects the original app's credentials;
+`npm run inbox -- disconnect` blocks token use and verifies revocation at Linear;
+`npm run inbox -- reconnect` starts browser approval again;
+`npm run inbox -- viewer <name>` issues a read-only [viewer secret](#pool-status).
+A failed disconnect leaves credentials blocked for retry. Jobs survive disconnection. These commands
+do not remove Cloudflare resources or Linear app registrations.
 
-Owner-only operations use the same HTTP Basic password as install:
+Delegate a disposable issue to the app and check for its queued thought while the
+Runner is off. Stop the session and check for its stopped response. With a configured
+Runner on, delegate a valid issue and check that Orca starts it. Local checks and
+bundle validation are in [Test locally](../README.md#test-locally); they need no deployment.
 
-- `GET /status` verifies the stored app identity and workspace against
-  Linear and returns only `{connected: boolean}`; provider failure returns 502.
-- `POST /disconnect` blocks token use and new installs, drains any in-flight
-  install/refresh, revokes access and refresh credentials, and verifies API 401 plus
-  refresh `invalid_grant`. Only then are credentials removed and reconnect allowed.
-  On failure, credentials stay blocked and saved for a retry; jobs/outbox are untouched.
-  The response contains no tokens. A GET cannot disconnect.
+## Secrets
 
-The operator commands in `cloud-inbox/setup.ts` checkpoint deployment/configuration
-separately from browser authorization. See the [command guide](../README.md).
+[`.dev.vars.example`](../.dev.vars.example) shows the shape. Setup uploads:
 
-Point the `Delegator` app's webhook (Agent session events, delivery enabled) at
-`POST /webhook`.
-`cloud-inbox/routes.ts` handles it before the queue sees anything: it answers 401
-to a missing or malformed `Linear-Signature` without reading the body, answers 413 once
-the body passes 1 MiB, counting as it reads whether or not `Content-Length` is sent,
-then verifies `Linear-Signature` over the raw body with the app's webhook secret, refuses
-an `oauthClientId` that isn't the app's (data-change events such as `Attachment` carry
-none), and requires
-`webhookTimestamp` within 60 s and `organizationId` equal to `LINEAR_ORG_ID`. The queue
-then requires `appUserId` to match the install. A `created` event queues the job,
-deduped on the session id, and posts the queued `thought`; a newer delegation of the
-same issue replaces its waiting job and posts "Replaced by a newer delegation." on the
-old session. A `prompted` stop signal posts the stopped `response` and drops a job not
-yet claimed; any other prompt gets a `thought` saying replies aren't read, once per
-`agentActivity.id` (kept 30 days), so a redelivered prompt is ignored and a new prompt
-in the same session gets its own thought. A prompt without that id gets 400. A stopped
-or replaced session is remembered as ended for 30 days: a late `created` doesn't queue
-it again, a reply gets no thought, a repeated stop gets no second final response, and
-a claimed job of a stopped session isn't requeued when its lease expires. Expired
-stopped claims are removed before their ended markers, including after more than
-30 days offline. Webhooks only post activities; issue fields change only through
-the Runner API's `launched` and `failed` write-backs below. The queued thought names the app as Linear
-shows it, stored at install, and no machine: any machine may pick the job up.
+- `LINEAR_ORG_ID`: permitted workspace UUID.
+- `ADMIN_SECRET`: owner password for HTTP Basic authentication (any username).
+- `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`, `LINEAR_WEBHOOK_SECRET`: one app.
+- `MACHINES`: JSON map of machine key to unique bearer secret, at least 32 characters.
+- `VIEWERS` (optional): JSON map of viewer name to the SHA-256 hex of its secret.
 
-The webhook is answered once the queue change and the activities it needs are stored
-together in the outbox, without waiting on Linear. The Durable Object's
-alarm then posts them, one request at a time with a 10 s timeout on each Linear call
-(token refresh included). A failed post, or a failed token refresh, stays in the outbox
-and is retried with backoff from 10 s up to an hour, surviving restarts; only a success
-removes it, and the alarm drops and logs an activity still failing after 30 days,
-even with no claims or new webhooks. Each session's activities go out in the order
-they were written. Ending a session (replaced
-or stopped) cancels its thoughts not yet posted, so a final response is never followed
-by a queued thought. Claiming a job hands the session to the Runner and cancels its
-queued thought, even mid-retry or mid-refresh, so it never lands after the job has
-started; replies and final responses still go out. Every status update the Runner
-posts is written after its claim, so it sits behind anything left in the session's
-order, and a queued thought already in flight at claim is sent before it, as
-delivery is one request at a time. So the queued thought never lands after an update. Delivery is at least once:
-a post that Linear applies but whose answer is lost is sent again, and a queued
-thought already sent when the claim lands may still appear.
+Invalid configuration returns 503 without deleting jobs or installation state.
+Only Cloud Inbox stores and refreshes Linear access and refresh tokens.
 
-The Runner API authenticates with `Authorization: Bearer <bearerSecret>`, and the
-machine comes only from the secret that matched. Any machine can claim from the shared
-queue; the claim records which machine holds it. A job's id is its session id.
-Every operation below except claim and watch recovery takes `?claimId=<claimId>` (400 without it) and
-answers 409 unless the calling machine's claim holds the job: it's the job's current
-claim with an unexpired lease, or the claim that launched it. Another machine's claim id
-gets 409 too, even when it's correct. The issue and session
-always come from the job; nothing in the request can name another one, and each
-operation sends a fixed Linear query or mutation. A Linear failure on a read answers 502.
+## Routes
 
-- `POST /jobs/claim` returns the oldest waiting job as `{issueId, sessionId, claimId}`
-  (204 when none) and leases it for 10 minutes. `claimId` is new for every claim attempt.
-  An expired lease goes back on the queue for the machine that held it, and only that
-  machine can claim it again, unless a newer job for the same issue is waiting, which
-  replaces it. An expired lease doesn't prove no agent started: the lost request may
-  have been the launch report, and only that machine's `launches.json` can tell. The
-  cost is availability: a job whose machine never comes back waits until the session
-  is stopped or the issue is delegated again, which starts a fresh job any machine can
-  claim.
-- `GET /jobs/watching` returns the calling machine's launched jobs as
-  `[{issueId, sessionId, claimId, at}]`, excluding sessions already ended or superseded.
-  `at` is the launch-report timestamp. This lets an upgraded Runner recover completion
-  watches without creating worktrees again. The bearer secret selects the machine;
-  no request parameter can select another machine or issue. Keep the response private.
-- `POST /jobs/<id>/launched?claimId=<claimId>` and
-  `POST /jobs/<id>/failed?claimId=<claimId>` record that claim's outcome: 204, 400 if
-  `claimId` is missing, or 409 unless it's the job's current claim with an unexpired
-  lease. So a Runner whose lease expired can't change the outcome of a later claim, and
-  must report before its lease ends. A second report of the same claim also gets 409.
-- `POST /jobs/<id>/launched` also queues the launch's field changes: the status
-  becomes the team's first `started` status unless the issue is already started,
-  completed or canceled; the `Orca` label (workspace or the issue's team) is added,
-  replacing any other label in its group; and the session creator becomes the
-  assignee. `POST /jobs/<id>/failed` queues clearing the delegate, only while it's
-  still this app, so a refused job that was already undelegated keeps its new delegate.
-  The launch's changes apply only while the delegate is still this app. Both go out
-  through the outbox like activities, so they retry and keep the session's order:
-  post a status update first, then report. The first `created` webhook of a newer
-  delegation marks every older job of the issue as superseded, even when that session
-  was stopped before the webhook arrived (it still isn't queued); a redelivered
-  `created` marks nothing. A superseded job's write-backs
-  are dropped, even if the newer job is later stopped or deleted. The mark is stored,
-  so it survives restarts, and is kept while the job has a write-back pending. A newer
-  delegation whose webhook hasn't arrived yet can't be told apart from the old one in
-  Linear, so a retry in that gap still applies.
-- `GET /jobs/<id>/task` returns what the Runner checks before launch:
-  `{delegated, creatorId, identifier, description, branchName, statusType}`.
-  `delegated` is whether the issue's delegate is still this app; `creatorId` is the
-  session creator's user id, or null.
-- `POST /jobs/<id>/updates` with `{"type": "thought"|"response"|"error", "body": "..."}`
-  queues that activity on the job's session and answers 202. Other fields are
-  ignored. The body must be 1–2000 characters (400 otherwise) and the request at
-  most 16 KiB (413). A `response` or `error` ends the session, cancelling its thoughts
-  not yet sent; once a session has ended, including by a stop, updates get 409.
-- `GET /jobs/<id>/watch` returns `{sessionStatus, pullRequests}`: Linear's session
-  status and the issue's attachment URLs that are GitHub pull requests
-  (`https://github.com/<owner>/<repo>/pull/<n>`), oldest first.
-- `POST /jobs/<id>/pull-request` adds the first of those to the session as the
-  "Pull request" link, waiting on Linear, and returns `{url}`; 409 when the issue has
-  none. It takes no input. The Runner then posts the "Opened" `response` itself.
-- A failed job takes no further operations.
-- There is no token-sharing endpoint; `GET /token` returns 404.
+All routes are under `/delegator`. Owner routes require the Basic password;
+Runner routes require `Authorization: Bearer <machine secret>`; `GET /pool` also
+accepts a viewer secret.
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /install` | Owner starts Linear OAuth with PKCE and single-use state. |
+| `GET /callback` | Validates state, workspace and exact scopes; stores tokens. |
+| `GET /status` | Owner verifies connection; returns `{connected: boolean}`. |
+| `POST /disconnect` | Owner blocks and revokes tokens; preserves jobs. |
+| `POST /webhook` | Receives signed Linear Agent session events. |
+| `POST /jobs/claim` | Claims oldest eligible job for 10 minutes; 204 when empty. |
+| `GET /jobs/watching` | Recovers this machine's launched jobs. |
+| `GET /jobs/<id>/task` | Reads issue and delegation details for the claim. |
+| `POST /jobs/<id>/updates` | Queues a thought, response or error (1–2000 characters). |
+| `POST /jobs/<id>/launched` or `/jobs/<id>/failed` | Records outcome and queues field writes. |
+| `GET /jobs/<id>/watch` | Reads session, issue and verified PR status. |
+| `POST /jobs/<id>/pull-request` | Links a verified PR from this launch. |
+| `PUT /pool/snapshot` | Stores this machine's latest `status.json` (JSON object, at most 64 KiB). |
+| `GET /pool` | Lists every machine's latest snapshot, last-seen time and online state, plus queue depth. |
+
+Per-job routes require `?claimId=<claimId>` and reject another machine's claim.
+Expired leases return to the same machine only. Stop or delegate again if that
+machine cannot return. Webhook activities and field writes retry through a durable
+outbox; delivery is at least once. There is no token-sharing endpoint.
 
 ### Pool status
 
-Each Runner poll sends that machine's `status.json` to `PUT /pool/snapshot` (204), with
-no timer of its own, and once more when a job's issue is read, so the current job
-shows. A Runner sends one report at a time, and any newer report replaces one still
-waiting behind a slow one. Ordering is best effort, within one Runner process: a report
-the Runner gave up on after its 30-second timeout can still reach Cloud Inbox after a
-newer one, and two Runner processes for the same machine can interleave. Either leaves
-an older status until the next poll. The body must be a JSON object of at most 64 KiB
-(400 or 413 otherwise). Cloud Inbox keeps only the latest snapshot per machine and when it arrived. Only a machine's
-bearer secret can send one, and only for itself.
+Each Runner poll sends its `status.json` to `PUT /pool/snapshot`, plus once when a
+job's issue is read. Cloud Inbox keeps only each machine's latest snapshot. A machine
+is offline after 5 minutes unseen, so a long job can show offline until it ends.
+`queueDepth` counts issues waiting to be claimed, expired leases included.
 
-`GET /pool` returns every machine in `MACHINES` with `Cache-Control: no-store`:
+A Runner sends one report at a time and keeps only the newest waiting. Ordering is
+best effort within one process: a report the Runner timed out on, or a second Runner
+process for the same machine, can leave an older status until the next poll.
 
-```json
-{
-  "queueDepth": 1,
-  "machines": [
-    { "name": "example-machine", "online": true, "lastSeenAt": "2026-01-01T00:00:00.000Z", "snapshot": { "paused": false, "current": null } }
-  ]
-}
-```
-
-A machine is offline once no snapshot has arrived for 5 minutes, and a machine that
-never sent one has null `lastSeenAt` and `snapshot`. A long job sends nothing until
-it ends, so its machine can show offline meanwhile. `queueDepth` counts the issues
-waiting to be claimed, expired leases included.
-
-A machine's bearer secret or a viewer secret can read the pool. A viewer secret reads
-`GET /pool` and nothing else: every other Runner API request gets 403, and a request
-with neither secret gets 401. Issue one with `npm run inbox -- viewer <name>` after
-setup. It prints the secret once and uploads only its hash to `VIEWERS`; running it
-again for the same name replaces that viewer's secret.
-
-Launched and failed jobs, the dedupe records and the ended sessions are kept 30 days. `cloud-inbox/queue.ts`
-holds the queue and outbox, on the Durable Object's SQLite storage.
-
-`AppAuth.getAccessToken()`, used only by Cloud Inbox's own posts, returns the cached access token and
-is the only place it is refreshed. It refuses a token whose stored org id or client id
-differs from the current config, or whose scopes are unverified or not exactly
-Cloud Inbox's, until an admin reinstall. Refresh grants must also contain exactly
-`read,write,app:assignable`. A refresh that finishes after a reinstall is discarded and fails, so it never returns the old
-installation's token. `cloud-inbox/auth.ts`, `cloud-inbox/queue.ts` and `cloud-inbox/routes.ts`
-hold this logic so `node:test` can run it, with `node:sqlite` standing in for the
-Durable Object's SQL and synthetic webhook payloads in `cloud-inbox/fixtures/` (written from
-Linear's documented schema, not captured); check the Worker bundle with `npx wrangler deploy --dry-run`.
-
-### Trust model
-
-Cloud Inbox is the middleman between Linear and the machines. It alone holds Linear
-credentials: its `read,write,app:assignable` grant and the app's client secret.
-Machines hold only a bearer secret, and there is no Runner API or Durable Object method
-for lending a token. It rejects any other grant at installation and refresh, and refuses
-stored tokens with other or missing scopes.
-
-A live check showed Linear refuses both agent activities and issue edits without
-`write`, so no narrower grant can acknowledge a task. The boundary is Cloud Inbox's code,
-not Linear's permissions: a compromised Cloud Inbox can edit issues in the workspace.
-
-A viewer secret reads the pool's snapshots and queue depth and nothing else.
-
-A machine's bearer secret allows only the named operations above, on jobs its own
-claims hold. It can't send GraphQL, pick an issue or session, or set a field outside an
-operation; the most it can do is post activities on its own sessions and trigger its
-jobs' documented write-backs. Logs carry ids, operations and outcomes, never task
-content, activity bodies or tokens. Machines must treat Cloud Inbox messages, job ids
-and task content as untrusted, not task instructions.
-Machines share one queue and are separated only by their claims: a compromised Worker
-can reach all Cloud Inbox credentials, read and edit accessible workspace data and tamper
-with jobs.
-
-Installations made with a different grant are refused until an admin reinstalls them.
-Refusing an old token locally does not revoke it at Linear, so revoke it there too.
-See the [setup guide](../README.md) for the remaining operational work.
+`npm run inbox -- viewer <name>` prints a viewer secret once and uploads only its
+hash. A viewer secret reads `GET /pool` and gets 403 everywhere else; running the
+command again for the same name replaces the secret.
