@@ -1,22 +1,136 @@
 # Delegator
 
-Delegate an issue from Linear. Factory Cloud Inbox holds it until the Factory Runner
-on one of your machines picks it up and starts a coding agent in Orca. You delegate
-to one Linear agent, `Delegator`, and any machine's Runner can claim from its queue.
+Delegate a Linear issue to `Delegator`. Cloud Inbox queues the job until a Runner
+on one of your machines claims it and starts a coding agent in Orca.
 
 ## Where it runs
 
-- **Cloud Inbox:** you deploy this application to your Cloudflare account. It
-  receives tasks from Linear and holds them while your computer is busy or asleep.
-  Cloudflare also runs its storage and message retries; no database server to manage.
-- **Runner:** a process on your machine that picks up tasks from Cloud Inbox and
-  starts them in Orca. See [Run the Runner](#run-the-runner).
+- **Cloud Inbox:** a Cloudflare Worker with one SQLite-backed Durable Object,
+  one Linear app installation and one shared queue.
+- **Runner:** a local process that claims jobs and launches Orca worktrees.
+  On macOS, a menu bar app controls its LaunchAgent.
 
-Cloud Inbox is available for controlled testing. On Cloudflare it has answered a real
-delegation and stop, and served the Runner API's task, update and write-back operations
-against real Linear. It cannot launch Orca by itself.
-One deployment supports one Linear workspace, one Linear app and several computers,
-each with its own bearer secret. Installing Factory's skills does not deploy Delegator.
+One deployment serves one Linear workspace and several machines. Each machine
+has its own bearer secret; only Cloud Inbox holds Linear tokens. Installing
+Factory's skills does not deploy Cloud Inbox.
+
+## Set up your Cloud Inbox
+
+Follow the [Cloud Inbox guide](cloud-inbox/README.md) to deploy, connect and check
+it. That guide also covers secrets, routes, updates and disconnection.
+
+## Install with setup
+
+Use Node.js 26, Orca and the Swift compiler on macOS. From the repo root, install
+the Cloud Inbox tooling if you want setup to deploy an Inbox:
+
+```sh
+npm --prefix packages/delegator ci --ignore-scripts
+npm run setup
+```
+
+At a terminal, setup offers to install the Runner. It can connect to an existing
+Inbox using its URL and this machine's bearer secret, or guide you through a new
+Inbox's deployment and browser approvals. It asks for your Linear user id and
+model ids. An existing valid Runner config is reused; an invalid one is refused.
+Setup prints no secrets. Installation succeeds only after the Runner reaches
+Cloud Inbox and the menu bar app is registered to open at login. Rerun setup to
+finish an interrupted installation.
+
+### Update after merging Factory changes
+
+From a clean checkout of `main` that matches GitHub, run `npm run setup` again.
+It updates the skills and an installed Runner without another installation prompt.
+A running Runner first drains in-flight operations; saved PR watches survive.
+Setup checks the new bundle against the config before replacement and restores
+the previous bundle if the new Runner fails to return. A stopped Runner stays
+stopped. Config, the Runner switch and **Start at login** are preserved.
+Setup relaunches the menu bar app after a successful install or update.
+
+## Run the Runner
+
+For manual configuration, copy [config.example.json](config.example.json) to
+`~/.config/factory-delegator/config.json`, fill every placeholder and set mode
+`600`. The config contains:
+
+| Key | Meaning |
+| --- | --- |
+| `inboxUrl` | Deployed Cloud Inbox URL, including `/delegator`. |
+| `bearerSecret` | This machine's secret from Cloud Inbox's `MACHINES`. |
+| `machine` | Machine name used in Runner error messages. |
+| `allowedCreatorIds` | Linear user ids allowed to delegate to this Runner. |
+| `models` | Model names mapped to Orca `agent`, `model` and optional `effort`. |
+| `levels` | A configured model name for each of `light`, `standard` and `deep`. |
+| `skill` | Skill to launch; defaults to `do-implement`. |
+
+Model names are local config keys, selected by a level or an issue's `[model=]`
+pin. Pins match without case or punctuation: exact match first, then a unique
+substring. Unknown or ambiguous pins fall back to the level's model with a thought
+in Linear. See the [issue format](../../docs/issue-format.md).
+
+From `packages/delegator`, run the configured Runner in the foreground:
+
+```sh
+npm run runner
+```
+
+Every 15 seconds it claims one job. It checks the delegate, allowed creator,
+issue tags and branch before launching. Register one checkout per GitHub repo in
+Orca first: the Runner matches the issue's repo tag against Orca's registered
+GitHub identity. Missing or duplicate registrations refuse the job. Every
+registered GitHub repo is eligible for an allowed creator; there is no separate
+repo allowlist. After fixing a refusal, delegate again to retry.
+
+A successful launch posts a thought and reports `launched`; Cloud Inbox queues
+the in-progress status, `Orca` label and session creator as assignee. A failed
+job clears the delegate only if it is still this app. Field writes retry through
+Cloud Inbox's outbox.
+
+### Install and control the Runner
+
+From the repo root, with the config ready and `node`, `orca` and `swiftc` on PATH:
+
+```sh
+sh packages/delegator/runner/launchd/install.sh
+```
+
+This installs the app at `~/Applications/Factory Runner.app` and separate per-user
+LaunchAgents for the Runner and menu bar app. To install only the app, add
+`--app-only`, then choose **Install Runner** in its menu once the config is ready.
+The installer also accepts `--install-runner` (app already installed),
+`--uninstall-runner`, or `--uninstall` to remove both.
+Logs are in `~/Library/Logs/factory-delegator/`.
+
+The **Runner** switch stops new claims while allowing current work and PR checks
+to finish. Its setting survives restarts. Turning it on starts the Runner if needed.
+**Start at login** controls the menu bar app's LaunchAgent. The menu also opens
+logs and config. Status shows readiness, current work, PR watches, connection
+failures or the last failed job; **Off** can also mean the Runner is not running.
+
+### Recovery and PR checks
+
+Before creating a worktree, the Runner saves launch intent in `launches.json`
+beside its config. Lost launch reports can be recovered on this machine without
+creating another worktree. Recovery checks an interrupted intent against the
+exact local Orca checkout and branch. A matching worktree proves neither agent
+startup nor that the agent is still running. Keep launch state private and backed
+up: corrupt state is treated as empty, losing recovery. A lost response can cause
+a repeated thought; delivery is at least once.
+
+PR watches run every 45 seconds and survive restarts in
+`watching.json` under `${XDG_STATE_HOME:-~/.local/state}/factory/` (relative
+`XDG_STATE_HOME` is ignored). Cloud Inbox can recover this machine's open watches.
+It verifies attached PRs against the recorded repository and exact branch before
+the Runner posts the final PR response. This ends Linear's working state; it
+neither merges the PR nor marks the issue Done. Linear's GitHub integration must
+attach the PR to the issue. GitHub checks use its unauthenticated public API:
+private PRs, rate limits and outages prevent confirmation. After 24 hours without
+a confirmed PR, the Runner asks you to check the Orca worktree. Terminal sessions
+are dropped without another response.
+
+The same state directory holds disposable `status.json` for the menu and a
+`paused` flag for the Runner switch. Creating that flag pauses new claims;
+removing it resumes them. Keep `watching.json` private: it contains claim authority.
 
 ## Test locally
 
@@ -28,351 +142,16 @@ npm test
 npx wrangler deploy --dry-run
 ```
 
-Tests use fake Linear responses and in-memory SQLite; no accounts or credentials
-are needed. The dry run checks the cloud bundle without deploying it.
-For the local Cloudflare runtime, copy [.dev.vars.example](.dev.vars.example) to
-`.dev.vars`, fill it in, and run `npx wrangler dev`. Local storage is separate from
-production; Linear cannot deliver webhooks to localhost.
-
-## Set up your Cloud Inbox
-
-Use Node.js 26 and run from `packages/delegator` after `npm ci --ignore-scripts`.
-You need a Cloudflare account with Workers and SQLite-backed Durable Objects,
-and a Linear workspace admin who can create and authorize a private app.
-
-```sh
-npm run inbox -- login
-npm run inbox -- setup
-```
-
-These are the two deployment entry actions. Cloudflare login/approval and the
-one-time Linear app registration are required human steps within the guide, not
-an automatic installation. Setup asks for the Cloudflare account ID, Worker name,
-stable machine key and Linear organization UUID (from your admin or Linear MCP).
-It deploys storage, generates owner and machine secrets, opens a prefilled private
-app-registration page, asks for the app's three credentials with hidden input,
-uploads configuration and returns the permanent setup URL. Keep webhook delivery
-enabled. No personal Linear API key or JSON editing is needed.
-
-The supported guided path uses the Worker's `workers.dev` HTTPS address. Custom
-routes remain an advanced manual deployment; don't use setup to change their identity.
-
-Setup checkpoints each answer in `.cloud-inbox.local.json`, with owner-only file
-permissions; the generated `.cloud-inbox.local.json.toml` uses the same Worker,
-account, binding and migrations. Both are gitignored. Back up the checkpoint in
-your secret manager: it contains app credentials and machine connection authority,
-but never Linear access or refresh tokens. Rerun setup after an interruption;
-it preserves credentials and machine keys and doesn't redeploy a completed setup.
-Never rename the Worker: it selects the stored installation and jobs.
-
-For an existing installation, restore its original checkpoint before setup:
-
-```sh
-npm run inbox -- setup
-```
-
-Use its original account, Worker name and machine key. Setup refuses existing
-remote secrets without the checkpoint; Wrangler cannot download secret values
-for recovery. Don't generate replacements.
-
-## Connect and check
-
-```sh
-npm run inbox -- connect
-npm run inbox -- status
-```
-
-Connect uses the saved owner credential to open Cloud Inbox's Linear authorization
-flow in your browser. Approve the exact `read,write,app:assignable` grant. You can
-also visit the setup URL and use the saved `config.adminSecret` as the HTTP Basic
-password (any username). Status checks the workspace and app identity against Linear
-without returning a token. If access is missing or revoked, check the app and workspace,
-then reconnect; don't add scopes to bypass a failure. Correct a pasted app credential
-with `npm run inbox -- credentials`, then reconnect. This preserves owner/machine
-secrets and jobs; use the same app, not a replacement installation.
-
-Deployment is separate from the intended everyday two-step connection: visit Cloud
-Inbox and authorize with Linear, then open the running Mac Runner and redeem a
-short-lived, single-use pairing code or app link. **Pairing and the background Runner are not built
-yet**, so that end-to-end experience is not available. Pairing will
-transfer only machine authority for the restricted API, never a Linear token.
-
-For a live smoke test, delegate a disposable issue to your app and expect its queued
-reply in Linear; stop the session and expect the stopped reply. This doesn't launch
-Orca. Cloud Inbox's token refresh, delivery retries and Cloudflare process lifecycle
-are automatic; normal use needs no refresh, restart or retry command.
-
-## Operate it
-
-```sh
-npm test && npx wrangler deploy --dry-run
-npm run inbox -- update
-npm run inbox -- disconnect
-npm run inbox -- reconnect
-npm run inbox -- status
-```
-
-Update deploys code deliberately, retaining configuration, installation identity
-and jobs. Disconnect blocks local credential use immediately, revokes both tokens
-at Linear, and confirms API access returns 401 and refresh returns `invalid_grant`.
-It preserves queued jobs. Revocation can take time: if confirmation fails, retry
-`disconnect`; credentials remain blocked and retained only for retry. Reconnect
-requires owner authentication and browser approval again. If the app was deleted,
-restore/register its credentials separately rather than overwriting the checkpoint.
-Commands never export a Linear token to the Runner.
-
-The command does not delete Cloudflare resources or Linear app registrations.
-Keep the private app for reconnect; delete a disposable test app in Linear settings
-when testing is finished. Adding computers remains a manual configuration task.
-
-## Run the Runner
-
-Copy [config.example.json](config.example.json) to
-`~/.config/factory-delegator/config.json`, fill it in and `chmod 600` it. The Runner
-refuses to start without it, with a looser mode, or with any key missing or empty;
-nothing has a default except `skill` (`do-implement`). `machine` is this machine's
-name, used in messages. Each `models` key is a Preferred models name, with an effort
-suffix when one model runs at several efforts. The required `levels` map names a
-configured model for each of `light`, `standard` and `deep`.
-Repos come from Orca at pickup; an old `repos` config key is ignored and can be removed.
-
-```sh
-npm run runner
-```
-
-Every 15 s it claims one job and checks it with what Cloud Inbox returns. Delegation
-by a user on `allowedCreatorIds` is the approval to launch. It drops a job whose issue
-is no longer delegated to the app, and refuses an unlisted or missing creator, an issue
-that fails the [issue format](../../docs/issue-format.md).
-It uses a matched model pin or the level's model, posting a fallback thought when a
-pin is unknown or ambiguous. It runs `orca open --json`, resolves the repo using
-`orca repo list --json`, then runs the documented
-`orca worktree create`, retrying once if Orca's runtime is unavailable, then posts
-"Started …" and reports `launched`; Cloud Inbox sets the status, `Orca` label and
-assignee. Any failure posts one `error` and reports `failed`, which clears the delegate.
-It never requeues explicitly. Before create, the Runner saves an intent in
-`launches.json` beside the config; it refuses to launch if that write fails. It records
-a successful create and whether Cloud Inbox accepted the "Started …" thought. If either
-the thought or launch report fails, the lease expires and Cloud Inbox hands the session
-back to this machine only, since no other machine can see its `launches.json`. A restarted Runner reports the saved launch without creating another worktree,
-and posts the thought only if its saved flag says it wasn't accepted.
-
-If the Runner dies during create or before recording its result, the saved intent lets
-it check `orca repo show` and `orca worktree list` with `--json`. Recovery requires the
-exact discovered checkout path, repo ID and branch on the local host. Without that
-match (including unreadable or incomplete listing results with no match), it follows
-the normal create and failure path; `worktree_conflict` alone never proves a launch.
-Orca confirms a worktree, not that its agent started, received the prompt or is still
-running. A pre-existing matching worktree can also satisfy an intent left before create.
-
-State files are replaced atomically and old entries are pruned on writes after 30 days.
-The previous numeric launch records still recover, but have no thought metadata to retry.
-A missing file is normal; unreadable or corrupt state logs `launches-unreadable` once
-per read, without ids, and is treated as empty. Losing that state loses recovery.
-A thought accepted just before a crash, lost response or failed flag write may be posted
-again on recovery: the updates API has no deduplication key. A timed-out create still
-fails and can leave a worktree; recovery applies to reclaimed claims, not terminal failures.
-Logs contain ids and outcomes only.
-
-### Repos come from Orca
-
-Clone a repo and add its checkout in Orca before delegating. At each pickup the
-Runner reads `orca repo list --json` and matches the issue's `[repo=owner/name]`
-tag to `gitRemoteIdentity.canonicalKey` (`github.com/owner/name`, ignoring case).
-It uses that registration's absolute checkout path. There is no separate repo
-allowlist or Runner restart when registering another repo.
-
-Every registered GitHub repo is eligible for delegation by an allowed creator,
-including personal repos. Folder projects and repos without a matching GitHub
-identity are not eligible. No match, multiple matches, or an unreadable repo list
-refuses the job before creating a worktree. Keep one Orca registration per GitHub
-repo; the Runner never picks arbitrarily between checkouts or clones from issue text.
-After correcting a registration, delegate again to retry a failed job.
-
-### Install and control the Runner
-
-On macOS, the menu bar app can be installed before the Runner. To install just the
-app, run:
-
-```sh
-sh packages/delegator/runner/launchd/install.sh --app-only
-```
-
-Open **Factory Runner** in the menu bar. Choose **Install Runner** after configuring
-`~/.config/factory-delegator/config.json`; the app checks that the config has mode
-`600`, and that `node` and `orca` are available in the login shell. The Runner and
-menu bar app run as separate per-user LaunchAgents. The Runner starts at login and
-restarts if it exits; the app's **Start at login** toggle controls its own agent.
-Runner logs are in `~/Library/Logs/factory-delegator/`.
-
-The menu shows **Runner ready** when it can accept work, **Working on …** while it
-handles a job, **Waiting for a PR** while it watches a completed session,
-**Can't reach Cloud Inbox** when its last request failed, and **Last job failed**
-after a failed job. **Off** means the switch is off, or the Runner's LaunchAgent is
-not loaded and its status file is missing or stale.
-
-One **Runner** menu item controls the Runner, checked when on and unchecked when off. **Off** lets the current job
-finish, showing **Turning off after the current job** meanwhile, and starts nothing
-new; the Runner stays off across a restart of the Mac. It sets the `paused` flag
-described below; open watches keep being checked. **On** clears
-the flag and starts the Runner if it isn't running. The menu also opens the logs or
-config, and shows **Install Runner** when no Runner is installed.
-
-The same operations remain available from the CLI. With `node` and `orca` on your
-shell's `PATH`, use the default command to install both the app and Runner, or use
-the Runner-specific commands. `--uninstall-runner` removes the Runner:
-
-```sh
-sh packages/delegator/runner/launchd/install.sh
-sh packages/delegator/runner/launchd/install.sh --install-runner
-sh packages/delegator/runner/launchd/install.sh --uninstall-runner
-```
-
-Add `--uninstall` to remove both the app and Runner. The Runner installer requires
-the config to have mode `600`. Both installation paths run the copy bundled in
-`~/Applications/Factory Runner.app`; `--install-runner` requires the app to be installed first.
-The default command builds the app before updating the Runner LaunchAgent.
-
-After launch, the Runner checks for completion every 45 seconds, independently of
-new job pickup. Cloud Inbox checks attached PRs against GitHub metadata and accepts
-only a PR whose base repository, head repository and exact head branch match the
-recorded launch. Attachment order does not establish ownership; an already-existing
-matching PR is valid for resumed work. The Runner adds the verified PR link to the
-agent session and posts "Opened <PR URL>." This final response
-ends Linear's "Working…" state; it does not mark the issue Done or merge the PR.
-If there is no PR after 24 hours, it replies "No PR after 24 h; check the Orca worktree."
-Completed, errored and stopped sessions are dropped without another reply.
-
-Open watches are saved in `${XDG_STATE_HOME:-~/.local/state}/factory/watching.json`
-with owner-only permissions and atomic replacement. Keep this file private: it holds
-claim authority, not Linear credentials. The Runner also recovers this machine's
-still-open launched jobs and their repository/branch evidence from Cloud Inbox.
-Legacy launches without that evidence remain watched but cannot report PR success.
-Network failures are retried; an accepted final response is
-not queued twice. Deploy Cloud Inbox before upgrading the Runner so its recovery
-endpoint is available. PR detection requires Linear's GitHub integration to attach
-the PR to the issue. Cloud Inbox rechecks ownership before linking and accepting an
-"Opened" response. Missing or failed metadata never establishes ownership; the
-existing 24-hour timeout and terminal-session handling still apply.
-
-GitHub metadata reads currently use the unauthenticated public REST API, with no
-GitHub CLI fallback. Private PRs, rate limits and API outages leave watches retryable
-until the timeout. Deploy Cloud Inbox first, then upgrade the Runner to record launch
-evidence; old launches are never backfilled from the issue's current branch.
-
-The menu bar app's contract is `status.json` beside `watching.json`, in
-`${XDG_STATE_HOME:-~/.local/state}/factory/` (a relative `XDG_STATE_HOME` is ignored).
-The Runner replaces it atomically with mode `600` at startup, on each poll, after
-claim attempts, while handling a job, and after each job, recovery or watch check.
-An independent 10-second heartbeat keeps status fresh during pending operations;
-the menu discards status older than 30 seconds when the Runner stops.
-Status is disposable: a failed write logs `status-write-failed` once per process,
-keeps the Runner running, and is retried on the next update.
-
-| Field | Meaning |
-| --- | --- |
-| `version` | `1`; readers should check this before interpreting the file. |
-| `updatedAt`, `pid` | ISO timestamp of this snapshot and the Runner process ID; readers can detect a stopped or stale Runner. |
-| `inbox` | `{status: "ok" \| "unreachable", lastOkAt}`; last request result and last successful HTTP contact's ISO time, or `null` before contact. Startup is `unreachable` until contact succeeds. |
-| `paused` | Whether the `paused` flag file exists. |
-| `current` | `{identifier, sessionId}` while handling a job, otherwise `null`. |
-| `watching` | Open watches as `{identifier, since}`, with an ISO launch time. |
-| `lastError` | Last failed job or claim as `{identifier, outcome, time}`, otherwise `null`; claims have a `null` identifier. |
-| `recent` | Last ten job outcomes as `{identifier, outcome, time}`, oldest first. |
-
-Identifiers are validated issue identifiers such as `ABC-123` when known, falling
-back to the issue ID before task lookup or for recovered launches without a saved
-identifier (`unknown` for an invalid ID). Status contains no URLs, credentials,
-claim authority, issue text or paths. History and the last error reset on restart;
-open watches recover independently. A successful job does not clear the last error.
-
-Create an empty `paused` file in that directory to pause new claims; remove it to
-resume on the next poll. In-flight work continues, as do watch recovery and PR
-checks. Pausing leaves jobs queued in Cloud Inbox. The menu bar app reads status
-and its switch toggles this flag; it needs no Cloud Inbox access.
-
-### Install with setup
-
-From the repo root, `npm run setup` at a terminal asks whether to install the Runner
-when this Mac has none. Say no and nothing here changes. Say yes and it checks for
-Node 26, `swiftc` and `orca`, then:
-
-- **Config:** an existing `~/.config/factory-delegator/config.json` is checked and used
-  as it is; an invalid one is refused, never overwritten. Without one, setup asks which
-  Cloud Inbox to use and writes the config from [config.example.json](config.example.json),
-  with mode `600`, only once it passes the Runner's own checks. It asks for your Linear
-  user id (your agent's Linear `whoami` shows it) and a model id for each model in the example.
-- **An Inbox you already run:** paste its URL and this machine's bearer secret, read
-  with input hidden. Nothing in Cloud Inbox changes.
-- **A new Inbox,** or one this checkout's checkpoint already holds: setup runs the
-  `login`, `setup`, `connect` and `status` steps above in your terminal, so the
-  Cloudflare sign-in and the Linear app registration and approval stay yours. It needs
-  `npm --prefix packages/delegator ci --ignore-scripts` first; it doesn't install Wrangler.
-  If a step stops, setup lists what finished; rerun it to resume from the checkpoint,
-  which keeps the original secrets and never deploys or uploads twice.
-- **Install:** setup runs the default `install.sh`, then waits up to 60 seconds for the
-  Runner's `status.json` to show the new process reaching Cloud Inbox. Only then does it
-  report the Runner installed and connected; otherwise it fails and names the logs.
-  Until then the install stays pending, and the next `npm run setup` finishes it without
-  asking. It reruns `install.sh` only when launchd has no Runner agent loaded and no
-  Runner reports from outside launchd; a loaded agent, running or between restarts, is
-  only waited for, so work in progress is never restarted. Once the Runner reports
-  Cloud Inbox, setup registers the menu bar app to open at login if an earlier try
-  didn't (`install.sh --enable-app-login`, which leaves the Runner alone). The install
-  stops being pending only when both succeed.
-
-The config holds the Inbox URL and this machine's bearer secret, never Linear tokens
-or the Inbox's owner and app credentials. Setup prints no secrets.
-
-### Update after merging Factory changes
-
-From the repo root, on a clean checkout of `main` that matches GitHub, run:
-
-```sh
-npm run setup
-```
-
-Along with the skills, it updates an existing Runner app from this checkout and prints
-one line for it, with no question asked. It exits non-zero when the update fails or refuses.
-
-- **A running Runner** is asked to drain: setup writes `drain.json` in the state
-  directory, the Runner stops claiming and checking watches, and writes
-  `drain.json.ack` only when no claim, job or watch check is in flight. Saved
-  watches don't block it: they stay in `watching.json` and the new Runner resumes
-  them. Without that acknowledgment within 60 seconds, setup refuses and changes
-  nothing. A fresh idle `status.json` alone doesn't count.
-- **The new bundle** is built with `install.sh --build-app <dir>`, checked file for
-  file against this checkout, and run with `--check-config` against your config
-  before anything is replaced. A Runner that doesn't come back is swapped for the
-  previous bundle and restarted.
-- **A stopped Runner** is refreshed and stays stopped, unless its `watching.json` is
-  unreadable. The On / Off switch, **Start at login** and
-  config are never touched. Setup relaunches the menu bar app after a successful install or update.
-- **A Runner from before draining** is refused, with steps to pause, stop and rerun.
-
-Test it with `node --test upkeep.test.ts` from `packages/delegator`; the rest of setup is in [`packages/setup`](../setup/setup.ts).
+Tests use fake Linear responses and in-memory SQLite without credentials. The dry
+run checks the Worker bundle without deploying. For local Cloudflare development,
+copy [.dev.vars.example](.dev.vars.example) to `.dev.vars`, fill it in and run
+`npx wrangler dev`. Local storage is separate; Linear cannot deliver to localhost.
 
 ## Security
 
-Cloud Inbox is the middleman between Linear and your machines. It requests
-`read,write,app:assignable`, checks the granted permissions at installation and refresh,
-and never returns Linear tokens to machines, whose credential authorizes only Cloud Inbox's
-named operations on the jobs that machine has claimed: reading the task, posting status
-updates, and the launch and failure write-backs.
-
-Linear requires `write` to post agent activities, and `write` also allows issue edits.
-So a compromised Cloud Inbox can read and edit workspace data and tamper with queue delivery.
-Machines share one queue and are separated only by their claims, which a compromised Worker
-can ignore. Machines must
-treat Cloud Inbox messages and job ids as untrusted inputs.
-
-**Existing installations:** installations from before the one `Delegator` app don't
-carry over. Set up the new configuration, install `Delegator`, then revoke the old apps'
-authorizations in Linear: deploying new code does not revoke them there.
-
-You own the deployment, credentials and usage charges. Traffic/storage limits,
-recovery drills and safe automatic launches remain separate work.
-
-For the API, queue behavior, issue parser and full trust model, see the
-[technical reference](cloud-inbox/README.md). The issue format is defined in
-[the issue-format contract](../../docs/issue-format.md).
+Cloud Inbox alone holds the Linear app credentials and its
+`read,write,app:assignable` grant. A machine's bearer secret permits only the
+named API operations on its own claims. Machines must treat job content as
+untrusted input. A compromised Worker can read and edit accessible workspace data
+and tamper with the shared queue: the boundary is its code, not narrower Linear
+permissions. You own deployment, credentials and usage charges.
