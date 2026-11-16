@@ -90,3 +90,29 @@ func isoDate(_ value: String) -> Date? {
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     return formatter.date(from: value)
 }
+
+/// `GET /pool`: each machine's latest `status.json`, as its Runner last sent it, plus the jobs waiting for a claim.
+struct Pool: Decodable {
+    struct Machine: Decodable {
+        struct Snapshot: Decodable { let paused: Bool?; let current: Current? }
+        struct Current: Decodable { let identifier: String }
+        let name: String
+        let online: Bool
+        let snapshot: Snapshot?
+    }
+    let queueDepth: Int
+    let machines: [Machine]
+}
+
+/// The Pool section's lines: one per machine (working, idle, off or offline), then the jobs waiting.
+/// Nil when the response isn't a pool.
+func poolLines(json: Data) -> [String]? {
+    guard let pool = try? JSONDecoder().decode(Pool.self, from: json) else { return nil }
+    let machines = pool.machines.map { machine in
+        guard machine.online, let snapshot = machine.snapshot else { return "\(machine.name) · offline" }
+        if let current = snapshot.current { return "\(machine.name) · working · \(current.identifier)" }
+        return "\(machine.name) · \(snapshot.paused == true ? "off" : "idle")"
+    }
+    let waiting = pool.queueDepth == 0 ? "No jobs waiting" : "\(pool.queueDepth) job\(pool.queueDepth == 1 ? "" : "s") waiting"
+    return machines + [waiting]
+}

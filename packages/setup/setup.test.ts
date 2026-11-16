@@ -90,6 +90,8 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'], verify 
     codex: codexRun(),
     codexSkills: ['do-a', 'do-b', ...SUPPORT.map((name) => `mattpocock-skills:${name}`)],
     calls: [] as string[],
+    /** What setup stored in the Keychain for the menu bar app. */
+    keychain: null as null | { url: string; secret: string },
     installs: 0,
     output: [] as string[],
     answers: [] as string[],
@@ -104,6 +106,7 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'], verify 
     sleep: async () => {},
     print: (line) => m.output.push(line),
     ask: null,
+    async keychain(url, secret) { m.keychain = { url, secret }; },
     async interact(file, args) {
       m.calls.push(`interact ${args.at(-1)}`);
       return m.inbox[args.at(-1)!]?.() ?? false;
@@ -135,6 +138,11 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'], verify 
         if (m.installFails === 'bootstrap') throw fail('Bootstrap failed: 5: Input/output error');
         m.loaded = true;
         if (m.installFails === 'menu') throw fail('Bootstrap failed: 37: Operation already in progress');
+        m.menuLoaded = true;
+        return { stdout: '' };
+      }
+      if (call === `sh ${join(root, 'packages/delegator/runner/launchd/install.sh')} --app-only`) {
+        mkdirSync(join(home, 'Applications/Factory Runner.app/Contents/MacOS'), { recursive: true });
         m.menuLoaded = true;
         return { stdout: '' };
       }
@@ -453,6 +461,32 @@ test('declining the Runner changes nothing for it, and setup still completes', a
   noRunnerChanges(mac);
 });
 
+const VIEWER = 'v'.repeat(64);
+
+test('declining the Runner can install the menu bar app alone, with the viewer secret read hidden and kept in the Keychain', async () => {
+  const mac = machine();
+  answer(mac, ['n', 'y', `${DEPLOYED.origin}/delegator`, VIEWER]);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.match(mac.m.questions[1]!.question, /menu bar app alone/);
+  assert.deepEqual(mac.m.questions.filter(({ secret }) => secret).map(({ question }) => /viewer secret/i.test(question)), [true]);
+  assert.deepEqual(mac.m.keychain, { url: `${DEPLOYED.origin}/delegator`, secret: VIEWER });
+  assert.ok(mac.m.calls.includes(`sh ${join(mac.root, 'packages/delegator/runner/launchd/install.sh')} --app-only`), 'installs the app alone');
+  assert.ok(!existsSync(runnerConfig(mac.home)), 'no Runner config');
+  assert.ok(!existsSync(join(mac.home, PLIST)), 'no Runner agent');
+  assert.ok(mac.m.calls.includes(`open ${join(mac.home, 'Applications/Factory Runner.app')}`), 'opens the app');
+  assert.match(runnerLine(mac.m.output)!, /^runner: not installed\. The menu bar app is installed alone/);
+  assert.ok(!mac.m.output.join('\n').includes(VIEWER), 'prints no secret');
+});
+
+test('a viewer answer that isn\'t a Cloud Inbox URL stores nothing and installs nothing', async () => {
+  const mac = machine();
+  answer(mac, ['n', 'y', 'factory-cloud-inbox.someone.workers.dev', VIEWER]);
+  assert.equal(await mac.run(), 1);
+  assert.equal(mac.m.keychain, null);
+  assert.match(runnerLine(mac.m.output)!, /ending in \/delegator/);
+  noRunnerChanges(mac);
+});
+
 test('with nobody at the terminal, a missing Runner is left alone', async () => {
   const mac = machine();
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
@@ -751,7 +785,7 @@ test('at a terminal, the suggested root and an added one are granted to Claude a
   mkdirSync(join(mac.home, '.claude'));
   const before = { model: 'opus', permissions: { defaultMode: 'auto', allow: ['Bash(git status)'], deny: ['Read(**/.env)'] }, hooks: { Stop: [] } };
   writeFileSync(settings(mac.home), JSON.stringify(before));
-  answer(mac, ['n', extra, '']);
+  answer(mac, ['n', 'n', extra, '']);
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   assert.ok(mac.m.output.includes(`  1. ${mac.home}`), 'shows the suggestion as an absolute path');
   const after = JSON.parse(readFileSync(settings(mac.home), 'utf8'));
@@ -762,7 +796,7 @@ test('at a terminal, the suggested root and an added one are granted to Claude a
   noProbes(extra);
 
   mac.m.output.length = 0;
-  answer(mac, ['n', extra, '']);
+  answer(mac, ['n', 'n', extra, '']);
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   assert.deepEqual(JSON.parse(readFileSync(settings(mac.home), 'utf8')), after, 'a repeat run adds nothing');
   assert.match(readLines(mac.m.output)[0]!, /already grants them/);
@@ -771,7 +805,7 @@ test('at a terminal, the suggested root and an added one are granted to Claude a
 test('a denied fresh read leaves setup incomplete, with the grant kept and every probe removed', async () => {
   const mac = machine();
   mac.m.readDenied = true;
-  answer(mac, ['n', '']);
+  answer(mac, ['n', 'n', '']);
   assert.equal(await mac.run(), 1);
   assert.match(readLines(mac.m.output).at(-1)!, /^read roots \(claude\): claude couldn't read .*probe\.txt\. It was denied permission/);
   assert.deepEqual(JSON.parse(readFileSync(settings(mac.home), 'utf8')), { permissions: { allow: [readRule(mac.home)] } });
@@ -780,7 +814,7 @@ test('a denied fresh read leaves setup incomplete, with the grant kept and every
 
 test('Codex is only checked and gets no settings', async () => {
   const mac = machine({ agents: ['codex'] });
-  answer(mac, ['n', '']);
+  answer(mac, ['n', 'n', '']);
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   assert.deepEqual(readLines(mac.m.output), [
     'read roots (codex): verified. A fresh codex read a new file under each root. Codex already reads anywhere, so nothing was added.',
@@ -795,7 +829,7 @@ test('the suggestion can be replaced, missing folders and files are refused, and
   const code = join(mac.home, 'Code');
   mkdirSync(join(code, 'repo'), { recursive: true });
   writeFileSync(join(mac.home, 'notes.txt'), '');
-  answer(mac, ['n', '1', '~/missing', '~/notes.txt', '~/Code/repo/..', '']);
+  answer(mac, ['n', 'n', '1', '~/missing', '~/notes.txt', '~/Code/repo/..', '']);
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   const output = mac.m.output.join('\n');
   assert.match(output, /missing doesn't exist/);
@@ -804,7 +838,7 @@ test('the suggestion can be replaced, missing folders and files are refused, and
   noProbes(code);
 
   rmSync(settings(mac.home));
-  answer(mac, ['n', 'none']);
+  answer(mac, ['n', 'n', 'none']);
   assert.equal(await mac.run(), 0);
   assert.ok(!existsSync(settings(mac.home)));
 });
@@ -814,7 +848,7 @@ test('from a worktree, the suggestion is the folder holding the main checkout', 
   const main = join(mac.home, 'Code/factory');
   mkdirSync(main, { recursive: true });
   mac.m.git.common = join(main, '.git');
-  answer(mac, ['n', '']);
+  answer(mac, ['n', 'n', '']);
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   assert.ok(mac.m.output.includes(`  1. ${join(mac.home, 'Code')}`));
 });
@@ -866,7 +900,7 @@ const agentRuns = (calls: string[]) => calls.filter((call) => /^(claude -p|codex
 
 test('without --verify, setup writes the configuration, launches no agent and says the live checks were skipped', async () => {
   const mac = machine({ agents: ['claude', 'codex'], verify: false });
-  answer(mac, ['n', '']);
+  answer(mac, ['n', 'n', '']);
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   assert.deepEqual(agentRuns(mac.m.calls), []);
   assert.ok(!mac.m.calls.some((call) => call.includes('app-server')), 'no Codex skill listing either');
@@ -880,7 +914,7 @@ test('without --verify, the exit code reflects the configuration steps only', as
   const mac = machine({ verify: false });
   mac.m.claude = claudeRun({ status: 'needs-auth' });
   mac.m.readDenied = true;
-  answer(mac, ['n', '']);
+  answer(mac, ['n', 'n', '']);
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   mac.m.gh = false;
   assert.equal(await mac.run(), 1, 'a failed configuration step still fails');
@@ -888,7 +922,7 @@ test('without --verify, the exit code reflects the configuration steps only', as
 
 test('with --verify, setup runs the probe reads and each agent\'s check', async () => {
   const mac = machine({ agents: ['claude', 'codex'], verify: true });
-  answer(mac, ['n', '']);
+  answer(mac, ['n', 'n', '']);
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   assert.deepEqual(agentRuns(mac.m.calls).map((call) => call.split(' ').slice(0, 3).join(' ')), [
     'claude -p Use', 'codex exec --sandbox', 'claude -p Call', 'codex exec --sandbox']);
@@ -923,7 +957,7 @@ test('--read-roots parses in either position and reopens the chooser for existin
   Object.assign(mac.m.deps, cliArgs(['claude', '--read-roots']));
   mkdirSync(join(mac.home, '.claude'));
   writeFileSync(settings(mac.home), JSON.stringify({ permissions: { allow: [readRule(mac.home)] } }));
-  answer(mac, ['n', 'none']);
+  answer(mac, ['n', 'n', 'none']);
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   assert.ok(mac.m.questions.some(({ question }) => question.startsWith('Press Enter to grant')));
   assert.ok(mac.m.output.includes('read roots: none chosen, nothing changed.'));

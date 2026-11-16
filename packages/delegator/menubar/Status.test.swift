@@ -39,5 +39,22 @@ enum StatusCheck {
         assert(relativeTime("2026-01-15T06:59:59.877Z", now: now) == "1 hour ago")
         assert(relativeTime("not a date", now: now) == "not a date")
         assert(initial != runnerState(json: Data(idle.replacingOccurrences(of: "\"paused\":false", with: "\"paused\":true").utf8), launchAgentLoaded: true, now: now))
+
+        // GET /pool, with the Runners' status.json snapshots as they arrive.
+        let pool = """
+        {"queueDepth":2,"machines":[
+          {"name":"imac","online":true,"lastSeenAt":"2026-01-15T08:00:00Z","snapshot":\(idle.replacingOccurrences(of: "\"current\":null", with: "\"current\":{\"identifier\":\"DO-1535\",\"sessionId\":\"s1\"}"))},
+          {"name":"laptop","online":true,"lastSeenAt":"2026-01-15T08:00:00Z","snapshot":\(idle)},
+          {"name":"mini","online":true,"lastSeenAt":"2026-01-15T08:00:00Z","snapshot":\(off)},
+          {"name":"old","online":false,"lastSeenAt":"2026-01-14T08:00:00Z","snapshot":\(idle)},
+          {"name":"new","online":false,"lastSeenAt":null,"snapshot":null}
+        ]}
+        """
+        assert(poolLines(json: Data(pool.utf8)) == [
+            "imac · working · DO-1535", "laptop · idle", "mini · off", "old · offline", "new · offline", "2 jobs waiting",
+        ])
+        assert(poolLines(json: Data(#"{"queueDepth":1,"machines":[]}"#.utf8)) == ["1 job waiting"])
+        assert(poolLines(json: Data(#"{"queueDepth":0,"machines":[{"name":"odd","online":true,"lastSeenAt":null,"snapshot":{}}]}"#.utf8)) == ["odd · idle", "No jobs waiting"])
+        assert(poolLines(json: Data("<html>".utf8)) == nil)
     }
 }

@@ -3,6 +3,9 @@ import SwiftUI
 
 private let runnerLabel = "com.factory.factory-delegator.runner"
 private let menuBarLabel = "com.factory.factory-delegator.menubar"
+/// The Keychain item setup stores for a Mac without a Runner: the viewer secret, with the Cloud Inbox URL as its comment.
+private let poolService = "com.factory.factory-delegator.pool"
+private let configFile = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/factory-delegator/config.json")
 
 @MainActor
 private final class RunnerModel: ObservableObject {
@@ -23,6 +26,8 @@ private final class RunnerModel: ObservableObject {
     var runnerInstalled: Bool {
         FileManager.default.fileExists(atPath: agentsDirectory.appending(path: "\(runnerLabel).plist").path)
     }
+
+    var configured: Bool { FileManager.default.fileExists(atPath: configFile.path) }
 
     var paused: Bool { FileManager.default.fileExists(atPath: stateDirectory.appending(path: "paused").path) }
 
@@ -102,7 +107,89 @@ private final class RunnerModel: ObservableObject {
     }
 }
 
+/// The Pool section: fetched when the menu opens and once a minute, keeping the last result when a fetch fails.
+@MainActor
+private final class PoolModel: ObservableObject {
+    @Published var lines: [String]?
+    @Published var fetchedAt: Date?
+    /// Why the last fetch failed; nil after a success.
+    @Published var problem: String?
+    private var fetching = false
+
+    /// The last result, with its time once a later fetch has failed; otherwise why there's none.
+    var display: [String] {
+        guard let problem else { return lines ?? [] }
+        guard let lines, let fetchedAt else { return [problem] }
+        return lines + ["As of \(fetchedAt.formatted(date: .omitted, time: .shortened))"]
+    }
+
+    init() {
+        refresh()
+        Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                refresh()
+            }
+        }
+        NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }
+    }
+
+    func refresh() {
+        guard !fetching else { return }
+        fetching = true
+        Task.detached(priority: .utility) { [weak self] in
+            let result = await AppCommands.fetchPool()
+            await self?.finish(result)
+        }
+    }
+
+    private func finish(_ result: Result<[String], PoolProblem>) {
+        fetching = false
+        switch result {
+        case .success(let lines):
+            if self.lines != lines { self.lines = lines }
+            fetchedAt = .now
+            if problem != nil { problem = nil }
+        case .failure(let failure):
+            if problem != failure.message { problem = failure.message }
+        }
+    }
+}
+
+private struct PoolProblem: Error { let message: String }
+
 private enum AppCommands {
+    /// Reads `GET /pool` with the viewer secret setup stored in the Keychain, or on a Runner Mac the Runner's own secret.
+    static func fetchPool() async -> Result<[String], PoolProblem> {
+        guard let (inbox, secret) = poolAccess() else { return .failure(PoolProblem(message: "Not set up. Run npm run setup.")) }
+        var request = URLRequest(url: inbox.appending(path: "pool"), timeoutInterval: 15)
+        request.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
+        do {
+            let (data, response) = try await URLSession(configuration: .ephemeral).data(for: request)
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard code == 200 else { return .failure(PoolProblem(message: "Cloud Inbox answered \(code).")) }
+            return poolLines(json: data).map { .success($0) } ?? .failure(PoolProblem(message: "Cloud Inbox sent no pool."))
+        } catch {
+            return .failure(PoolProblem(message: "Can't reach Cloud Inbox."))
+        }
+    }
+
+    /// `security` created the Keychain item, so it reads it without a prompt; the secret stays in memory.
+    private static func poolAccess() -> (URL, String)? {
+        if let (secret, error) = runWithOutput("/usr/bin/security", ["find-generic-password", "-s", poolService, "-w"]), error.isEmpty,
+           let (item, _) = runWithOutput("/usr/bin/security", ["find-generic-password", "-s", poolService]),
+           let comment = item.firstMatch(of: #/"icmt"<blob>="([^"]+)"/#)?.1, let url = URL(string: String(comment)) {
+            return (url, secret.trimmingCharacters(in: .newlines))
+        }
+        guard let data = try? Data(contentsOf: configFile),
+              let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let inbox = (config["inboxUrl"] as? String).flatMap(URL.init(string:)),
+              let secret = config["bearerSecret"] as? String else { return nil }
+        return (inbox, secret)
+    }
+
     static func launchctl(_ args: String...) -> Bool {
         runWithOutput("/bin/launchctl", args)?.1.isEmpty ?? false
     }
@@ -146,14 +233,16 @@ private enum AppCommands {
 @main
 struct FactoryRunnerMenuBarApp: App {
     @StateObject private var runner = RunnerModel()
+    @StateObject private var pool = PoolModel()
 
     var body: some Scene {
         MenuBarExtra {
-            RunnerMenu(runner: runner)
+            RunnerMenu(runner: runner, pool: pool)
         } label: {
-            let state = !runner.runnerLoaded && !runner.paused ? RunnerState.starting : runner.state
+            // A Mac without a Runner shows the plain icon.
+            let state = !runner.runnerInstalled ? nil : !runner.runnerLoaded && !runner.paused ? RunnerState.starting : runner.state
             Image(nsImage: factoryIcon(state: state))
-                .accessibilityLabel("Factory: \(state.line)")
+                .accessibilityLabel(state.map { "Factory: \($0.line)" } ?? "Factory")
         }
         .menuBarExtraStyle(.menu)
     }
@@ -161,8 +250,41 @@ struct FactoryRunnerMenuBarApp: App {
 
 private struct RunnerMenu: View {
     @ObservedObject var runner: RunnerModel
+    @ObservedObject var pool: PoolModel
 
     var body: some View {
+        if runner.runnerInstalled { local }
+        let display = pool.display
+        if !display.isEmpty {
+            Section("Pool") {
+                ForEach(Array(display.enumerated()), id: \.offset) { Text($0.element) }
+            }
+        } else if runner.runnerInstalled {
+            Divider()
+        }
+        if runner.runnerInstalled {
+            Toggle("Runner", isOn: Binding(
+                get: { runner.on },
+                set: { runner.turn(on: $0) }
+            ))
+        } else if runner.configured {
+            Button("Install Runner") { runner.run("--install-runner") }
+        }
+        if runner.runnerInstalled || runner.configured {
+            Button("Open logs") { runner.open(FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/factory-delegator")) }
+            Button("Open config") { runner.open(configFile) }
+            Divider()
+        }
+        Toggle("Start at login", isOn: Binding(
+            get: { runner.loginEnabled },
+            set: { runner.run($0 ? "--enable-app-login" : "--disable-app-login") }
+        ))
+        if let error = runner.actionError, !error.isEmpty { Text(error) }
+        Button("Quit menu bar app") { NSApplication.shared.terminate(nil) }
+    }
+
+    /// This Mac's Runner: its state, current job, PR watches, last error and recent jobs.
+    @ViewBuilder private var local: some View {
         Text(runner.state.line)
         if let current = runner.status.snapshot?.current {
             Section("Current job") {
@@ -191,33 +313,15 @@ private struct RunnerMenu: View {
                 }
             }
         }
-        Divider()
-        if runner.runnerInstalled {
-            Toggle("Runner", isOn: Binding(
-                get: { runner.on },
-                set: { runner.turn(on: $0) }
-            ))
-        } else {
-            Button("Install Runner") { runner.run("--install-runner") }
-        }
-        Button("Open logs") { runner.open(FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/factory-delegator")) }
-        Button("Open config") { runner.open(FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/factory-delegator/config.json")) }
-        Divider()
-        Toggle("Start at login", isOn: Binding(
-            get: { runner.loginEnabled },
-            set: { runner.run($0 ? "--enable-app-login" : "--disable-app-login") }
-        ))
-        if let error = runner.actionError, !error.isEmpty { Text(error) }
-        Button("Quit menu bar app") { NSApplication.shared.terminate(nil) }
     }
 }
 
 // Composite the badge into one template so macOS tints the whole icon for either menu bar style.
-private func factoryIcon(state: RunnerState) -> NSImage {
+private func factoryIcon(state: RunnerState?) -> NSImage {
     let image = NSImage(size: NSSize(width: 22, height: 18), flipped: false) { _ in
         NSImage(systemSymbolName: "building.2", accessibilityDescription: nil)?
             .draw(in: NSRect(x: 0, y: 1, width: 18, height: 16))
-        if let badge = state.badge {
+        if let state, let badge = state.badge {
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current?.compositingOperation = .copy
             NSColor.clear.setFill()
@@ -229,6 +333,6 @@ private func factoryIcon(state: RunnerState) -> NSImage {
         return true
     }
     image.isTemplate = true
-    image.accessibilityDescription = "Factory: \(state.line)"
+    image.accessibilityDescription = state.map { "Factory: \($0.line)" } ?? "Factory"
     return image
 }
