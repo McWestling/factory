@@ -6,8 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { readConfig, sha256, type Config } from './auth.ts';
 
 type State = Partial<Record<'accountId' | 'name' | 'machine' | 'orgId' | 'adminSecret' | 'bearerSecret' |
-  'clientId' | 'clientSecret' | 'webhookSecret' | 'origin' | 'registrationUrl', string>> & {
-  config?: Config; uploading?: boolean; uploaded?: boolean;
+  'clientId' | 'clientSecret' | 'webhookSecret' | 'origin' | 'registrationUrl' | 'githubOwner', string>> & {
+  config?: Config; uploading?: boolean; uploaded?: boolean; githubAsked?: boolean;
 };
 export type SetupIO = {
   ask(key: string, label: string, secret?: boolean): Promise<string>;
@@ -51,6 +51,32 @@ async function wranglerConfig(file: string, state: State) {
     .replace(/^main = .*$/m, `main = ${JSON.stringify(fileURLToPath(new URL('./worker.ts', import.meta.url)))}`);
   await writeFile(`${file}.toml`, toml, { mode: 0o600 });
   return ['--config', `${file}.toml`];
+}
+
+/**
+ * Opens GitHub's token page prefilled for the PR check, then stores the pasted token only as
+ * a Worker secret, never in the checkpoint. An empty owner or token skips it.
+ */
+async function askGithubToken(file: string, state: State, io: SetupIO, run: SetupIO['command']) {
+  const owner = state.githubOwner
+    ?? (await io.ask('githubOwner', 'GitHub user or org that owns the private repos Delegator works in (Enter to skip)')).trim();
+  if (owner) {
+    if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(owner)) throw new Error('Use a GitHub user or org name. Rerun setup.');
+    state.githubOwner = owner;
+    await save(file, state);
+    // GitHub can't preselect repository access, so the operator chooses it.
+    const url = new URL('https://github.com/settings/personal-access-tokens/new');
+    url.search = new URLSearchParams({ name: 'Delegator PR check',
+      description: 'Lets Cloud Inbox read pull requests in private repos for Delegator.',
+      target_name: owner, expires_in: 'none', pull_requests: 'read' }).toString();
+    io.say('Create the GitHub token on this prefilled page: under Repository access, choose All repositories, check that Pull requests is still Read-only, then generate it.');
+    io.say(url.href);
+    await io.open(url.href).catch(() => io.say('Could not open a browser; open the link above.'));
+    const token = (await io.ask('githubToken', 'GitHub token', true)).trim();
+    if (token) await run(['secret', 'put', 'GITHUB_TOKEN'], token);
+  }
+  state.githubAsked = true;
+  await save(file, state);
 }
 
 export async function setup(file: string, io: SetupIO): Promise<void> {
@@ -119,6 +145,7 @@ export async function setup(file: string, io: SetupIO): Promise<void> {
     state.uploaded = true;
     await save(file, state);
   }
+  if (!state.githubAsked) await askGithubToken(file, state, io, run);
   io.say(`Setup URL: ${state.origin}/delegator/install`);
   io.say('Run npm run inbox -- connect to authorize, then npm run inbox -- status to check access.');
   io.say('Owner authentication is saved in the private checkpoint. Back it up securely.');
@@ -137,6 +164,15 @@ export async function credentials(file: string, io: SetupIO): Promise<void> {
   state.uploading = true;
   await save(file, state);
   await setup(file, io);
+}
+
+/** Sets or replaces the GitHub token, for example when it expires. */
+export async function githubToken(file: string, io: SetupIO): Promise<void> {
+  const state = await load(file);
+  validate(state);
+  if (!state.uploaded) throw new Error('Run setup first.');
+  const flags = await wranglerConfig(file, state);
+  await askGithubToken(file, state, io, (args, input) => io.command([...args, ...flags], input));
 }
 
 /**
@@ -191,10 +227,12 @@ async function main() {
     });
     return;
   }
-  if (action === 'setup' || action === 'credentials') {
+  if (action === 'setup' || action === 'credentials' || action === 'github-token' || action === 'viewer') {
     const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false });
     try {
-      await (action === 'credentials' ? credentials : setup)(file, { command, open, say: console.log, async ask(_key, label, secret) {
+      const run = action === 'viewer' ? (f: string, io: SetupIO) => viewer(f, process.argv[3] ?? '', io)
+        : { setup, credentials, 'github-token': githubToken }[action];
+      await run(file, { command, open, say: console.log, async ask(_key, label, secret) {
         if (!secret) return rl.question(`${label}: `);
         // Disable terminal echo while reading credentials; never put them in argv or logs.
         console.log(`${label} (input hidden):`);
@@ -210,12 +248,7 @@ async function main() {
     } finally { rl.close(); }
     return;
   }
-  if (action === 'viewer') {
-    await viewer(file, process.argv[3] ?? '', { command, open, say: console.log,
-      async ask() { throw new Error('Run setup first.'); } });
-    return;
-  }
-  if (!['update', 'connect', 'reconnect', 'status', 'disconnect'].includes(action)) throw new Error('Use login, setup, credentials, viewer <name>, update, connect, reconnect, status or disconnect.');
+  if (!['update', 'connect', 'reconnect', 'status', 'disconnect'].includes(action)) throw new Error('Use login, setup, credentials, github-token, viewer <name>, update, connect, reconnect, status or disconnect.');
   const state = await load(file);
   const config = validate(state);
   if (!state.uploaded || !state.origin) throw new Error('Run setup first.');

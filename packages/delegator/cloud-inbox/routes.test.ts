@@ -26,7 +26,7 @@ const config: Config = {
 const LEASE_MS = 10 * 60_000;
 
 /** Delegator installed as `app-user-example`, with node:sqlite standing in for the Durable Object's SQL. */
-function setup(prepare?: (db: DatabaseSync, now: number) => void) {
+function setup(prepare?: (db: DatabaseSync, now: number) => void, githubToken?: string) {
   const db = new DatabaseSync(':memory:');
   prepare?.(db, 1_800_000_000_000);
   // Runs eagerly, like Cloudflare's exec().
@@ -78,7 +78,7 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void) {
       return Response.json({ access_token: 'access-refreshed', refresh_token: 'refresh-2', expires_in: 86400, scope: 'read write app:assignable' });
     }
     if (String(input).startsWith('https://api.github.com/')) {
-      assert.equal(new Headers(init?.headers).get('Authorization'), null);
+      assert.equal(new Headers(init?.headers).get('Authorization'), githubToken ? `Bearer ${githubToken}` : null);
       // As in Workers, whose fetch throws on `redirect: 'error'`.
       if (init?.redirect === 'error') throw new TypeError('Invalid redirect value, must be one of "follow" or "manual"');
       return linear.github(String(input), init);
@@ -104,7 +104,7 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void) {
   const auth = new AppAuth(storage, config.app, ORG, fetchFn, () => clock.now);
   // The Durable Object's alarm; tests fire it with `flush()`.
   const alarms: number[] = [];
-  const build = () => new JobQueue(sql, auth, (at) => alarms.push(at), fetchFn, () => clock.now);
+  const build = () => new JobQueue(sql, auth, (at) => alarms.push(at), fetchFn, () => clock.now, githubToken);
   let queue = build();
   /** Replaces the queue with a new one over the same storage, as after a restart. */
   const rebuild = () => { queue = build(); };
@@ -923,8 +923,8 @@ const call = (h: Harness, method: string, op: string, claimId: string | undefine
 const update = (h: Harness, claimId: string | undefined, type: string, body: string, session = 'session-1') =>
   call(h, 'POST', 'updates', claimId, { type, body }, session);
 /** A harness with session-1 (issue-1) claimed, its queued thought already sent. */
-async function claimedJob() {
-  const h = setup();
+async function claimedJob(githubToken?: string) {
+  const h = setup(undefined, githubToken);
   await h.created('session-1');
   const claim = await h.claimed();
   h.posts.length = 0;
@@ -1334,6 +1334,58 @@ test('ownership survives restart and ignores contextual attachments before a mat
   assert.deepEqual(recovery[0]!.launch, { repo: 'Owner/Repo', branch: 'launch-branch' });
   assert.deepEqual(await (await call(h, 'POST', 'pull-request', h.claimId)).json(), { url: 'https://github.com/owner/repo/pull/7' });
 });
+
+for (const githubToken of [undefined, 'github-token-example']) {
+  test(`the PR check sends the GitHub token only when one is set (${githubToken ? 'set' : 'unset'})`, async () => {
+    const h = await claimedJob(githubToken);
+    await call(h, 'POST', 'launched', h.claimId, { repo: 'owner/repo', branch: 'launch-branch' });
+    h.linear.world.issues['issue-1']!.attachments = ['https://github.com/owner/repo/pull/7'];
+    const good = h.linear.github;
+    const sentAuth: (string | null)[] = [];
+    h.linear.github = (url, init) => { sentAuth.push(new Headers(init?.headers).get('Authorization')); return good(url, init); };
+    const res = await call(h, 'GET', 'watch', h.claimId);
+    assert.deepEqual((await res.json() as { pullRequests: string[] }).pullRequests, ['https://github.com/owner/repo/pull/7']);
+    assert.deepEqual(sentAuth, [githubToken ? `Bearer ${githubToken}` : null]);
+  });
+}
+
+for (const status of [401, 403, 404]) {
+  test(`a GitHub ${status} posts "can't read the PR" once instead of waiting silently`, async (t) => {
+    const logged = t.mock.method(console, 'log', () => {});
+    const h = await claimedJob('github-token-example');
+    await call(h, 'POST', 'launched', h.claimId, { repo: 'owner/repo', branch: 'launch-branch' });
+    await h.flush();
+    h.posts.length = 0;
+    h.linear.world.issues['issue-1']!.attachments = ['https://github.com/owner/repo/pull/7'];
+    h.linear.github = () => new Response(null, { status });
+    for (let i = 0; i < 2; i++) {
+      const res = await call(h, 'GET', 'watch', h.claimId);
+      assert.deepEqual((await res.json() as { pullRequests: string[] }).pullRequests, []);
+    }
+    await h.flush();
+    assert.deepEqual(sent(h.posts), [['session-1', 'thought', MESSAGES.unreadable]]);
+    assert.doesNotMatch(logged.mock.calls.map((c) => c.arguments.join(' ')).join('\n'), /github-token-example/);
+  });
+}
+
+for (const [limit, headers, body] of [['primary', { 'x-ratelimit-remaining': '0' }, ''], ['secondary', { 'retry-after': '60' }, ''],
+  ['secondary, message only', {}, '{"message":"You have exceeded a secondary rate limit."}']] as const) {
+  test(`a GitHub ${limit} rate limit posts no token warning; a later access failure posts one`, async () => {
+    const h = await claimedJob('github-token-example');
+    await call(h, 'POST', 'launched', h.claimId, { repo: 'owner/repo', branch: 'launch-branch' });
+    await h.flush();
+    h.posts.length = 0;
+    h.linear.world.issues['issue-1']!.attachments = ['https://github.com/owner/repo/pull/7'];
+    h.linear.github = () => new Response(body, { status: 403, headers });
+    assert.deepEqual((await (await call(h, 'GET', 'watch', h.claimId)).json() as { pullRequests: string[] }).pullRequests, []);
+    await h.flush();
+    assert.deepEqual(sent(h.posts), []);
+    h.linear.github = () => new Response(null, { status: 403 });
+    for (let i = 0; i < 2; i++) await call(h, 'GET', 'watch', h.claimId);
+    await h.flush();
+    assert.deepEqual(sent(h.posts), [['session-1', 'thought', MESSAGES.unreadable]]);
+  });
+}
 
 for (const failure of ['missing', 'failed', 'network', 'wrong-repo', 'wrong-branch', 'fork']) {
   test(`unverifiable ownership (${failure}) is retryable and rechecked before completion`, async () => {
