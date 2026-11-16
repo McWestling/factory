@@ -373,8 +373,11 @@ export class JobQueue {
           });
           if (!response.ok) {
             log({ event: 'watch', session: id, outcome: `pr-metadata-${response.status}` });
-            // A missing, expired or unapproved token, or a repo it doesn't cover.
-            if ([401, 403, 404].includes(response.status)) unreadable = true;
+            // A missing, expired or unapproved token, or a repo it doesn't cover; a rate limit
+            // (primary or secondary, as GitHub marks them) is transient, not a token problem.
+            const limited = response.status === 403 && (response.headers.get('x-ratelimit-remaining') === '0'
+              || response.headers.has('retry-after') || /rate limit/i.test(await response.text()));
+            if ([401, 403, 404].includes(response.status) && !limited) unreadable = true;
             continue;
           }
           const pr = await response.json() as { base?: { repo?: { full_name?: string } }; head?: { ref?: string; repo?: { full_name?: string } } };

@@ -1368,6 +1368,25 @@ for (const status of [401, 403, 404]) {
   });
 }
 
+for (const [limit, headers, body] of [['primary', { 'x-ratelimit-remaining': '0' }, ''], ['secondary', { 'retry-after': '60' }, ''],
+  ['secondary, message only', {}, '{"message":"You have exceeded a secondary rate limit."}']] as const) {
+  test(`a GitHub ${limit} rate limit posts no token warning; a later access failure posts one`, async () => {
+    const h = await claimedJob('github-token-example');
+    await call(h, 'POST', 'launched', h.claimId, { repo: 'owner/repo', branch: 'launch-branch' });
+    await h.flush();
+    h.posts.length = 0;
+    h.linear.world.issues['issue-1']!.attachments = ['https://github.com/owner/repo/pull/7'];
+    h.linear.github = () => new Response(body, { status: 403, headers });
+    assert.deepEqual((await (await call(h, 'GET', 'watch', h.claimId)).json() as { pullRequests: string[] }).pullRequests, []);
+    await h.flush();
+    assert.deepEqual(sent(h.posts), []);
+    h.linear.github = () => new Response(null, { status: 403 });
+    for (let i = 0; i < 2; i++) await call(h, 'GET', 'watch', h.claimId);
+    await h.flush();
+    assert.deepEqual(sent(h.posts), [['session-1', 'thought', MESSAGES.unreadable]]);
+  });
+}
+
 for (const failure of ['missing', 'failed', 'network', 'wrong-repo', 'wrong-branch', 'fork']) {
   test(`unverifiable ownership (${failure}) is retryable and rechecked before completion`, async () => {
     const h = await claimedJob();
