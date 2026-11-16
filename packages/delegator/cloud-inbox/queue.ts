@@ -6,6 +6,8 @@ import type { Claim, LaunchEvidence } from '../job.ts';
 import type { AppAuth } from './auth.ts';
 import { log } from './routes.ts';
 
+const ENDED_STATUSES = ['complete', 'error', 'stopped'];
+const LIVE_STATUSES = ['pending', 'active', 'awaitingInput', 'stale'];
 const GRAPHQL_URL = 'https://api.linear.app/graphql';
 const LEASE_MS = 10 * 60_000;
 const HISTORY_MS = 30 * 24 * 60 * 60_000;
@@ -284,8 +286,8 @@ export class JobQueue {
     if (type === 'response' && body.startsWith('Opened ')) {
       const found = await this.watch(machine, id, claimId);
       if (typeof found === 'string') return found;
-      if (['complete', 'error', 'stopped'].includes(found.sessionStatus)) return 'ended';
-      if (!['pending', 'active', 'awaitingInput', 'stale'].includes(found.sessionStatus)) return 'linear';
+      if (ENDED_STATUSES.includes(found.sessionStatus)) return 'ended';
+      if (!LIVE_STATUSES.includes(found.sessionStatus)) return 'linear';
       if (!found.pullRequests.some((url) => body === `Opened ${url}.`)) return 'no-pr';
     }
     if (!this.#held(machine, id, claimId)) return 'not-claimed';
@@ -305,7 +307,7 @@ export class JobQueue {
     const data = await this.#read<WatchData>(WATCH, { issue: issueId, session: id });
     const status = data?.agentSession?.status;
     if (!status) return 'linear';
-    if (['complete', 'error', 'stopped'].includes(status)) {
+    if (ENDED_STATUSES.includes(status)) {
       if (this.#held(machine, id, claimId) !== issueId) return 'not-claimed';
       return { sessionStatus: status, pullRequests: [] };
     }
@@ -354,7 +356,7 @@ export class JobQueue {
   async linkPullRequest(machine: string, id: string, claimId: string): Promise<{ url: string } | Refusal> {
     const found = await this.watch(machine, id, claimId);
     if (typeof found === 'string') return found;
-    if (['complete', 'error', 'stopped'].includes(found.sessionStatus)) return 'ended';
+    if (ENDED_STATUSES.includes(found.sessionStatus)) return 'ended';
     const url = found.pullRequests[0];
     if (!url) return 'no-pr';
     const data = await this.#read<{ agentSessionUpdate?: { success?: boolean } }>(LINK, { session: id, url });

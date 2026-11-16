@@ -8,8 +8,8 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs, promisify } from 'node:util';
 import { loadConfig } from '../delegator/runner/runner.ts';
-import { lastLine, outsideRunner, readJson, updateRunner, withLock, type Result, type UpkeepDeps } from '../delegator/upkeep.ts';
-import { readRoots } from './read-roots.ts';
+import { lastLine, outsideRunner, readJson, runnerPid, updateRunner, withLock, type Result, type UpkeepDeps } from '../delegator/upkeep.ts';
+import { events, output, readRoots } from './read-roots.ts';
 
 export type SetupDeps = UpkeepDeps & {
   platform: string;
@@ -159,7 +159,6 @@ async function support(deps: SetupDeps, name: string, forms: Awaited<ReturnType<
   }
 }
 
-const events = (stdout: string): any[] => stdout.split('\n').filter((line) => line.trim()).map((line) => JSON.parse(line));
 /** True only for a real whoami answer: a Linear user with an id. Never returns or prints the payload. */
 const whoamiOk = (content: unknown): boolean => [content].flat().some((part) => {
   try { return typeof JSON.parse(typeof part === 'string' ? part : (part as { text: string }).text).user?.id === 'string'; } catch { return false; }
@@ -211,11 +210,9 @@ export function codexVerdict(stdout: string, server: string): string | null {
 /** Starts a fresh process of the agent with its own config and checks Linear and skill discovery; returns a failure or null. */
 async function verifyOnce(deps: SetupDeps, name: string): Promise<string | null> {
   const factory = factorySkills(deps);
-  const output = (file: string, args: string[]) => deps.exec(file, args, 180_000).then(({ stdout }) => stdout,
-    (error) => { if ((error as { killed?: boolean }).killed) throw new Error(`${file} timed out`); return String((error as { stdout?: unknown }).stdout ?? ''); });
   try {
     if (name === 'claude') {
-      return claudeVerdict(await output('claude', ['-p', PROMPT, '--output-format', 'stream-json', '--verbose', '--tools', '',
+      return claudeVerdict(await output(deps, 'claude', ['-p', PROMPT, '--output-format', 'stream-json', '--verbose', '--tools', '',
         '--allowedTools', 'mcp__*__whoami', '--no-session-persistence']), factory);
     }
     const servers = JSON.parse((await deps.exec('codex', ['mcp', 'list', '--json'], 60_000)).stdout) as { name: string; enabled: boolean; transport?: { url?: string } }[];
@@ -230,7 +227,7 @@ async function verifyOnce(deps: SetupDeps, name: string): Promise<string | null>
     const listed = ((list?.data?.[0]?.skills ?? []) as { name: string; enabled: boolean }[]).filter((skill) => skill.enabled).map((skill) => skill.name);
     const missing = missingSkills(listed, factory);
     if (missing.length) return `codex can't discover: ${missing.join(', ')}. Rerun setup to reinstall them.`;
-    return codexVerdict(await output('codex', ['exec', '--sandbox', 'read-only', '--ephemeral', '--json', '--skip-git-repo-check',
+    return codexVerdict(await output(deps, 'codex', ['exec', '--sandbox', 'read-only', '--ephemeral', '--json', '--skip-git-repo-check',
       '-c', `mcp_servers.${server.name}.enabled_tools=["whoami"]`, PROMPT]), server.name);
   } catch (error) {
     return `couldn't run the check (${(error as Error).message}).`;
@@ -282,10 +279,6 @@ async function provisionInbox(deps: SetupDeps, ask: NonNullable<SetupDeps['ask']
   const state = read();
   return { url: `${state.origin}/delegator`, secret: state.config?.machines?.[state.machine]?.bearerSecret, machine: appName(state.machine) };
 }
-
-/** The Runner's pid from launchd: 0 when loaded but not running (KeepAlive may restart it any moment), null when not loaded. */
-const runnerPid = (deps: SetupDeps) => deps.exec('launchctl', ['print', `gui/${deps.uid}/com.factory.factory-delegator.runner`], 30_000)
-  .then(({ stdout }) => Number(/^\s*pid = (\d+)$/m.exec(stdout)?.[1] ?? 0), () => null);
 
 /** Waits for the newly installed Runner to start and reach Cloud Inbox, as launchd and its status.json report it. */
 async function started(deps: SetupDeps, since: number): Promise<Result> {
