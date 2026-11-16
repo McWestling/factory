@@ -23,13 +23,15 @@ export type Config = {
   app: AppConfig;
   /** Machine name to its bearer secret, the only way that machine can claim jobs. */
   machines: Record<string, string>;
+  /** Viewer name to the SHA-256 hex of its secret. A viewer can read the pool and nothing else. */
+  viewers?: Record<string, string>;
 };
 
 const APP_KEYS = { clientId: 'LINEAR_CLIENT_ID', clientSecret: 'LINEAR_CLIENT_SECRET', webhookSecret: 'LINEAR_WEBHOOK_SECRET' } as const;
 
 /** Reads Cloud Inbox's secrets. Returns a problem naming the bad key, never its value. */
 export function readConfig(env: Record<string, unknown>): Config | string {
-  const { LINEAR_ORG_ID: orgId, ADMIN_SECRET: adminSecret, MACHINES: raw } = env;
+  const { LINEAR_ORG_ID: orgId, ADMIN_SECRET: adminSecret, MACHINES: raw, VIEWERS: rawViewers } = env;
   if (typeof orgId !== 'string' || !orgId) return 'LINEAR_ORG_ID is missing';
   if (typeof adminSecret !== 'string' || adminSecret.length < MIN_SECRET_LENGTH) {
     return `ADMIN_SECRET must be at least ${MIN_SECRET_LENGTH} characters`;
@@ -60,7 +62,22 @@ export function readConfig(env: Record<string, unknown>): Config | string {
     if (bearerSecrets.has(bearerSecret)) return 'MACHINES has duplicate bearer secrets';
     bearerSecrets.add(bearerSecret);
   }
-  return { orgId, adminSecret, app: app as AppConfig, machines: machines as Record<string, string> };
+  let viewers: unknown = {};
+  if (rawViewers !== undefined && rawViewers !== '') {
+    try { viewers = JSON.parse(String(rawViewers)); } catch { return 'VIEWERS is not JSON'; }
+  }
+  if (!viewers || typeof viewers !== 'object' || Array.isArray(viewers)) return 'VIEWERS must be an object of viewer name to secret hash';
+  for (const [name, hash] of Object.entries(viewers)) {
+    if (!MACHINE_NAME.test(name)) return 'VIEWERS has an invalid viewer name';
+    if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) return `VIEWERS.${name} must be a SHA-256 hex digest`;
+  }
+  return { orgId, adminSecret, app: app as AppConfig, machines: machines as Record<string, string>,
+    viewers: viewers as Record<string, string> };
+}
+
+/** The SHA-256 hex digest under which a viewer secret is stored. */
+export async function sha256(value: string): Promise<string> {
+  return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))));
 }
 
 export const hex = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
@@ -104,8 +121,7 @@ export type Storage = {
 };
 
 type PendingState = { value: string; verifier: string; expiresAt: number; reinstall: boolean };
-// orgId and clientId bind the token to the config that installed it. appName is the
-// app's name in Linear; installs from before it was stored lack it.
+// orgId and clientId bind the token to the config that installed it.
 type StoredToken = {
   accessToken: string; refreshToken: string; expiresAt: number; appUserId: string; appName?: string;
   orgId: string; clientId: string; scopes: string[];
@@ -289,7 +305,6 @@ export class AppAuth {
     if (await this.#storage.get('disconnecting')) throw new Error('Delegator is disconnected; retry disconnect before reconnecting');
     const token = await this.#storage.get<StoredToken>('token');
     if (!token) throw new Error('Delegator is not installed');
-    // Also catches records from before the identity was stored.
     if (!cloudInboxScopes(token.scopes) || token.orgId !== this.#orgId || token.clientId !== this.#client.clientId) {
       throw new Error('Delegator must be reinstalled: its token has other or unverified permissions or belongs to another org or client');
     }

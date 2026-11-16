@@ -3,12 +3,11 @@ import { spawn, spawnSync } from 'node:child_process';
 import { chmod, readFile, rename, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
-import { parseEnv } from 'node:util';
-import { readConfig, type Config } from './auth.ts';
+import { readConfig, sha256, type Config } from './auth.ts';
 
 type State = Partial<Record<'accountId' | 'name' | 'machine' | 'orgId' | 'adminSecret' | 'bearerSecret' |
   'clientId' | 'clientSecret' | 'webhookSecret' | 'origin' | 'registrationUrl' | 'githubOwner', string>> & {
-  config?: Config; uploading?: boolean; uploaded?: boolean; imported?: boolean; githubAsked?: boolean;
+  config?: Config; uploading?: boolean; uploaded?: boolean; githubAsked?: boolean;
 };
 export type SetupIO = {
   ask(key: string, label: string, secret?: boolean): Promise<string>;
@@ -36,7 +35,8 @@ async function save(file: string, state: State) {
 /** The Worker secrets that hold `config`, as `readConfig` reads them. */
 const secrets = (config?: Partial<Config>) => ({ LINEAR_ORG_ID: config?.orgId, ADMIN_SECRET: config?.adminSecret,
   LINEAR_CLIENT_ID: config?.app?.clientId, LINEAR_CLIENT_SECRET: config?.app?.clientSecret,
-  LINEAR_WEBHOOK_SECRET: config?.app?.webhookSecret, MACHINES: JSON.stringify(config?.machines) });
+  LINEAR_WEBHOOK_SECRET: config?.app?.webhookSecret, MACHINES: JSON.stringify(config?.machines),
+  VIEWERS: JSON.stringify(config?.viewers ?? {}) });
 function validate(state: State): Config {
   const result = readConfig(secrets(state.config));
   if (typeof result === 'string') throw new Error(result);
@@ -97,8 +97,8 @@ export async function setup(file: string, io: SetupIO): Promise<void> {
   if (!state.origin) {
     // Check before deploying: a lost checkpoint must never rotate existing remote secrets.
     const remote = JSON.parse(await run(['secret', 'list'])) as unknown[];
-    if (remote.length && !state.imported) {
-      throw new Error('This Worker already has secrets. Restore the checkpoint or run import with its original .dev.vars before setup.');
+    if (remote.length) {
+      throw new Error('This Worker already has secrets. Restore the original checkpoint before setup.');
     }
     const deployed = await run(['deploy', '--keep-vars']);
     const origin = deployed.match(/https:\/\/[a-z0-9.-]+\.workers\.dev\b/)?.[0];
@@ -136,8 +136,8 @@ export async function setup(file: string, io: SetupIO): Promise<void> {
   const config = validate(state);
   if (!state.uploaded) {
     const remote = JSON.parse(await run(['secret', 'list'])) as unknown[];
-    if (remote.length && !state.uploading && !state.imported) {
-      throw new Error('Remote secrets appeared during setup. Restore/import original configuration before continuing.');
+    if (remote.length && !state.uploading) {
+      throw new Error('Remote secrets appeared during setup. Restore the original checkpoint before continuing.');
     }
     state.uploading = true;
     await save(file, state);
@@ -148,7 +148,7 @@ export async function setup(file: string, io: SetupIO): Promise<void> {
   if (!state.githubAsked) await askGithubToken(file, state, io, run);
   io.say(`Setup URL: ${state.origin}/delegator/install`);
   io.say('Run npm run inbox -- connect to authorize, then npm run inbox -- status to check access.');
-  io.say('Owner authentication is saved in the private checkpoint. Back it up securely. Runner pairing is not implemented yet.');
+  io.say('Owner authentication is saved in the private checkpoint. Back it up securely.');
 }
 
 /** Deliberate correction/rotation of app credentials, preserving all machine authorities. */
@@ -173,6 +173,27 @@ export async function githubToken(file: string, io: SetupIO): Promise<void> {
   if (!state.uploaded) throw new Error('Run setup first.');
   const flags = await wranglerConfig(file, state);
   await askGithubToken(file, state, io, (args, input) => io.command([...args, ...flags], input));
+}
+
+/**
+ * Issues a viewer secret, which reads the pool and nothing else, and prints it once.
+ * Cloud Inbox and the checkpoint keep only its hash. Reusing a name replaces that viewer.
+ */
+export async function viewer(file: string, name: string, io: SetupIO): Promise<void> {
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(name)) {
+    throw new Error('Name the viewer with lowercase letters, digits and hyphens, at most 63 characters.');
+  }
+  const state = await load(file);
+  const config = validate(state);
+  if (!state.uploaded || !state.origin) throw new Error('Run setup first.');
+  const secret = random();
+  state.config = { ...config, viewers: { ...config.viewers, [name]: await sha256(secret) } };
+  state.uploaded = false;
+  state.uploading = true;
+  await save(file, state);
+  await setup(file, io);
+  io.say(`Viewer ${name}: ${secret}`);
+  io.say('This is the only time it is shown. It reads GET /delegator/pool and nothing else.');
 }
 
 async function main() {
@@ -206,24 +227,12 @@ async function main() {
     });
     return;
   }
-  if (action === 'import') {
-    if (Object.keys(await load(file)).length) throw new Error('Checkpoint exists. Restore a backup rather than overwriting it.');
-    const env = parseEnv(await readFile(process.argv[3] ?? '.dev.vars', 'utf8'));
-    const config = readConfig(env);
-    if (typeof config === 'string') throw new Error(config);
+  if (action === 'setup' || action === 'credentials' || action === 'github-token' || action === 'viewer') {
     const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false });
     try {
-      const machine = await rl.question('Existing stable machine key: ');
-      if (!Object.hasOwn(config.machines, machine)) throw new Error('Machine is not in imported config.');
-      await save(file, { config, machine, imported: true });
-    } finally { rl.close(); }
-    console.log('Imported original configuration. Run setup with the original Worker name and account.');
-    return;
-  }
-  if (action === 'setup' || action === 'credentials' || action === 'github-token') {
-    const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false });
-    try {
-      await ({ setup, credentials, 'github-token': githubToken }[action])(file, { command, open, say: console.log, async ask(_key, label, secret) {
+      const run = action === 'viewer' ? (f: string, io: SetupIO) => viewer(f, process.argv[3] ?? '', io)
+        : { setup, credentials, 'github-token': githubToken }[action];
+      await run(file, { command, open, say: console.log, async ask(_key, label, secret) {
         if (!secret) return rl.question(`${label}: `);
         // Disable terminal echo while reading credentials; never put them in argv or logs.
         console.log(`${label} (input hidden):`);
@@ -239,7 +248,7 @@ async function main() {
     } finally { rl.close(); }
     return;
   }
-  if (!['update', 'connect', 'reconnect', 'status', 'disconnect'].includes(action)) throw new Error('Use login, setup, import, credentials, github-token, update, connect, reconnect, status or disconnect.');
+  if (!['update', 'connect', 'reconnect', 'status', 'disconnect'].includes(action)) throw new Error('Use login, setup, credentials, github-token, viewer <name>, update, connect, reconnect, status or disconnect.');
   const state = await load(file);
   const config = validate(state);
   if (!state.uploaded || !state.origin) throw new Error('Run setup first.');

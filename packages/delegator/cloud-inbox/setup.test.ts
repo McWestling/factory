@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { setup, credentials, githubToken, type SetupIO } from './setup.ts';
+import { createHash } from 'node:crypto';
+import { setup, credentials, githubToken, viewer, type SetupIO } from './setup.ts';
 
 test('setup resumes an interrupted registration and reruns without changing credentials or redeploying', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'inbox-test-'));
@@ -181,5 +182,42 @@ test('setup refuses a GitHub owner that is not a GitHub name', async () => {
       async ask(key) { return answers[key]!; }, say() {}, async open() {},
       async command(args) { return args.includes('deploy') ? 'https://factory-cloud-inbox.example.workers.dev' : args.includes('list') ? '[]' : ''; },
     }), /GitHub user or org name/);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('a viewer secret is printed once, uploaded only as its hash, and leaves other credentials alone', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'inbox-test-'));
+  const file = join(dir, 'setup.local.json');
+  const answers: Record<string, string> = { accountId: 'account-example', name: 'factory-cloud-inbox',
+    machine: 'example-machine', orgId: 'org-example', clientId: 'client-example', clientSecret: 'secret', webhookSecret: 'webhook', githubOwner: '' };
+  let upload = '';
+  const said: string[] = [];
+  const io: SetupIO = {
+    async ask(key) { return answers[key]!; }, say(message) { said.push(message); }, async open() {},
+    async command(args, input) {
+      if (args.includes('deploy')) return 'https://factory-cloud-inbox.example.workers.dev';
+      if (args.includes('bulk')) upload = input!;
+      return args.includes('list') ? '[]' : '';
+    },
+  };
+  const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+  try {
+    await setup(file, io);
+    const before = JSON.parse(await readFile(file, 'utf8'));
+    said.length = 0;
+    await viewer(file, 'example-viewer', { ...io, async ask() { throw new Error('viewer must not prompt'); } });
+    const printed = said.map((line) => line.match(/[0-9a-f]{64}/)?.[0]).filter(Boolean);
+    assert.equal(printed.length, 1);
+    const secret = printed[0]!;
+    const checkpoint = await readFile(file, 'utf8');
+    assert.ok(!checkpoint.includes(secret));
+    const uploaded = JSON.parse(upload);
+    assert.deepEqual(JSON.parse(uploaded.VIEWERS), { 'example-viewer': hash(secret) });
+    assert.equal(uploaded.MACHINES, JSON.stringify(before.config.machines));
+    assert.equal(uploaded.ADMIN_SECRET, before.config.adminSecret);
+
+    await viewer(file, 'other-viewer', io);
+    assert.deepEqual(Object.keys(JSON.parse(JSON.parse(upload).VIEWERS)), ['example-viewer', 'other-viewer']);
+    await assert.rejects(viewer(file, 'Bad/Name', io), /lowercase/);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

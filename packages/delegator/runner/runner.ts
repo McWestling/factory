@@ -11,6 +11,8 @@ import { isLaunchEvidence, type Claim, type LaunchEvidence } from '../job.ts';
 import { LEVELS, matchModel, parseIssue, type Level } from '../parse-issue.ts';
 
 export const CONFIG_PATH = join(homedir(), '.config', 'factory-delegator', 'config.json');
+const ENDED_STATUSES = ['complete', 'error', 'stopped'];
+const LIVE_STATUSES = ['pending', 'active', 'awaitingInput', 'stale'];
 const POLL_MS = 15_000;
 /** Cloud Inbox's history window: a session not reclaimed by then never will be. */
 const LAUNCH_KEEP_MS = 30 * 24 * 60 * 60_000;
@@ -24,7 +26,7 @@ export type RunnerConfig = {
   /** The Linear app's name, as Cloud Inbox's queued thought shows it. */
   machine: string;
   allowedCreatorIds: readonly string[];
-  /** Preferred models name → how Orca starts it. */
+  /** Model name selected by a level or [model=] pin → how Orca starts it. */
   models: Readonly<Record<string, ModelSettings>>;
   levels: Readonly<Record<Level, string>>;
   skill: string;
@@ -107,8 +109,6 @@ export function startStatusHeartbeat(deps: Deps) {
   return setInterval(() => { writeStatus(deps); acknowledgeDrain(deps); }, 10_000);
 }
 
-/** Setup reads this from the installed bundle to know the Runner can drain. */
-export const DRAIN_PROTOCOL = 1;
 const active = new WeakMap<Deps, number>();
 
 /** Counts claim and watch work, so a drain is acknowledged only between operations. */
@@ -262,6 +262,7 @@ function inbox(config: RunnerConfig, deps: Deps) {
       }
       return value as { sessionStatus: string; issueState?: string; pullRequests: string[] };
     },
+    report: (snapshot: Status) => call('PUT', '/pool/snapshot', snapshot),
     link: async (claim: Claim) => {
       const value: unknown = await (await call('POST', job(claim, 'pull-request'))).json();
       if (!isObject(value) || typeof value.url !== 'string'
@@ -322,14 +323,13 @@ type Launch = {
   thoughtPosted: boolean;
   githubRepo?: string;
 };
-// Numbers are the previous file format: a confirmed local launch without thought metadata.
-type Launches = Record<string, Launch | number>;
+type Launches = Record<string, Launch>;
 
 function readLaunches(deps: Deps): Launches {
   try {
     const launches: unknown = JSON.parse(readFileSync(deps.launches, 'utf8'));
     if (!isObject(launches) || !Object.values(launches).every((entry) =>
-      typeof entry === 'number' ? Number.isFinite(entry) : isObject(entry)
+      isObject(entry)
         && typeof entry.at === 'number' && Number.isFinite(entry.at)
         && typeof entry.repo === 'string' && isAbsolute(entry.repo)
         && typeof entry.branch === 'string' && entry.branch.length <= 200 && BRANCH.test(entry.branch) && !entry.branch.includes('..')
@@ -350,7 +350,7 @@ function record(deps: Deps, log: (outcome: string) => void, change: (launches: L
     const launches = readLaunches(deps);
     change(launches);
     for (const [session, entry] of Object.entries(launches)) {
-      if (!((typeof entry === 'number' ? entry : entry.at) > Date.now() - LAUNCH_KEEP_MS)) delete launches[session];
+      if (!(entry.at > Date.now() - LAUNCH_KEEP_MS)) delete launches[session];
     }
     // Renamed into place, so a crash mid-write never leaves half a file.
     writeFileSync(`${deps.launches}.tmp`, JSON.stringify(launches), { mode: 0o600 });
@@ -444,12 +444,12 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
         });
       }
       const status = await api.watch(job);
-      if (['complete', 'error', 'stopped'].includes(status.sessionStatus)) {
+      if (ENDED_STATUSES.includes(status.sessionStatus)) {
         change((current) => delete current[job.sessionId]);
         log('ended');
         continue;
       }
-      if (!['pending', 'active', 'awaitingInput', 'stale'].includes(status.sessionStatus)) {
+      if (!LIVE_STATUSES.includes(status.sessionStatus)) {
         throw new Error('unknown session status');
       }
       if (!job.ready) change((current) => { current[job.sessionId]!.ready = true; });
@@ -458,11 +458,11 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
         const url = await api.link(job);
         // A stop or final reply can land while the link is being added.
         const latest = await api.watch(job);
-        if (['complete', 'error', 'stopped'].includes(latest.sessionStatus)) {
+        if (ENDED_STATUSES.includes(latest.sessionStatus)) {
           change((current) => delete current[job.sessionId]);
           continue;
         }
-        if (!['pending', 'active', 'awaitingInput', 'stale'].includes(latest.sessionStatus)) throw new Error('unknown session status');
+        if (!LIVE_STATUSES.includes(latest.sessionStatus)) throw new Error('unknown session status');
         if (!latest.pullRequests.includes(url)) { log('pr-unconfirmed'); continue; }
         body = `Opened ${url}.`;
       } else if (status.issueState === 'canceled') {
@@ -480,7 +480,7 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
         // 409 can also mean the PR attachment vanished; keep an otherwise active watch.
         try {
           const latest = await api.watch(job);
-          if (['complete', 'error', 'stopped'].includes(latest.sessionStatus)) {
+          if (ENDED_STATUSES.includes(latest.sessionStatus)) {
             change((current) => delete current[job.sessionId]);
           }
         } catch (retryError) {
@@ -496,8 +496,8 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
 }
 
 /** Reports a recorded launch, retaining its claim for completion watching. */
-async function reportLaunch(api: ReturnType<typeof inbox>, deps: Deps, claim: Claim, log: (outcome: string) => void, launch: Launch | number) {
-  if (typeof launch !== 'number' && !launch.thoughtPosted) {
+async function reportLaunch(api: ReturnType<typeof inbox>, deps: Deps, claim: Claim, log: (outcome: string) => void, launch: Launch) {
+  if (!launch.thoughtPosted) {
     const posted = await api.update(claim, 'thought', `Started ${launch.model} in Orca on \`${launch.branch}\`.`)
       .then(() => true, () => false);
     if (!posted) {
@@ -512,8 +512,8 @@ async function reportLaunch(api: ReturnType<typeof inbox>, deps: Deps, claim: Cl
     changeWatches(deps, (watches) => {
       if (watches[claim.sessionId]?.claimId !== claim.claimId) {
         const identifier = status(deps).current?.identifier;
-        watches[claim.sessionId] = { ...claim, at: typeof launch === 'number' ? launch : launch.at, ready: false,
-          ...(typeof launch !== 'number' && launch.githubRepo ? { launch: { repo: launch.githubRepo, branch: launch.branch } } : {}),
+        watches[claim.sessionId] = { ...claim, at: launch.at, ready: false,
+          ...(launch.githubRepo ? { launch: { repo: launch.githubRepo, branch: launch.branch } } : {}),
           ...(identifier && IDENTIFIER.test(identifier) ? { identifier } : {}) };
       }
     });
@@ -521,7 +521,7 @@ async function reportLaunch(api: ReturnType<typeof inbox>, deps: Deps, claim: Cl
     log('watch-save-failed');
     return 'launched';
   }
-  const evidence = typeof launch !== 'number' && launch.githubRepo ? { repo: launch.githubRepo, branch: launch.branch } : undefined;
+  const evidence = launch.githubRepo ? { repo: launch.githubRepo, branch: launch.branch } : undefined;
   if (await api.finish(claim, 'launched', evidence).then(() => true, () => false)) {
     try { changeWatches(deps, (watches) => { watches[claim.sessionId]!.ready = true; }); }
     catch { log('watch-save-failed'); }
@@ -530,6 +530,35 @@ async function reportLaunch(api: ReturnType<typeof inbox>, deps: Deps, claim: Cl
     log('launched-report-failed');
   }
   return 'launched';
+}
+
+/** The newest snapshot waiting behind each Runner's report in flight. */
+const reports = new WeakMap<Deps, { next: Status | null }>();
+
+/**
+ * Sends the status snapshot to Cloud Inbox's pool in the background, one report at a
+ * time, so they usually land in order. A report sent while one is in flight replaces any
+ * still waiting. A slow or lost report never holds up a claim or a job.
+ *
+ * shortcut: ordering is best effort within one process. A report that timed out here can
+ * still land after a newer one, and two processes for one machine can interleave. Fine
+ * for a status display; if the pool ever drives dispatch, have Cloud Inbox check a
+ * process generation and sequence number instead.
+ */
+function report(config: RunnerConfig, deps: Deps) {
+  const snapshot = structuredClone(status(deps));
+  const queued = reports.get(deps);
+  if (queued) { queued.next = snapshot; return; }
+  const state: { next: Status | null } = { next: snapshot };
+  reports.set(deps, state);
+  void (async () => {
+    for (let next; (next = state.next);) {
+      state.next = null;
+      await inbox(config, deps).report(next).catch((error: Error) =>
+        deps.log({ event: 'report', outcome: error.message.startsWith('cloud-inbox-') ? error.message : 'unreachable' }));
+    }
+    reports.delete(deps);
+  })();
 }
 
 /** Checks one claimed job, launches it if it passes, and reports the outcome. */
@@ -560,7 +589,7 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
   };
 
   const saved = readLaunches(deps)[claim.sessionId];
-  if (saved !== undefined && (typeof saved === 'number' || saved.launched)) {
+  if (saved?.launched) {
     // Launched under an earlier claim whose report was lost: the agent is already running.
     log('launch-recovered');
     return reportLaunch(api, deps, claim, log, saved);
@@ -576,6 +605,7 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
   } catch {
     return refuse('task-unreadable', `Couldn't read the issue from Cloud Inbox. Check that Cloud Inbox is connected. ${RETRY}`);
   }
+  report(config, deps);
   if (task.delegated !== true) {
     // Reporting ends the claim; Cloud Inbox clears the delegate only while it's still this app.
     log('undelegated');
@@ -629,7 +659,7 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
   }
   const repoPath = paths[0]!;
 
-  if (saved && typeof saved !== 'number' && saved.repo === repoPath
+  if (saved && saved.repo === repoPath
     && saved.branch === branchName && Object.hasOwn(config.models, saved.model) && await hasWorktree(deps, saved)) {
     saved.launched = true;
     record(deps, log, (launches) => { launches[claim.sessionId] = saved; });
@@ -665,6 +695,7 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
 /** One poll: claims a job and handles it. Returns whether there was one. */
 export async function poll(config: RunnerConfig, deps: Deps): Promise<boolean> {
   writeStatus(deps);
+  report(config, deps);
   const value = status(deps);
   // Checked and counted with no await between, so a drain can't slip in before the claim.
   if (value.paused || drainRequest(deps)) return false;

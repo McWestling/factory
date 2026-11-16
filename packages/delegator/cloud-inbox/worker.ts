@@ -1,11 +1,11 @@
 // The Cloud Inbox Worker: routes /install, /callback, /status and /disconnect to the one
-// Durable Object, which holds the Delegator app's Linear install, token and shared job
-// queue. /webhook and the Runner API are handled in routes.ts.
+// Durable Object, which holds the Delegator app's Linear install, token, shared job
+// queue and pool status. /webhook, the Runner API and /pool are handled in routes.ts.
 
 import { DurableObject } from 'cloudflare:workers';
 import type { LaunchEvidence } from '../job.ts';
 import { AppAuth, isAdmin, readConfig, type InstallResult } from './auth.ts';
-import { JobQueue, type AgentEvent, type Outcome, type UpdateType } from './queue.ts';
+import { JobQueue, type AgentEvent, type Outcome, type Snapshot, type UpdateType } from './queue.ts';
 import { BASE_PATH, handleRunner, handleWebhook, log, text, underBasePath, type Inbox } from './routes.ts';
 
 interface Env {
@@ -16,6 +16,7 @@ interface Env {
   LINEAR_CLIENT_SECRET?: string;
   LINEAR_WEBHOOK_SECRET?: string;
   MACHINES?: string;
+  VIEWERS?: string;
   /** Optional: lets the PR check read private repos. */
   GITHUB_TOKEN?: string;
 }
@@ -56,9 +57,11 @@ export default {
       watch: (machine, id, claimId) => stub.watch(machine, id, claimId),
       watching: (machine) => stub.watching(machine),
       linkPullRequest: (machine, id, claimId) => stub.linkPullRequest(machine, id, claimId),
+      report: (machine, snapshot) => stub.report(machine, snapshot),
+      pool: (names) => stub.pool(names),
     };
     if (url.pathname === '/webhook' && request.method === 'POST') return handleWebhook(request, config, inbox);
-    if (route === 'jobs') return handleRunner(request, config, inbox);
+    if (route === 'jobs' || route === 'pool') return handleRunner(request, config, inbox);
 
     if (!rest.length && ((route === 'status' && request.method === 'GET') || (route === 'disconnect' && request.method === 'POST'))) {
       if (!isAdmin(request, config.adminSecret)) return text(401, 'Owner authentication required.');
@@ -148,4 +151,8 @@ export class Machine extends DurableObject<Env> {
   watching(machine: string) { return this.#jobs.watching(machine); }
 
   linkPullRequest(machine: string, id: string, claimId: string) { return this.#jobs.linkPullRequest(machine, id, claimId); }
+
+  report(machine: string, snapshot: Snapshot) { return this.#jobs.report(machine, snapshot); }
+
+  pool(names: string[]) { return this.#jobs.pool(names); }
 }
