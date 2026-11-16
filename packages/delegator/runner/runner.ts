@@ -24,7 +24,7 @@ export type RunnerConfig = {
   /** The Linear app's name, as Cloud Inbox's queued thought shows it. */
   machine: string;
   allowedCreatorIds: readonly string[];
-  /** Preferred models name → how Orca starts it. */
+  /** Model name selected by a level or [model=] pin → how Orca starts it. */
   models: Readonly<Record<string, ModelSettings>>;
   levels: Readonly<Record<Level, string>>;
   skill: string;
