@@ -57,7 +57,7 @@ async function prerequisites(deps: SetupDeps, agents: string[], app: boolean): P
   }
   if (app) {
     // A viewer-only app has neither a Runner agent nor a config, so only its Swift rebuild needs checking.
-    const runner = ['Library/LaunchAgents/com.factory.factory-delegator.runner.plist', '.config/factory-delegator/config.json']
+    const runner = ['Library/LaunchAgents/com.mcwestling.factory-delegator.runner.plist', '.config/factory-delegator/config.json']
       .some((path) => existsSync(join(deps.home, path)));
     if (runner && !atLeast(deps.nodeVersion, 26)) problems.push(`The Factory Runner needs Node 26 to rebuild; this is Node ${deps.nodeVersion}.`);
     if (!await has('swiftc', ['--version'])) problems.push('The Factory Runner app needs swiftc to rebuild. Run: xcode-select --install');
@@ -376,7 +376,7 @@ async function offerRunner(deps: SetupDeps): Promise<Result> {
   if (!result.ok) return result;
   // The installer registers the menu bar app last, so a try that failed there left the Runner running without it.
   // Registering it alone never touches the Runner.
-  const menu = `gui/${deps.uid}/com.factory.factory-delegator.menubar`;
+  const menu = `gui/${deps.uid}/com.mcwestling.factory-delegator.menubar`;
   if (!await deps.exec('launchctl', ['print', menu], 30_000).then(() => true, () => false)) {
     try { await deps.exec('sh', [install, '--enable-app-login'], 60_000); } catch (error) {
       return { ok: false, line: `runner: connected, but the menu bar app didn't register to open at login (${lastLine(error)}). Rerun npm run setup to finish it.` };

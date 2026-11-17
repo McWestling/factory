@@ -51,7 +51,7 @@ const installApp = (home: string) => {
   mkdirSync(join(home, 'Applications/Factory Runner.app/Contents/Resources/runner'), { recursive: true });
   writeFileSync(join(home, 'Applications/Factory Runner.app/Contents/Resources/runner/runner.ts'), 'const DRAIN_PROTOCOL = 1;\n');
 };
-const PLIST = 'Library/LaunchAgents/com.factory.factory-delegator.runner.plist';
+const PLIST = 'Library/LaunchAgents/com.mcwestling.factory-delegator.runner.plist';
 const PENDING = '.local/state/factory/runner-install-pending';
 
 function machine({ agents = ['claude'], installed = ['claude', 'codex'], verify = true } = {}) {

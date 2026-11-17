@@ -7,7 +7,7 @@ import { acknowledgeDrain, poll, watchJobs, type Deps, type RunnerConfig } from 
 import { updateRunner, withLock, type UpkeepDeps } from './upkeep.ts';
 
 const root = resolve(import.meta.dirname, '../..');
-const LABEL = 'com.factory.factory-delegator.runner';
+const LABEL = 'com.mcwestling.factory-delegator.runner';
 const BUNDLED = ['job.ts', 'parse-issue.ts', 'runner/runner.ts', 'runner/launchd/install.sh',
   'runner/launchd/runner.plist', 'menubar/menubar.plist'];
 

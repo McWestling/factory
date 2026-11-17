@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-label=com.factory.factory-delegator.runner
-menu_label=com.factory.factory-delegator.menubar
+label=com.mcwestling.factory-delegator.runner
+menu_label=com.mcwestling.factory-delegator.menubar
 domain="gui/$(id -u)"
 config="${HOME:?HOME must be set}/.config/factory-delegator/config.json"
 agents="$HOME/Library/LaunchAgents"

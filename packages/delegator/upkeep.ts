@@ -18,7 +18,7 @@ export type UpkeepDeps = {
   print: (line: string) => void;
 };
 
-const LABEL = 'com.factory.factory-delegator.runner';
+const LABEL = 'com.mcwestling.factory-delegator.runner';
 // Everything the installer bundles from source, checked byte for byte after staging.
 const BUNDLED = ['job.ts', 'parse-issue.ts', 'runner/runner.ts', 'runner/launchd/install.sh',
   'runner/launchd/runner.plist', 'menubar/menubar.plist'];
