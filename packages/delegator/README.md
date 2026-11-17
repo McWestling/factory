@@ -37,6 +37,14 @@ Setup prints no secrets. Installation succeeds only after the Runner reaches
 Cloud Inbox and the menu bar app is registered to open at login. Rerun setup to
 finish an interrupted installation.
 
+### Watch the pool from a Mac without a Runner
+
+Decline the Runner and setup offers to install the menu bar app alone. It asks
+for the Cloud Inbox URL and a [viewer secret](cloud-inbox/README.md#pool-status)
+from `npm run inbox -- viewer <name>`, with hidden input, and stores both in the
+macOS Keychain as the `com.mcwestling.factory-delegator.pool` item. The secret never
+touches a file or a log. The menu then shows the Pool section and no Runner controls.
+
 ### Update after merging Factory changes
 
 From a clean checkout of `main` that matches GitHub, run `npm run setup` again.
@@ -106,6 +114,14 @@ to finish. Its setting survives restarts. Turning it on starts the Runner if nee
 **Start at login** controls the menu bar app's LaunchAgent. The menu also opens
 logs and config. Status shows readiness, current work, PR watches, connection
 failures or the last failed job; **Off** can also mean the Runner is not running.
+These lines and the Runner controls appear only when a Runner is installed on this Mac;
+**Install Runner** appears only once its config exists.
+
+The **Pool** section lists every machine as working (with its job), idle, off or
+offline, then the number of jobs waiting. The app reads Cloud Inbox's `GET /pool`
+when the menu opens and at most once a minute otherwise, using the Keychain item
+setup stored, or on a Runner Mac the Runner's own config. When a fetch fails, the
+menu keeps the last result and adds the time it was fetched.
 
 ### Recovery and PR checks
 

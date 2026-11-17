@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { loadConfig } from '../delegator/runner/runner.ts';
-import { claudeVerdict, cliArgs, codexVerdict, setup, type SetupDeps } from './setup.ts';
+import { claudeVerdict, cliArgs, codexVerdict, setup, viewerUrl, type SetupDeps } from './setup.ts';
 import { readRule } from './read-roots.ts';
 
 const HEAD = 'b'.repeat(40);
@@ -90,6 +90,8 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'], verify 
     codex: codexRun(),
     codexSkills: ['do-a', 'do-b', ...SUPPORT.map((name) => `mattpocock-skills:${name}`)],
     calls: [] as string[],
+    /** What setup stored in the Keychain for the menu bar app. */
+    keychain: null as null | { url: string; secret: string },
     installs: 0,
     output: [] as string[],
     answers: [] as string[],
@@ -104,6 +106,7 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'], verify 
     sleep: async () => {},
     print: (line) => m.output.push(line),
     ask: null,
+    async keychain(url, secret) { m.keychain = { url, secret }; },
     async interact(file, args) {
       m.calls.push(`interact ${args.at(-1)}`);
       return m.inbox[args.at(-1)!]?.() ?? false;
@@ -135,6 +138,12 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'], verify 
         if (m.installFails === 'bootstrap') throw fail('Bootstrap failed: 5: Input/output error');
         m.loaded = true;
         if (m.installFails === 'menu') throw fail('Bootstrap failed: 37: Operation already in progress');
+        m.menuLoaded = true;
+        return { stdout: '' };
+      }
+      if (call === `sh ${join(root, 'packages/delegator/runner/launchd/install.sh')} --app-only`) {
+        mkdirSync(join(home, 'Applications/Factory Runner.app/Contents/MacOS'), { recursive: true });
+        installApp(home);
         m.menuLoaded = true;
         return { stdout: '' };
       }
@@ -262,6 +271,8 @@ test('missing prerequisites refuse before anything changes', async () => {
 test('an existing Runner needs its build tools checked too', async () => {
   const mac = machine();
   installApp(mac.home);
+  mkdirSync(join(mac.home, 'Library/LaunchAgents'), { recursive: true });
+  writeFileSync(join(mac.home, PLIST), '');
   mac.m.deps.nodeVersion = '24.1.0';
   assert.equal(await mac.run(), 1);
   assert.match(mac.m.output.join('\n'), /Runner needs Node 26/);
@@ -451,6 +462,83 @@ test('declining the Runner changes nothing for it, and setup still completes', a
   assert.match(mac.m.questions[0]!.question, /Install the Factory Runner/);
   assert.match(runnerLine(mac.m.output)!, /^runner: not installed/);
   noRunnerChanges(mac);
+});
+
+const VIEWER = 'v'.repeat(64);
+
+test('declining the Runner can install the menu bar app alone, with the viewer secret read hidden and kept in the Keychain', async () => {
+  const mac = machine();
+  answer(mac, ['n', 'y', `${DEPLOYED.origin}/delegator`, VIEWER]);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.match(mac.m.questions[1]!.question, /menu bar app alone/);
+  assert.deepEqual(mac.m.questions.filter(({ secret }) => secret).map(({ question }) => /viewer secret/i.test(question)), [true]);
+  assert.deepEqual(mac.m.keychain, { url: `${DEPLOYED.origin}/delegator`, secret: VIEWER });
+  assert.ok(mac.m.calls.includes(`sh ${join(mac.root, 'packages/delegator/runner/launchd/install.sh')} --app-only`), 'installs the app alone');
+  assert.ok(!existsSync(runnerConfig(mac.home)), 'no Runner config');
+  assert.ok(!existsSync(join(mac.home, PLIST)), 'no Runner agent');
+  assert.ok(mac.m.calls.includes(`open ${join(mac.home, 'Applications/Factory Runner.app')}`), 'opens the app');
+  assert.match(runnerLine(mac.m.output)!, /^runner: not installed\. The menu bar app is installed alone/);
+  assert.ok(!mac.m.output.join('\n').includes(VIEWER), 'prints no secret');
+});
+
+test('a viewer-only app updates on a later run without the Runner\'s Node 26', async () => {
+  const mac = machine();
+  mac.m.deps.nodeVersion = '22.20.0';
+  answer(mac, ['n', 'y', `${DEPLOYED.origin}/delegator`, VIEWER]);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  mac.m.output.length = 0;
+  mac.m.questions.length = 0;
+  answer(mac, []);
+  const exec = mac.m.deps.exec;
+  mac.m.deps.exec = async (file, args, timeout) => file === 'sh' && args[1] === '--build-app' ? stagedBuild(mac, file, args) : exec(file, args, timeout);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.ok(!mac.m.output.some((line) => line.startsWith('prerequisites:')), 'no Node 26 refusal');
+  assert.ok(mac.m.calls.some((call) => call.endsWith('install.sh --build-app ' + join(mac.home, 'Applications/Factory Runner.app.staged'))), 'takes the update path');
+  assert.equal(runnerLine(mac.m.output), 'runner: refreshed the app; no Runner agent is installed.');
+  assert.ok(!mac.m.questions.some(({ question }) => /Runner|Cloud Inbox/.test(question)), 'asks no install question again');
+  assert.ok(!existsSync(runnerConfig(mac.home)), 'no Runner config');
+  assert.ok(!existsSync(join(mac.home, PLIST)), 'no Runner agent');
+});
+
+test('a viewer-only app still needs swiftc to rebuild', async () => {
+  const mac = machine();
+  installApp(mac.home);
+  mac.m.deps.nodeVersion = '22.20.0';
+  mac.m.deps.exec = ((exec) => async (file: string, args: string[], timeout: number) => {
+    if (file === 'swiftc') throw Object.assign(new Error('swiftc: command not found'), { code: 127 });
+    return exec(file, args, timeout);
+  })(mac.m.deps.exec);
+  assert.equal(await mac.run(), 1);
+  const output = mac.m.output.join('\n');
+  assert.match(output, /needs swiftc to rebuild/);
+  assert.doesNotMatch(output, /Node 26/);
+  assert.deepEqual(changes(mac.m.calls), []);
+});
+
+for (const url of ['factory-cloud-inbox.someone.workers.dev', 'https://example.test/#/delegator']) {
+  test(`a viewer answer of ${url} stores nothing and installs nothing`, async () => {
+    const mac = machine();
+    answer(mac, ['n', 'y', url, VIEWER]);
+    assert.equal(await mac.run(), 1);
+    assert.equal(mac.m.keychain, null);
+    assert.ok(!mac.m.calls.some((call) => call.includes('--app-only')), 'installs no app');
+    assert.ok(!existsSync(join(mac.home, 'Applications/Factory Runner.app')), 'no app bundle');
+    assert.match(runnerLine(mac.m.output)!, /ending in \/delegator/);
+    noRunnerChanges(mac);
+  });
+}
+
+test('a viewer URL must be https with exactly the /delegator path, and nothing that moves or decorates it', () => {
+  assert.equal(viewerUrl('https://Inbox.Example.test/delegator'), 'https://inbox.example.test/delegator');
+  assert.equal(viewerUrl('https://inbox.example.test:8443/delegator'), 'https://inbox.example.test:8443/delegator');
+  assert.equal(viewerUrl('https://example.test/delegator/../delegator'), 'https://example.test/delegator', 'saves the normalized path');
+  for (const url of [
+    'https://example.test/#/delegator', 'https://example.test/delegator#x', 'https://example.test/delegator#',
+    'https://example.test/delegator?x=1', 'https://example.test/delegator?', 'https://user:pass@example.test/delegator',
+    'https://user@example.test/delegator', 'http://example.test/delegator', 'https://example.test/delegator/',
+    'https://example.test/other/delegator', 'https://example.test/%64elegator',
+    'https://example.test/del"egator', 'https://example.test\\delegator', 'https://exa mple.test/delegator', 'not a url', '',
+  ]) assert.equal(viewerUrl(url), null, url);
 });
 
 test('with nobody at the terminal, a missing Runner is left alone', async () => {
@@ -751,7 +839,7 @@ test('at a terminal, the suggested root and an added one are granted to Claude a
   mkdirSync(join(mac.home, '.claude'));
   const before = { model: 'opus', permissions: { defaultMode: 'auto', allow: ['Bash(git status)'], deny: ['Read(**/.env)'] }, hooks: { Stop: [] } };
   writeFileSync(settings(mac.home), JSON.stringify(before));
-  answer(mac, ['n', extra, '']);
+  answer(mac, ['n', 'n', extra, '']);
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   assert.ok(mac.m.output.includes(`  1. ${mac.home}`), 'shows the suggestion as an absolute path');
   const after = JSON.parse(readFileSync(settings(mac.home), 'utf8'));
@@ -762,7 +850,7 @@ test('at a terminal, the suggested root and an added one are granted to Claude a
   noProbes(extra);
 
   mac.m.output.length = 0;
-  answer(mac, ['n', extra, '']);
+  answer(mac, ['n', 'n', extra, '']);
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   assert.deepEqual(JSON.parse(readFileSync(settings(mac.home), 'utf8')), after, 'a repeat run adds nothing');
   assert.match(readLines(mac.m.output)[0]!, /already grants them/);
@@ -771,7 +859,7 @@ test('at a terminal, the suggested root and an added one are granted to Claude a
 test('a denied fresh read leaves setup incomplete, with the grant kept and every probe removed', async () => {
   const mac = machine();
   mac.m.readDenied = true;
-  answer(mac, ['n', '']);
+  answer(mac, ['n', 'n', '']);
   assert.equal(await mac.run(), 1);
   assert.match(readLines(mac.m.output).at(-1)!, /^read roots \(claude\): claude couldn't read .*probe\.txt\. It was denied permission/);
   assert.deepEqual(JSON.parse(readFileSync(settings(mac.home), 'utf8')), { permissions: { allow: [readRule(mac.home)] } });
@@ -780,7 +868,7 @@ test('a denied fresh read leaves setup incomplete, with the grant kept and every
 
 test('Codex is only checked and gets no settings', async () => {
   const mac = machine({ agents: ['codex'] });
-  answer(mac, ['n', '']);
+  answer(mac, ['n', 'n', '']);
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   assert.deepEqual(readLines(mac.m.output), [
     'read roots (codex): verified. A fresh codex read a new file under each root. Codex already reads anywhere, so nothing was added.',
@@ -795,7 +883,7 @@ test('the suggestion can be replaced, missing folders and files are refused, and
   const code = join(mac.home, 'Code');
   mkdirSync(join(code, 'repo'), { recursive: true });
   writeFileSync(join(mac.home, 'notes.txt'), '');
-  answer(mac, ['n', '1', '~/missing', '~/notes.txt', '~/Code/repo/..', '']);
+  answer(mac, ['n', 'n', '1', '~/missing', '~/notes.txt', '~/Code/repo/..', '']);
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   const output = mac.m.output.join('\n');
   assert.match(output, /missing doesn't exist/);
@@ -804,7 +892,7 @@ test('the suggestion can be replaced, missing folders and files are refused, and
   noProbes(code);
 
   rmSync(settings(mac.home));
-  answer(mac, ['n', 'none']);
+  answer(mac, ['n', 'n', 'none']);
   assert.equal(await mac.run(), 0);
   assert.ok(!existsSync(settings(mac.home)));
 });
@@ -814,7 +902,7 @@ test('from a worktree, the suggestion is the folder holding the main checkout', 
   const main = join(mac.home, 'Code/factory');
   mkdirSync(main, { recursive: true });
   mac.m.git.common = join(main, '.git');
-  answer(mac, ['n', '']);
+  answer(mac, ['n', 'n', '']);
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   assert.ok(mac.m.output.includes(`  1. ${join(mac.home, 'Code')}`));
 });
@@ -826,26 +914,29 @@ test('with nobody at the terminal, read roots are left alone', async () => {
   assert.ok(!existsSync(join(mac.home, '.claude')));
 });
 
+/** Fakes a successful `install.sh --build-app <staged>`: a bundle whose sources match the checkout byte for byte. */
+function stagedBuild(mac: ReturnType<typeof machine>, file: string, args: string[]) {
+  mac.m.calls.push(`${file} ${args.join(' ')}`);
+  for (const path of ['job.ts', 'parse-issue.ts', 'runner/runner.ts', 'runner/launchd/install.sh', 'runner/launchd/runner.plist', 'menubar/menubar.plist']) {
+    const source = join(mac.root, 'packages/delegator', path);
+    const target = join(args[2]!, 'Contents/Resources', path);
+    mkdirSync(join(source, '..'), { recursive: true });
+    mkdirSync(join(target, '..'), { recursive: true });
+    writeFileSync(source, 'fixture');
+    writeFileSync(target, 'fixture');
+  }
+  const binary = join(args[2]!, 'Contents/MacOS/FactoryRunnerMenuBar');
+  mkdirSync(join(binary, '..'), { recursive: true });
+  writeFileSync(binary, '', { mode: 0o755 });
+  return { stdout: '' };
+}
+
 for (const outcome of ['success', 'build failure', 'open failure', 'not running', 'skipped'] as const) test(`menu bar relaunch: ${outcome}`, async () => {
   const mac = machine();
   if (outcome !== 'skipped') installApp(mac.home);
   const exec = mac.m.deps.exec;
   mac.m.deps.exec = async (file, args, timeout) => {
-    if (file === 'sh' && args[1] === '--build-app' && outcome !== 'build failure') {
-      mac.m.calls.push(`${file} ${args.join(' ')}`);
-      for (const path of ['job.ts', 'parse-issue.ts', 'runner/runner.ts', 'runner/launchd/install.sh', 'runner/launchd/runner.plist', 'menubar/menubar.plist']) {
-        const source = join(mac.root, 'packages/delegator', path);
-        const target = join(args[2]!, 'Contents/Resources', path);
-        mkdirSync(join(source, '..'), { recursive: true });
-        mkdirSync(join(target, '..'), { recursive: true });
-        writeFileSync(source, 'fixture');
-        writeFileSync(target, 'fixture');
-      }
-      const binary = join(args[2]!, 'Contents/MacOS/FactoryRunnerMenuBar');
-      mkdirSync(join(binary, '..'), { recursive: true });
-      writeFileSync(binary, '', { mode: 0o755 });
-      return { stdout: '' };
-    }
+    if (file === 'sh' && args[1] === '--build-app' && outcome !== 'build failure') return stagedBuild(mac, file, args);
     if (file === 'pkill' || file === 'open') {
       mac.m.calls.push(`${file} ${args.join(' ')}`);
       if (file === 'pkill' && outcome === 'not running') throw Object.assign(new Error('no process'), { code: 1 });
@@ -866,7 +957,7 @@ const agentRuns = (calls: string[]) => calls.filter((call) => /^(claude -p|codex
 
 test('without --verify, setup writes the configuration, launches no agent and says the live checks were skipped', async () => {
   const mac = machine({ agents: ['claude', 'codex'], verify: false });
-  answer(mac, ['n', '']);
+  answer(mac, ['n', 'n', '']);
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   assert.deepEqual(agentRuns(mac.m.calls), []);
   assert.ok(!mac.m.calls.some((call) => call.includes('app-server')), 'no Codex skill listing either');
@@ -880,7 +971,7 @@ test('without --verify, the exit code reflects the configuration steps only', as
   const mac = machine({ verify: false });
   mac.m.claude = claudeRun({ status: 'needs-auth' });
   mac.m.readDenied = true;
-  answer(mac, ['n', '']);
+  answer(mac, ['n', 'n', '']);
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   mac.m.gh = false;
   assert.equal(await mac.run(), 1, 'a failed configuration step still fails');
@@ -888,7 +979,7 @@ test('without --verify, the exit code reflects the configuration steps only', as
 
 test('with --verify, setup runs the probe reads and each agent\'s check', async () => {
   const mac = machine({ agents: ['claude', 'codex'], verify: true });
-  answer(mac, ['n', '']);
+  answer(mac, ['n', 'n', '']);
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   assert.deepEqual(agentRuns(mac.m.calls).map((call) => call.split(' ').slice(0, 3).join(' ')), [
     'claude -p Use', 'codex exec --sandbox', 'claude -p Call', 'codex exec --sandbox']);
@@ -923,7 +1014,7 @@ test('--read-roots parses in either position and reopens the chooser for existin
   Object.assign(mac.m.deps, cliArgs(['claude', '--read-roots']));
   mkdirSync(join(mac.home, '.claude'));
   writeFileSync(settings(mac.home), JSON.stringify({ permissions: { allow: [readRule(mac.home)] } }));
-  answer(mac, ['n', 'none']);
+  answer(mac, ['n', 'n', 'none']);
   assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
   assert.ok(mac.m.questions.some(({ question }) => question.startsWith('Press Enter to grant')));
   assert.ok(mac.m.output.includes('read roots: none chosen, nothing changed.'));

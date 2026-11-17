@@ -22,6 +22,8 @@ export type SetupDeps = UpkeepDeps & {
   readRoots: boolean;
   /** Asks the person at the terminal, hiding the answer when it's secret; null when nobody is there. */
   ask: ((question: string, secret?: boolean) => Promise<string>) | null;
+  /** Stores the menu bar app's Cloud Inbox URL and viewer secret in the login Keychain, replacing any earlier pair. */
+  keychain: (url: string, secret: string) => Promise<void>;
   /** Runs a command attached to the terminal, for steps the person takes part in; resolves whether it exited 0. */
   interact: (file: string, args: string[]) => Promise<boolean>;
   /** Sends newline-delimited JSON-RPC messages, waiting for each response to a message with an id. */
@@ -43,7 +45,7 @@ const atLeast = (version: string, major: number, minor = 0) => {
 };
 
 /** Fails unless every tool the setup needs is present, before anything changes. */
-async function prerequisites(deps: SetupDeps, agents: string[], runner: boolean): Promise<string[]> {
+async function prerequisites(deps: SetupDeps, agents: string[], app: boolean): Promise<string[]> {
   const problems: string[] = [];
   const has = (file: string, args: string[]) => deps.exec(file, args, 30_000).then(() => true, () => false);
   if (!atLeast(deps.nodeVersion, 22, 20)) problems.push(`Node ${deps.nodeVersion} is too old. Install Node 22.20 or newer.`);
@@ -53,9 +55,12 @@ async function prerequisites(deps: SetupDeps, agents: string[], runner: boolean)
     if (!AGENTS[name]) problems.push(`${name} isn't a supported agent. Choose from: ${Object.keys(AGENTS).join(', ')}.`);
     else if (!await has(AGENTS[name].bin, ['--version'])) problems.push(`${name}: the ${AGENTS[name].bin} command is missing. Install it, sign in, then rerun.`);
   }
-  if (runner) {
-    if (!atLeast(deps.nodeVersion, 26)) problems.push(`The Factory Runner needs Node 26 to rebuild; this is Node ${deps.nodeVersion}.`);
-    if (!await has('swiftc', ['--version'])) problems.push('The Factory Runner needs swiftc to rebuild. Run: xcode-select --install');
+  if (app) {
+    // A viewer-only app has neither a Runner agent nor a config, so only its Swift rebuild needs checking.
+    const runner = ['Library/LaunchAgents/com.factory.factory-delegator.runner.plist', '.config/factory-delegator/config.json']
+      .some((path) => existsSync(join(deps.home, path)));
+    if (runner && !atLeast(deps.nodeVersion, 26)) problems.push(`The Factory Runner needs Node 26 to rebuild; this is Node ${deps.nodeVersion}.`);
+    if (!await has('swiftc', ['--version'])) problems.push('The Factory Runner app needs swiftc to rebuild. Run: xcode-select --install');
   }
   return problems;
 }
@@ -306,7 +311,7 @@ async function offerRunner(deps: SetupDeps): Promise<Result> {
   // A first install that didn't prove itself connected is finished without asking again.
   if (existsSync(pending)) deps.print('runner: finishing the install an earlier setup started.');
   else if (!ask) return stop(true, 'Run npm run setup at a terminal to install it.');
-  else if (!/^y/i.test((await ask('Install the Factory Runner, so this Mac takes work delegated in Linear? [y/N] ')).trim())) return stop(true, 'You can install it on a later run.');
+  else if (!/^y/i.test((await ask('Install the Factory Runner, so this Mac takes work delegated in Linear? [y/N] ')).trim())) return offerViewer(deps, ask);
   const has = (file: string, args: string[]) => deps.exec(file, args, 30_000).then(() => true, () => false);
   const missing = [
     !atLeast(deps.nodeVersion, 26) && `The Runner needs Node 26; this is Node ${deps.nodeVersion}.`,
@@ -380,6 +385,48 @@ async function offerRunner(deps: SetupDeps): Promise<Result> {
   rmSync(pending, { force: true });
   return result;
 }
+
+/** The Keychain item the menu bar app reads on a Mac without a Runner. */
+const POOL_SERVICE = 'com.mcwestling.factory-delegator.pool';
+
+/** Offers the menu bar app alone, showing the pool with a viewer secret kept in the Keychain. */
+async function offerViewer(deps: SetupDeps, ask: NonNullable<SetupDeps['ask']>): Promise<Result> {
+  const stop = (ok: boolean, why: string) => ({ ok, line: `runner: not installed. ${why}` });
+  if (!/^y/i.test((await ask('Install the menu bar app alone, to watch the pool of Runners from this Mac? [y/N] ')).trim())) return stop(true, 'You can install it on a later run.');
+  if (!await deps.exec('swiftc', ['--version'], 30_000).then(() => true, () => false)) return stop(false, 'The menu bar app needs swiftc. Run: xcode-select --install, then rerun.');
+  const url = viewerUrl((await ask('Cloud Inbox URL, ending in /delegator: ')).trim());
+  if (!url) return stop(false, 'That isn\'t an https Cloud Inbox URL ending in /delegator, with no query, fragment or credentials. Nothing was saved; rerun to try again.');
+  // Both go to `security` quoted on one line, so neither may hold quotes, backslashes or whitespace.
+  const secret = (await ask('Viewer secret, from npm run inbox -- viewer <name>: ', true)).trim();
+  if (!/^[^\s"\\]+$/.test(secret)) return stop(false, 'That viewer secret is empty or holds spaces, quotes or backslashes. Nothing was saved; rerun to try again.');
+  try { await deps.keychain(url, secret); } catch (error) { return stop(false, `The Keychain didn't take the viewer secret (${lastLine(error)}).`); }
+  try { await deps.exec('sh', [join(deps.root, DELEGATOR, 'runner/launchd/install.sh'), '--app-only'], 600_000); } catch (error) {
+    return stop(false, `The viewer secret is in the Keychain, but the menu bar app didn't install (${lastLine(error)}). Fix that, then run sh ${DELEGATOR}/runner/launchd/install.sh --app-only.`);
+  }
+  return stop(true, `The menu bar app is installed alone and shows the pool from ${url}.`);
+}
+
+/**
+ * The Cloud Inbox URL the menu bar app appends `pool` to, or null. Its path must be exactly `/delegator`:
+ * a query or fragment would move that path, and credentials have no place in a Keychain comment.
+ */
+export function viewerUrl(input: string): string | null {
+  let url: URL;
+  try { url = new URL(input); } catch { return null; }
+  if (/[\s"\\]/.test(input) || url.protocol !== 'https:' || url.username || url.password
+    || url.search || url.hash || input.includes('?') || input.includes('#') || url.pathname !== '/delegator') return null;
+  return `${url.origin}${url.pathname}`;
+}
+
+/** Stores the viewer pair through `security -i`, so the secret travels on stdin, never in a process's arguments. */
+export const keychain: SetupDeps['keychain'] = (url, secret) => new Promise((done, fail) => {
+  const child = spawn('/usr/bin/security', ['-i'], { stdio: ['pipe', 'ignore', 'pipe'] });
+  let stderr = '';
+  child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; });
+  child.on('error', fail);
+  child.on('close', (code) => code === 0 ? done() : fail(Object.assign(new Error('security failed'), { stderr })));
+  child.stdin.end(`add-generic-password -U -s ${POOL_SERVICE} -a viewer -j "${url}" -w "${secret}"\n`);
+});
 
 /** Runs setup and returns the exit code: 0 only when every step passed, and with --verify every live check too. */
 export async function setup(deps: SetupDeps): Promise<number> {
@@ -490,6 +537,7 @@ if (process.argv[1] === import.meta.filename) {
   process.exitCode = await setup({
     exec,
     rpc,
+    keychain,
     ask: process.stdin.isTTY ? ask : null,
     interact: (file, args) => new Promise((done) => {
       spawn(file, args, { stdio: 'inherit' }).on('error', () => done(false)).on('close', (code) => done(code === 0));
