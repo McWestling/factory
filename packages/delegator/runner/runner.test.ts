@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import type { AppAuth } from '../cloud-inbox/auth.ts';
 import { JobQueue } from '../cloud-inbox/queue.ts';
 import { handleRunner } from '../cloud-inbox/routes.ts';
-import { acknowledgeDrain, checkWatches, startStatusHeartbeat, handleJob, launchArgs, loadConfig, NOT_ALLOWED, poll, resumeWatches, watchJobs, type Deps, type RunnerConfig, type Task } from './runner.ts';
+import { acknowledgeDrain, checkWatches, readWatches, startStatusHeartbeat, handleJob, launchArgs, loadConfig, NOT_ALLOWED, poll, resumeWatches, watchJobs, type Deps, type RunnerConfig, type Task } from './runner.ts';
 
 const example = new URL('../config.example.json', import.meta.url);
 const config: RunnerConfig = {
@@ -24,6 +24,7 @@ const config: RunnerConfig = {
   },
   levels: { light: 'GPT-6 Luna', standard: 'Claude Opus 5.5', deep: 'Claude Opus 5.5' },
   skill: 'do-implement',
+  refineRepo: 'owner/repo',
 };
 const claim = { issueId: 'issue-1', sessionId: 'session-1', claimId: 'claim-1' };
 const description = (model = 'Claude Opus 5.5', repo = 'owner/repo') =>
@@ -335,7 +336,7 @@ test('a null task is refused as unreadable and never launches', async () => {
 });
 
 /** The real queue and Runner API behind the Runner's fetch, with Linear faked. */
-function realInbox() {
+function realInbox(labels: string[] = []) {
   const db = new DatabaseSync(':memory:');
   const clock = { now: 1_800_000_000_000 };
   const issueEdits: Record<string, unknown>[] = [];
@@ -375,7 +376,8 @@ function realInbox() {
     return Response.json({ data: {
       issue: {
         identifier: goodTask.identifier, description: goodTask.description, branchName: goodTask.branchName,
-        state: { type: 'unstarted' }, delegate: { id: 'app-user' }, team: { id: 'team-1', states: { nodes: [] } }, labels: { nodes: [] },
+        state: { type: 'unstarted' }, delegate: { id: 'app-user' }, team: { id: 'team-1', states: { nodes: [] } },
+        labels: { nodes: labels.map((name) => ({ id: `label-${name}`, name })) },
       },
       agentSession: { creator: { id: 'user-allowed' } },
       issueLabels: { nodes: [] },
@@ -405,6 +407,75 @@ function realInbox() {
   return { queue, clock, issueEdits, thoughts, responses, links, ops, fetch, state,
     prs: (urls: string[]) => { pullRequests = urls; }, lose: (n: number) => { loseLaunched = n; },
     loseThought: () => { loseThought = 1; } };
+}
+
+const refineTask: Partial<Task> = { ...goodTask, description: 'Decide which way to go.', labels: ['Factory', 'wayfinder:grilling'] };
+const refineConfig: RunnerConfig = { ...config, levels: { ...config.levels, deep: 'GPT-6 Luna' } };
+const attended = 'Attended run: a person will join this session in Orca. Ask every question with your question tool (AskUserQuestion) and wait for the answer.';
+const refining = 'Refining in Orca on Example Mac; continue there.';
+
+test('a wayfinder issue without tags launches do-refine in refineRepo with the deep model, attended, without setup', async () => {
+  const f = fakes(refineTask);
+  assert.equal(await handleJob(refineConfig, f.deps, claim), 'launched');
+  assert.deepEqual(f.argv.at(-1), ['worktree', 'create', '--name', 'abc-123-do-the-thing', '--repo', 'path:/repos/repo',
+    '--branch', 'someone/abc-123-do-the-thing', '--agent', 'codex', '--model', 'gpt-6-luna', '--effort', 'high',
+    `--prompt=$do-refine ABC-123\n${attended}`, '--setup', 'skip', '--linear-issue', 'ABC-123', '--json']);
+});
+
+test('a refine launch still honours a model pin', async () => {
+  const f = fakes({ ...refineTask, description: '[model=Claude Opus 5.5]' });
+  await handleJob(refineConfig, f.deps, claim);
+  const args = f.argv.at(-1)!;
+  assert.equal(args[args.indexOf('--model') + 1], 'claude-opus-5-5');
+  assert.ok(args.includes(`--prompt=/do-refine ABC-123\n${attended}`));
+});
+
+test('a refine launch without refineRepo set is refused, naming the key', async () => {
+  const f = fakes(refineTask);
+  assert.equal(await handleJob({ ...refineConfig, refineRepo: undefined }, f.deps, claim), 'refused-refineRepo');
+  assert.equal(f.updates.length, 1);
+  assert.equal(f.updates[0]![0], 'error');
+  assert.match(f.updates[0]![1], /`refineRepo`/);
+  assert.deepEqual(f.requests.slice(-2), ['POST /jobs/session-1/updates', 'POST /jobs/session-1/failed']);
+  assert.deepEqual(f.argv, []);
+});
+
+test('a refine launch posts its response after reporting launched, and is never watched', async () => {
+  const f = fakes(refineTask);
+  await poll(refineConfig, f.deps);
+  assert.deepEqual(f.requests, ['POST /jobs/claim', 'GET /jobs/session-1/task', 'POST /jobs/session-1/updates',
+    'POST /jobs/session-1/launched', 'POST /jobs/session-1/updates']);
+  assert.deepEqual(f.updates, [['thought', 'Started GPT-6 Luna in Orca on `someone/abc-123-do-the-thing`.'], ['response', refining]]);
+  assert.deepEqual(readWatches(f.deps), {});
+  assert.equal(readFileSync(f.deps.launches, 'utf8'), '{}');
+});
+
+for (const afterDelivery of [false, true]) {
+  test(`a refine launch whose report was lost ${afterDelivery ? 'after' : 'before'} delivery responds once and is never watched`, async () => {
+    const inbox = realInbox(['wayfinder:grilling']);
+    await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
+    const f = fakes();
+    let lost = false;
+    f.deps.fetch = async (input, init) => {
+      if (!lost && String(input).includes('/launched')) {
+        lost = true;
+        if (afterDelivery) await inbox.fetch(input, init);
+        throw new TypeError('lost launch report');
+      }
+      return inbox.fetch(input, init);
+    };
+    await poll(refineConfig, f.deps);
+    inbox.clock.now += 10 * 60_000;
+    await poll(refineConfig, f.deps);
+    await checkWatches(refineConfig, f.deps);
+    await inbox.queue.deliver();
+    await checkWatches(refineConfig, f.deps);
+    assert.deepEqual(inbox.responses, [refining]);
+    assert.deepEqual(inbox.state(), ['launched']);
+    assert.equal(f.argv.filter((args) => args[0] === 'worktree').length, 1);
+    assert.deepEqual(readWatches(f.deps), {});
+    assert.equal(readFileSync(f.deps.launches, 'utf8'), '{}');
+  });
 }
 
 test('a final response accepted before a lost acknowledgement is not queued twice', async () => {
@@ -699,6 +770,7 @@ const badConfigs: [string, unknown][] = [
   ['no models', { ...valid, models: undefined }],
   ['a flag-like model', { ...valid, models: { X: { agent: 'claude', model: '--danger' } } }],
   ['a bad skill', { ...valid, skill: 'Do Implement' }],
+  ['a bad refineRepo', { ...valid, refineRepo: 'not a repo' }],
   ['an http inbox', { ...valid, inboxUrl: 'http://inbox.example' }],
   ['an inbox URL with a query', { ...valid, inboxUrl: 'https://inbox.example/delegator?x=1' }],
   ['no secret', { ...valid, bearerSecret: '' }],

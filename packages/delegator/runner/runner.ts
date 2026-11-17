@@ -8,7 +8,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
 import { isLaunchEvidence, type Claim, type LaunchEvidence } from '../job.ts';
-import { LEVELS, matchModel, parseIssue, type Level } from '../parse-issue.ts';
+import { LEVELS, matchModel, parseIssue, readTag, type DelegatorIssue, type Level } from '../parse-issue.ts';
 
 export const CONFIG_PATH = join(homedir(), '.config', 'factory-delegator', 'config.json');
 const ENDED_STATUSES = ['complete', 'error', 'stopped'];
@@ -17,6 +17,8 @@ const POLL_MS = 15_000;
 /** Cloud Inbox's history window: a session not reclaimed by then never will be. */
 const LAUNCH_KEEP_MS = 30 * 24 * 60 * 60_000;
 const RETRY = 'Fix it and delegate again to retry.';
+const REPO = /^[\w.-]+\/[\w.-]+$/;
+const ATTENDED = 'Attended run: a person will join this session in Orca. Ask every question with your question tool (AskUserQuestion) and wait for the answer.';
 export const NOT_ALLOWED = "This machine doesn't accept dispatches from you.";
 
 export type ModelSettings = { agent: string; model: string; effort?: string };
@@ -30,6 +32,8 @@ export type RunnerConfig = {
   models: Readonly<Record<string, ModelSettings>>;
   levels: Readonly<Record<Level, string>>;
   skill: string;
+  /** The planning repo (`owner/name`) every refine launch runs in. */
+  refineRepo?: string;
 };
 
 export type Task = {
@@ -39,6 +43,7 @@ export type Task = {
   description: string;
   branchName: string;
   statusType: string;
+  labels?: string[];
 };
 
 export type Exec = (file: string, args: string[], timeoutMs: number) => Promise<{ stdout: string }>;
@@ -170,7 +175,7 @@ export function loadConfig(path = CONFIG_PATH): RunnerConfig {
     throw new Error(`config \`${key}\` must be ${expected}`);
   };
 
-  const { inboxUrl, bearerSecret, machine, allowedCreatorIds, models, levels, skill = 'do-implement' } = raw;
+  const { inboxUrl, bearerSecret, machine, allowedCreatorIds, models, levels, skill = 'do-implement', refineRepo } = raw;
   let url: URL | undefined;
   try {
     url = new URL(String(inboxUrl));
@@ -197,6 +202,7 @@ export function loadConfig(path = CONFIG_PATH): RunnerConfig {
     }
   }
   if (typeof skill !== 'string' || !/^[a-z0-9-]+$/.test(skill)) fail('skill', 'a name matching ^[a-z0-9-]+$');
+  if (refineRepo !== undefined && (typeof refineRepo !== 'string' || !REPO.test(refineRepo))) fail('refineRepo', 'an owner/name repo');
 
   return {
     inboxUrl: url!.href.replace(/\/+$/, ''),
@@ -206,6 +212,7 @@ export function loadConfig(path = CONFIG_PATH): RunnerConfig {
     models: models as Record<string, ModelSettings>,
     levels: levels as Record<Level, string>,
     skill: skill as string,
+    ...(refineRepo === undefined ? {} : { refineRepo: refineRepo as string }),
   };
 }
 
@@ -273,10 +280,11 @@ function inbox(config: RunnerConfig, deps: Deps) {
 }
 
 /** The exact argv for `orca worktree create`, per docs/issue-format.md. */
-export function launchArgs(config: RunnerConfig, repoPath: string, model: string, task: Pick<Task, 'identifier' | 'branchName'>) {
+export function launchArgs(config: RunnerConfig, repoPath: string, model: string, task: Pick<Task, 'identifier' | 'branchName'>, refine = false) {
   const { agent, model: id, effort: configuredEffort } = config.models[model]!;
   const effort = agent === 'codex' && /(?:^|-)luna(?:-|$)/i.test(id)
     && !['high', 'xhigh', 'max'].includes(configuredEffort ?? '') ? 'high' : configuredEffort;
+  const skill = refine ? 'do-refine' : config.skill;
   return [
     'worktree', 'create',
     '--name', task.branchName.split('/').pop()!,
@@ -285,8 +293,8 @@ export function launchArgs(config: RunnerConfig, repoPath: string, model: string
     '--agent', agent,
     '--model', id,
     ...(effort ? ['--effort', effort] : []),
-    `--prompt=${agent === 'codex' ? '$' : '/'}${config.skill} ${task.identifier}\nDelegated run: nobody is watching this session.`,
-    '--setup', config.skill === 'do-implement' ? 'run' : 'skip',
+    `--prompt=${agent === 'codex' ? '$' : '/'}${skill} ${task.identifier}\n${refine ? ATTENDED : 'Delegated run: nobody is watching this session.'}`,
+    '--setup', skill === 'do-implement' ? 'run' : 'skip',
     '--linear-issue', task.identifier,
     '--json',
   ];
@@ -322,6 +330,8 @@ type Launch = {
   launched: boolean;
   thoughtPosted: boolean;
   githubRepo?: string;
+  /** A refine launch: it responds at launch and is never watched for a PR. */
+  refine?: boolean;
 };
 type Launches = Record<string, Launch>;
 
@@ -335,6 +345,7 @@ function readLaunches(deps: Deps): Launches {
         && typeof entry.branch === 'string' && entry.branch.length <= 200 && BRANCH.test(entry.branch) && !entry.branch.includes('..')
         && (entry.githubRepo === undefined || isLaunchEvidence({ repo: entry.githubRepo, branch: entry.branch }))
         && isText(entry.model) && typeof entry.launched === 'boolean' && typeof entry.thoughtPosted === 'boolean'
+        && (entry.refine === undefined || typeof entry.refine === 'boolean')
     )) throw new Error('invalid launch record');
     return launches as Launches;
   } catch (error) {
@@ -430,6 +441,7 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
   try { watches = readWatches(deps); }
   catch { deps.log({ event: 'watch', outcome: 'watches-unreadable' }); writeStatus(deps); return; }
   const api = inbox(config, deps);
+  const launches = readLaunches(deps);
   for (const job of Object.values(watches)) {
     const log = (outcome: string) => deps.log({ event: 'watch', session: job.sessionId, outcome });
     const change = (edit: (watches: Watches) => void) => changeWatches(deps, (current) => {
@@ -437,6 +449,14 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
       if (current[job.sessionId]?.claimId === job.claimId) edit(current);
     });
     try {
+      if (launches[job.sessionId]?.refine) {
+        // Its launched report landed but the response didn't: post that instead of watching.
+        await api.update(job, 'response', refining(config));
+        change((current) => delete current[job.sessionId]);
+        record(deps, log, (current) => delete current[job.sessionId]);
+        log('finished');
+        continue;
+      }
       if (!job.ready) {
         // A lost launch acknowledgement may already have committed; watch verifies the claim below.
         await api.finish(job, 'launched', job.launch).catch((error: Error) => {
@@ -495,8 +515,10 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
   }
 }
 
-/** Reports a recorded launch, retaining its claim for completion watching. */
-async function reportLaunch(api: ReturnType<typeof inbox>, deps: Deps, claim: Claim, log: (outcome: string) => void, launch: Launch) {
+const refining = (config: RunnerConfig) => `Refining in Orca on ${config.machine}; continue there.`;
+
+/** Reports a recorded launch, retaining its claim for completion watching unless it's a refine launch. */
+async function reportLaunch(config: RunnerConfig, api: ReturnType<typeof inbox>, deps: Deps, claim: Claim, log: (outcome: string) => void, launch: Launch) {
   if (!launch.thoughtPosted) {
     const posted = await api.update(claim, 'thought', `Started ${launch.model} in Orca on \`${launch.branch}\`.`)
       .then(() => true, () => false);
@@ -507,6 +529,14 @@ async function reportLaunch(api: ReturnType<typeof inbox>, deps: Deps, claim: Cl
     }
     launch.thoughtPosted = true;
     record(deps, log, (launches) => { launches[claim.sessionId] = launch; });
+  }
+  const evidence = launch.githubRepo ? { repo: launch.githubRepo, branch: launch.branch } : undefined;
+  if (launch.refine) {
+    // A lost report leaves the launch record: a reclaim, or watch recovery once launched, finishes it.
+    if (!await api.finish(claim, 'launched', evidence).then(() => true, () => false)) log('launched-report-failed');
+    else if (!await api.update(claim, 'response', refining(config)).then(() => true, () => false)) log('response-failed');
+    else record(deps, log, (launches) => delete launches[claim.sessionId]);
+    return 'launched';
   }
   try {
     changeWatches(deps, (watches) => {
@@ -521,7 +551,6 @@ async function reportLaunch(api: ReturnType<typeof inbox>, deps: Deps, claim: Cl
     log('watch-save-failed');
     return 'launched';
   }
-  const evidence = launch.githubRepo ? { repo: launch.githubRepo, branch: launch.branch } : undefined;
   if (await api.finish(claim, 'launched', evidence).then(() => true, () => false)) {
     try { changeWatches(deps, (watches) => { watches[claim.sessionId]!.ready = true; }); }
     catch { log('watch-save-failed'); }
@@ -592,7 +621,7 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
   if (saved?.launched) {
     // Launched under an earlier claim whose report was lost: the agent is already running.
     log('launch-recovered');
-    return reportLaunch(api, deps, claim, log, saved);
+    return reportLaunch(config, api, deps, claim, log, saved);
   }
 
   let task: Partial<Task>;
@@ -615,9 +644,21 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
   if (!isText(task.creatorId) || !config.allowedCreatorIds.includes(task.creatorId)) {
     return refuse('creator-refused', NOT_ALLOWED);
   }
-  const issue = parseIssue(typeof task.description === 'string' ? task.description : '');
-  if ('field' in issue) {
-    return refuse(`refused-${issue.field}`, `Refused \`${issue.field}\`: expected ${issue.expected}. ${RETRY}`);
+  const description = typeof task.description === 'string' ? task.description : '';
+  const refine = Array.isArray(task.labels) && task.labels.some((label) => typeof label === 'string' && label.startsWith('wayfinder:'));
+  let issue: DelegatorIssue;
+  if (refine) {
+    // Decision tickets carry no level or repo tag: they run in the planning repo with the deep model.
+    if (!config.refineRepo) {
+      return refuse('refused-refineRepo', `Decision tickets need the Runner config key \`refineRepo\` set to the planning repo (owner/name) on ${config.machine}. Set it and delegate again to retry.`);
+    }
+    issue = { repo: config.refineRepo, level: 'deep', model: readTag(description, 'model') };
+  } else {
+    const parsed = parseIssue(description);
+    if ('field' in parsed) {
+      return refuse(`refused-${parsed.field}`, `Refused \`${parsed.field}\`: expected ${parsed.expected}. ${RETRY}`);
+    }
+    issue = parsed;
   }
   const { identifier, branchName } = task;
   if (typeof identifier !== 'string' || !IDENTIFIER.test(identifier)) {
@@ -664,15 +705,15 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
     saved.launched = true;
     record(deps, log, (launches) => { launches[claim.sessionId] = saved; });
     log('launch-recovered');
-    return reportLaunch(api, deps, claim, log, saved);
+    return reportLaunch(config, api, deps, claim, log, saved);
   }
 
   const launch: Launch = { at: (deps.now ?? Date.now)(), repo: repoPath, branch: branchName,
-    model, githubRepo: issue.repo, launched: false, thoughtPosted: false };
+    model, githubRepo: issue.repo, launched: false, thoughtPosted: false, ...(refine ? { refine } : {}) };
   if (!record(deps, log, (launches) => { launches[claim.sessionId] = launch; })) {
     return refuse('launch-record-failed', `Couldn't save the launch intent. Check the Runner config directory is writable. ${RETRY}`);
   }
-  const args = launchArgs(config, repoPath, model, { identifier, branchName });
+  const args = launchArgs(config, repoPath, model, { identifier, branchName }, refine);
   let code = await orca(deps.exec, args);
   if (code === 'runtime_unavailable') code = await orca(deps.exec, args);
   if (code === 'runtime_unavailable') {
@@ -689,7 +730,7 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
   launch.launched = true;
   record(deps, log, (launches) => { launches[claim.sessionId] = launch; });
   log('launched');
-  return reportLaunch(api, deps, claim, log, launch);
+  return reportLaunch(config, api, deps, claim, log, launch);
 }
 
 /** One poll: claims a job and handles it. Returns whether there was one. */

@@ -13,7 +13,7 @@ Delegator's always-on hosted service, a Cloudflare Worker: it installs the one `
 _Avoid_: relay, proxy, server
 
 **Delegated run**:
-An agent session the Runner launched, with nobody watching it. Its prompt says so on a second line, and `do-implement` then makes default calls instead of stopping to ask, listing them under **Questions along the way**. `do-closeout` runs the after-merge steps it can check without asking and leaves the rest open.
+An agent session the Runner launched, with nobody watching it; a refine launch is the exception. Its prompt says so on a second line, and `do-implement` then makes default calls instead of stopping to ask, listing them under **Questions along the way**. `do-closeout` runs the after-merge steps it can check without asking and leaves the rest open.
 _Avoid_: unattended run
 
 **Delegator**:
@@ -35,6 +35,10 @@ _Avoid_: lock, timeout
 **Machine**:
 The computer that runs jobs, named by its key in Cloud Inbox's `MACHINES` secret, which maps it to its own bearer secret. Every machine shares the one `Delegator` app and queue. Its Runner is the process on it.
 _Avoid_: host
+
+**Refine launch**:
+The Runner's launch for a delegated issue with a `wayfinder:` label: `do-refine` in the `refineRepo` checkout, prompted as an attended run that a person joins in Orca. It replies at launch and isn't watched for a PR.
+_Avoid_: decision launch
 
 **Runner**:
 The local process on a machine that claims jobs from Cloud Inbox through its restricted machine-facing API and launches them in Orca. It holds no Linear credentials. Lives in `packages/delegator/runner/`.
