@@ -18,7 +18,11 @@ export type UpkeepDeps = {
   print: (line: string) => void;
 };
 
-const LABEL = 'com.factory.factory-delegator.runner';
+const LABEL = 'com.mcwestling.factory-delegator.runner';
+/** Each agent's label from before the com.mcwestling rename, and the one that replaced it. */
+const RENAMED = [['com.factory.factory-delegator.runner', LABEL],
+  ['com.factory.factory-delegator.menubar', 'com.mcwestling.factory-delegator.menubar']] as const;
+const OLD_LABEL = RENAMED[0][0];
 // Everything the installer bundles from source, checked byte for byte after staging.
 const BUNDLED = ['job.ts', 'parse-issue.ts', 'runner/runner.ts', 'runner/launchd/install.sh',
   'runner/launchd/runner.plist', 'menubar/menubar.plist'];
@@ -36,9 +40,29 @@ export const outsideRunner = (stateDir: string): number => {
   return alive(status?.pid) && Date.now() - Date.parse(status.updatedAt) < 30_000 ? status.pid : 0;
 };
 
-/** The Runner's pid from launchd: 0 when loaded but not running (KeepAlive may restart it any moment), null when not loaded. */
-export const runnerPid = (deps: UpkeepDeps) => deps.exec('launchctl', ['print', `gui/${deps.uid}/${LABEL}`], 30_000)
+/** A launchd agent's pid: 0 when loaded but not running (KeepAlive may restart it any moment), null when not loaded. */
+const agentPid = (deps: UpkeepDeps, label: string) => deps.exec('launchctl', ['print', `gui/${deps.uid}/${label}`], 30_000)
   .then(({ stdout }) => Number(/^\s*pid = (\d+)$/m.exec(stdout)?.[1] ?? 0), () => null);
+/** The Runner's pid from launchd, as agentPid gives it. */
+export const runnerPid = (deps: UpkeepDeps) => agentPid(deps, LABEL);
+
+/**
+ * Moves each agent from before the com.mcwestling rename to its new label: unloads it, carries over its plist and
+ * whether it's disabled, then removes the old plist. Call it only with the Runner stopped; it never starts an agent.
+ */
+async function renameAgents(deps: UpkeepDeps) {
+  const agents = join(deps.home, 'Library', 'LaunchAgents');
+  let disabled: string | undefined;
+  for (const [old, label] of RENAMED) {
+    const from = join(agents, `${old}.plist`), to = join(agents, `${label}.plist`);
+    if (!existsSync(from)) continue;
+    disabled ??= (await deps.exec('launchctl', ['print-disabled', `gui/${deps.uid}`], 30_000)).stdout;
+    if (disabled.includes(`"${old}" => disabled`)) await deps.exec('launchctl', ['disable', `gui/${deps.uid}/${label}`], 30_000);
+    try { await deps.exec('launchctl', ['bootout', `gui/${deps.uid}/${old}`], 60_000); } catch {}
+    if (!existsSync(to)) writeFileSync(to, readFileSync(from, 'utf8').replaceAll(old, label), { mode: 0o600 });
+    rmSync(from);
+  }
+}
 
 /** Rebuilds an installed Runner app, swapping it in only once the Runner is proven idle. */
 export async function updateRunner(deps: UpkeepDeps): Promise<Result> {
@@ -78,11 +102,13 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
     return started;
   };
 
-  const running = await runnerPid(deps);
+  // Until renameAgents moves it, a Runner from before the rename is loaded under its old label.
+  const loaded = async () => await runnerPid(deps) ?? await agentPid(deps, OLD_LABEL);
+  const running = await loaded();
   if (running === 0) return fail('refused. The Runner agent is loaded but not running. Check ~/Library/Logs/factory-delegator, then rerun.');
   /** Why a stopped Runner can't be refreshed now, or null when it's still stopped with readable state. */
   const stoppedRefusal = async () => {
-    if (await runnerPid(deps) !== null) return fail('refused. The stopped Runner was started while setup was building. Nothing was replaced; rerun when it\'s idle.');
+    if (await loaded() !== null) return fail('refused. The stopped Runner was started while setup was building. Nothing was replaced; rerun when it\'s idle.');
     const outside = outsideRunner(deps.stateDir);
     if (outside) return fail(`refused. A Runner process (pid ${outside}) is running outside launchd. Stop it, then rerun.`);
     // Saved watches resume after a restart, but only if the new Runner can read them.
@@ -122,17 +148,19 @@ async function runner(deps: UpkeepDeps): Promise<Result> {
       const ack = readJson(`${drain}.ack`);
       return ack?.nonce === nonce && ack.pid === running;
     });
-    if (!acked || await runnerPid(deps) !== running) {
+    if (!acked || await loaded() !== running) {
       return fail('refused. The Runner is busy (a claim, job or watch check is in progress) or didn\'t confirm it was idle within 60 s. Nothing was changed; rerun when the menu shows nothing in progress.');
     }
-    try { await deps.exec('launchctl', ['bootout', service], 60_000); } catch {}
-    if (!await wait(10, async () => await runnerPid(deps) === null)) {
+    const old = await agentPid(deps, OLD_LABEL) !== null;
+    try { await deps.exec('launchctl', ['bootout', old ? `gui/${deps.uid}/${OLD_LABEL}` : service], 60_000); } catch {}
+    if (!await wait(10, async () => await loaded() === null)) {
       return fail('failed. Couldn\'t stop the Runner to replace it. The installed bundle is unchanged.');
     }
   }
 
   // The build takes a while; a stopped Runner may have been started meanwhile.
   if (running === null) { const refusal = await stoppedRefusal(); if (refusal) return refusal; }
+  await renameAgents(deps);
   const stoppedAt = Date.now();
   rmSync(previous, { recursive: true, force: true });
   try {

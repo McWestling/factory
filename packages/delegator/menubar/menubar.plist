@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>com.factory.factory-delegator.menubar</string>
+	<string>com.mcwestling.factory-delegator.menubar</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>/usr/bin/open</string>

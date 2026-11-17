@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-private let runnerLabel = "com.factory.factory-delegator.runner"
-private let menuBarLabel = "com.factory.factory-delegator.menubar"
+private let runnerLabel = "com.mcwestling.factory-delegator.runner"
+private let menuBarLabel = "com.mcwestling.factory-delegator.menubar"
 /// The Keychain item setup stores for a Mac without a Runner: the viewer secret, with the Cloud Inbox URL as its comment.
 private let poolService = "com.mcwestling.factory-delegator.pool"
 private let configFile = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/factory-delegator/config.json")

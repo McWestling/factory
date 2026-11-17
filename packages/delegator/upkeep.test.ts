@@ -1,22 +1,26 @@
 import assert from 'node:assert/strict';
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { acknowledgeDrain, poll, watchJobs, type Deps, type RunnerConfig } from './runner/runner.ts';
 import { updateRunner, withLock, type UpkeepDeps } from './upkeep.ts';
 
 const root = resolve(import.meta.dirname, '../..');
-const LABEL = 'com.factory.factory-delegator.runner';
+const LABEL = 'com.mcwestling.factory-delegator.runner';
+const MENU = 'com.mcwestling.factory-delegator.menubar';
+const OLD = 'com.factory.factory-delegator.runner';
+const OLD_MENU = 'com.factory.factory-delegator.menubar';
 const BUNDLED = ['job.ts', 'parse-issue.ts', 'runner/runner.ts', 'runner/launchd/install.sh',
   'runner/launchd/runner.plist', 'menubar/menubar.plist'];
 
 /** A disposable machine: real files under a temp home, with the installer and launchd faked. */
-function machine({ runner = 'running' as 'running' | 'stopped' | 'none' } = {}) {
+function machine({ runner = 'running' as 'running' | 'stopped' | 'none', legacy = false } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'upkeep-'));
   const stateDir = join(home, '.local/state/factory');
   const app = join(home, 'Applications/Factory Runner.app');
-  const plist = join(home, 'Library/LaunchAgents', `${LABEL}.plist`);
+  const agents = join(home, 'Library/LaunchAgents');
+  const plist = join(agents, `${LABEL}.plist`);
   const config = join(home, '.config/factory-delegator/config.json');
   mkdirSync(stateDir, { recursive: true });
   const bundle = (dir: string, version: string) => {
@@ -31,8 +35,10 @@ function machine({ runner = 'running' as 'running' | 'stopped' | 'none' } = {}) 
   };
   if (runner !== 'none') {
     bundle(app, 'old');
-    mkdirSync(dirname(plist), { recursive: true });
-    writeFileSync(plist, '<plist/>');
+    mkdirSync(agents, { recursive: true });
+    // Before the com.mcwestling rename, both agents had com.factory labels.
+    writeFileSync(join(agents, `${legacy ? OLD : LABEL}.plist`), `<string>${legacy ? OLD : LABEL}</string>`);
+    writeFileSync(join(agents, `${legacy ? OLD_MENU : MENU}.plist`), `<string>${legacy ? OLD_MENU : MENU}</string>`);
     mkdirSync(dirname(config), { recursive: true });
     writeFileSync(config, '{"bearerSecret":"secret-value"}', { mode: 0o600 });
   }
@@ -40,6 +46,10 @@ function machine({ runner = 'running' as 'running' | 'stopped' | 'none' } = {}) 
   const m = {
     home, stateDir, app, plist, config,
     pid: runner === 'running' ? process.pid as number | null : null,
+    /** The label launchd has the Runner loaded under, while pid is set. */
+    label: legacy ? OLD : LABEL,
+    /** What launchctl print-disabled lists. */
+    disabled: '',
     nextPid: 4242,
     fail: new Set<string>(),
     calls: [] as string[],
@@ -59,12 +69,19 @@ function machine({ runner = 'running' as 'running' | 'stopped' | 'none' } = {}) 
       if (key) throw error(`${key} broke`);
       if (file === 'sh' && args[1] === '--build-app') { bundle(args[2]!, 'source'); return { stdout: '' }; }
       if (file === '/usr/bin/node') return { stdout: '' };
+      if (file === 'launchctl' && args[0] === 'print-disabled') return { stdout: m.disabled };
+      if (file === 'launchctl' && args[0] === 'disable') return { stdout: '' };
       if (file === 'launchctl' && args[0] === 'print') {
-        if (m.pid === null) throw error('Could not find service');
+        if (m.pid === null || args[1] !== `gui/501/${m.label}`) throw error('Could not find service');
         return { stdout: `${args[1]} = {\n\tstate = running\n\tpid = ${m.pid}\n}` };
       }
-      if (file === 'launchctl' && args[0] === 'bootout') { m.pid = null; return { stdout: '' }; }
+      if (file === 'launchctl' && args[0] === 'bootout') {
+        if (m.pid === null || args[1] !== `gui/501/${m.label}`) throw error('Boot-out failed: 3: No such process');
+        m.pid = null;
+        return { stdout: '' };
+      }
       if (file === 'launchctl' && args[0] === 'bootstrap') {
+        m.label = basename(args[2]!, '.plist');
         m.pid = m.nextPid++;
         writeFileSync(join(stateDir, 'status.json'), JSON.stringify({ pid: m.pid, updatedAt: new Date().toISOString() }));
         return { stdout: '' };
@@ -75,7 +92,8 @@ function machine({ runner = 'running' as 'running' | 'stopped' | 'none' } = {}) 
   const launchctl = () => m.calls.filter((call) => call.startsWith('launchctl') && !call.startsWith('launchctl print'));
   const bundled = () => readFileSync(join(app, 'Contents/Resources/runner/runner.ts'), 'utf8');
   const run = async () => { const result = await updateRunner(m.deps); m.output.push(result.line); return result.ok ? 0 : 1; };
-  return { ...m, m, launchctl, bundled, run };
+  const agentFiles = () => readdirSync(agents).sort();
+  return { ...m, m, agents, launchctl, bundled, agentFiles, run };
 }
 
 /** The real Runner's drain handling, sharing the machine's state directory. */
@@ -313,4 +331,46 @@ test('a new Runner that never reports and cannot be stopped leaves both bundles 
   assert.equal(existsSync(`${machineA.app}.failed`), false);
   assert.equal(machineA.m.pid, 4242, 'the service is still running');
   assert.equal(machineA.m.calls.filter((call) => call.startsWith('launchctl bootstrap')).length, 1, 'no restart of the previous bundle');
+});
+
+test('a running Runner from before the rename is drained under its old label, then restarted under the new one', async () => {
+  const machineA = machine({ legacy: true });
+  const runner = runnerOn(machineA.stateDir);
+  runner.release();
+  await runner.claiming;
+  machineA.m.onSleep = () => acknowledgeDrain(runner.deps);
+  assert.equal(await machineA.run(), 0);
+  assert.match(machineA.m.output.join('\n'), new RegExp(`runner: refreshed and restarted \\(pid ${process.pid} → 4242\\)`));
+  const calls = machineA.launchctl();
+  assert.equal(calls[0], `launchctl bootout gui/501/${OLD}`, 'the old Runner stops before anything moves');
+  assert.equal(calls.at(-1), `launchctl bootstrap gui/501 ${machineA.plist}`, 'only the new agent starts');
+  assert.equal(calls.some((call) => call.includes('disable')), false);
+  assert.deepEqual(machineA.agentFiles(), [`${MENU}.plist`, `${LABEL}.plist`]);
+  assert.equal(readFileSync(machineA.plist, 'utf8'), `<string>${LABEL}</string>`, 'the old plist carries over under the new label');
+  assert.equal(readFileSync(join(machineA.agents, `${MENU}.plist`), 'utf8'), `<string>${MENU}</string>`);
+  assert.equal(machineA.m.label, LABEL);
+});
+
+test('a stopped Runner from before the rename moves to the new labels still stopped, and a rerun changes nothing more', async () => {
+  const machineA = machine({ runner: 'stopped', legacy: true });
+  machineA.m.disabled = `disabled services = {\n\t"${OLD}" => disabled\n\t"${OLD_MENU}" => disabled\n}`;
+  assert.equal(await machineA.run(), 0);
+  assert.match(machineA.m.output[0]!, /^runner: refreshed and left stopped\./);
+  assert.deepEqual(machineA.launchctl().filter((call) => !call.startsWith('launchctl bootout')),
+    [`launchctl disable gui/501/${LABEL}`, `launchctl disable gui/501/${MENU}`], 'login choices carry over');
+  assert.equal(machineA.m.calls.some((call) => call.startsWith('launchctl bootstrap')), false);
+  assert.deepEqual(machineA.agentFiles(), [`${MENU}.plist`, `${LABEL}.plist`]);
+
+  machineA.m.calls.length = 0;
+  const before = machineA.agentFiles().map((file) => readFileSync(join(machineA.agents, file), 'utf8'));
+  assert.equal(await machineA.run(), 0);
+  assert.deepEqual(machineA.launchctl(), [], 'a migrated Mac needs no launchctl changes');
+  assert.deepEqual(machineA.agentFiles().map((file) => readFileSync(join(machineA.agents, file), 'utf8')), before);
+});
+
+test('a Mac without agents from before the rename gets no migration', async () => {
+  const machineA = machine({ runner: 'stopped' });
+  assert.equal(await machineA.run(), 0);
+  assert.equal(machineA.m.calls.some((call) => / (print-disabled|disable|bootout) /.test(call)), false);
+  assert.deepEqual(machineA.agentFiles(), [`${MENU}.plist`, `${LABEL}.plist`]);
 });

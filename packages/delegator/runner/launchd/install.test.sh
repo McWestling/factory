@@ -9,10 +9,17 @@ printf '{}\n' > "$tmp/home/.config/factory-delegator/config.json"
 chmod 600 "$tmp/home/.config/factory-delegator/config.json"
 printf '#!/bin/sh\nexit 0\n' > "$tmp/bin/orca"
 chmod +x "$tmp/bin/orca"
+# Agents from before the com.mcwestling rename are retired before the new ones install.
+agents="$tmp/home/Library/LaunchAgents"
+mkdir -p "$agents"
+for name in runner menubar; do
+  printf '<string>com.factory.factory-delegator.%s</string>\n' "$name" > "$agents/com.factory.factory-delegator.$name.plist"
+done
 HOME="$tmp/home" PATH="$tmp/bin:$PATH" FACTORY_LAUNCHD_RENDER_ONLY=1 \
 	sh "$root/packages/delegator/runner/launchd/install.sh"
-plist="$tmp/home/Library/LaunchAgents/com.factory.factory-delegator.runner.plist"
-menu_plist="$tmp/home/Library/LaunchAgents/com.factory.factory-delegator.menubar.plist"
+plist="$agents/com.mcwestling.factory-delegator.runner.plist"
+menu_plist="$agents/com.mcwestling.factory-delegator.menubar.plist"
+[ "$(ls "$agents")" = "$(printf 'com.mcwestling.factory-delegator.menubar.plist\ncom.mcwestling.factory-delegator.runner.plist')" ]
 plutil -lint "$plist"
 plutil -lint "$menu_plist"
 grep -q '<key>RunAtLoad</key>' "$plist"
@@ -37,6 +44,14 @@ done
 HOME="$tmp/home" PATH="$tmp/bin:$PATH" FACTORY_LAUNCHD_RENDER_ONLY=1   sh "$app/Contents/Resources/runner/launchd/install.sh" --install-runner
 bundled_runner=$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:1' "$plist")
 [ "$bundled_runner" = "$cli_runner" ]
+
+# A mode that renders only the Runner still carries the old menu bar agent over to its new label.
+rm "$menu_plist"
+printf '<string>com.factory.factory-delegator.menubar</string>\n' > "$agents/com.factory.factory-delegator.menubar.plist"
+HOME="$tmp/home" PATH="$tmp/bin:$PATH" FACTORY_LAUNCHD_RENDER_ONLY=1   sh "$app/Contents/Resources/runner/launchd/install.sh" --install-runner
+[ ! -e "$agents/com.factory.factory-delegator.menubar.plist" ]
+grep -qx '<string>com.mcwestling.factory-delegator.menubar</string>' "$menu_plist"
+[ "$(stat -f '%Lp' "$menu_plist")" = 600 ]
 
 # A failed build must leave the existing Runner LaunchAgent untouched.
 cp "$plist" "$tmp/before.plist"
