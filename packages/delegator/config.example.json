@@ -13,5 +13,6 @@
     "standard": "Claude Opus 5.5 low",
     "deep": "Claude Opus 5.5 medium"
   },
-  "skill": "do-implement"
+  "skill": "do-implement",
+  "refineRepo": "<owner>/<planning-repo>"
 }

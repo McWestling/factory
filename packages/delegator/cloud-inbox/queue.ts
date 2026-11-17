@@ -35,7 +35,7 @@ export const MESSAGES = {
 // Every Linear document Cloud Inbox sends. Variables come only from the job, never the machine.
 const ACTIVITY = 'mutation ($input: AgentActivityCreateInput!) { agentActivityCreate(input: $input) { success } }';
 const TASK = `query ($issue: String!, $session: String!) {
-  issue(id: $issue) { identifier description branchName state { type } delegate { id } }
+  issue(id: $issue) { identifier description branchName state { type } delegate { id } labels { nodes { name } } }
   agentSession(id: $session) { creator { id } } }`;
 const WATCH = `query ($issue: String!, $session: String!) {
   issue(id: $issue) { state { type } attachments { nodes { url } } } agentSession(id: $session) { status } }`;
@@ -83,6 +83,8 @@ export type Task = {
   description: string;
   branchName: string;
   statusType: string;
+  /** Label names; a `wayfinder:` one makes the launch a refine launch. */
+  labels: string[];
 };
 export type Watch = { sessionStatus: string; issueState?: string; pullRequests: string[] };
 /** What a Runner last reported, as it writes its local `status.json`. Cloud Inbox doesn't read it. */
@@ -94,7 +96,8 @@ export type Pool = {
 
 type Id = { id?: string } | null | undefined;
 type TaskData = {
-  issue?: { identifier?: string; description?: string | null; branchName?: string; state?: { type?: string }; delegate?: Id };
+  issue?: { identifier?: string; description?: string | null; branchName?: string; state?: { type?: string }; delegate?: Id;
+    labels?: { nodes?: { name?: string }[] } };
   agentSession?: { creator?: Id };
 };
 type WatchData = { issue?: { state?: { type?: string }; attachments?: { nodes?: { url?: string }[] } }; agentSession?: { status?: string } };
@@ -315,6 +318,7 @@ export class JobQueue {
       description: issue.description ?? '',
       branchName: issue.branchName,
       statusType: issue.state.type,
+      labels: (issue.labels?.nodes ?? []).flatMap((label) => typeof label.name === 'string' ? [label.name] : []),
     };
   }
 

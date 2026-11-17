@@ -229,7 +229,8 @@ function answer(world: World, query: string, variables: Record<string, any>) {
   if (query.includes('branchName')) {
     const { identifier, description, branchName, delegateId } = issue;
     return {
-      issue: { identifier, description, branchName, state: { type: state().type }, delegate: delegateId && { id: delegateId } },
+      issue: { identifier, description, branchName, state: { type: state().type }, delegate: delegateId && { id: delegateId },
+        labels: { nodes: issue.labelIds.map((id) => ({ name: world.labels.find((l) => l.id === id)!.name })) } },
       agentSession: { creator },
     };
   }
@@ -976,7 +977,7 @@ test('task returns what the Runner checks, read from the job and never from the 
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), {
     delegated: true, creatorId: 'user-creator', identifier: 'ABC-1', description: 'Task for ABC-1',
-    branchName: 'abc-1', statusType: 'unstarted',
+    branchName: 'abc-1', statusType: 'unstarted', labels: ['Claude', 'Factory'],
   });
   assert.deepEqual(h.linear.requests.map((r) => r.variables), [{ issue: 'issue-1', session: 'session-1' }]);
 

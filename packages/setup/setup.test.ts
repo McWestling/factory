@@ -616,7 +616,7 @@ test('a connected Inbox from a finished checkpoint is reused without another set
 test('a valid existing config is kept as it is and installed without Inbox questions', async () => {
   const mac = machine();
   mkdirSync(join(mac.home, '.config/factory-delegator'), { recursive: true });
-  const example = JSON.parse(readFileSync(join(mac.root, 'packages/delegator/config.example.json'), 'utf8'));
+  const { refineRepo: _, ...example } = JSON.parse(readFileSync(join(mac.root, 'packages/delegator/config.example.json'), 'utf8'));
   const text = JSON.stringify({ ...example, inboxUrl: `${DEPLOYED.origin}/delegator`, bearerSecret: BEARER, machine: 'Factory mac', allowedCreatorIds: ['user-id'],
     models: { One: { agent: 'claude', model: 'one' } }, levels: { light: 'One', standard: 'One', deep: 'One' } });
   writeFileSync(runnerConfig(mac.home), text, { mode: 0o600 });

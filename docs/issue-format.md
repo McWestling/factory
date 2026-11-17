@@ -1,6 +1,6 @@
 # Issue format
 
-Factory Delegator reads inline tags from an implementation issue's description. For `level`, the first valid value wins; for `repo`, the first value matching the repo pattern wins; for `model`, the first non-empty value wins. Invalid or empty values are skipped, anywhere in the description, including inside code spans. Linear's escaped bracket form, such as `\[level=standard\]`, means the same thing.
+Factory Delegator reads inline tags from an implementation issue's description. Decision tickets skip the tags; see [Refine launches](#refine-launches). For `level`, the first valid value wins; for `repo`, the first value matching the repo pattern wins; for `model`, the first non-empty value wins. Invalid or empty values are skipped, anywhere in the description, including inside code spans. Linear's escaped bracket form, such as `\[level=standard\]`, means the same thing.
 
 ## Repo tag
 
@@ -48,7 +48,21 @@ Luna always launches with at least `high` effort, including when pinned: missing
 
 All three keys are required, and every value must name a key in `models`. Invalid mappings stop the Runner at config load. See `packages/delegator/config.example.json` for a complete example.
 
-The skill is not part of the issue format. Runner config's optional `skill` key selects it and defaults to `do-implement`; its value must match `^[a-z0-9-]+$`. Delegator prompts Codex with `$<skill> <issue id>` and other agents with `/<skill> <issue id>`, followed by the delegated-run line. Orca setup runs only for `do-implement` and is skipped for other skills. The configured skill decides what it accepts; a `wayfinder:` label is not a Delegator gate.
+The skill is not part of the issue format. An issue with a `wayfinder:` label launches `do-refine` (see [Refine launches](#refine-launches)); every other issue launches the skill that Runner config's optional `skill` key selects. It defaults to `do-implement`, and its value must match `^[a-z0-9-]+$`. Delegator prompts Codex with `$<skill> <issue id>` and other agents with `/<skill> <issue id>`, followed by the delegated-run line. Orca setup runs only for `do-implement` and is skipped for other skills. The configured skill decides what it accepts.
+
+The optional `refineRepo` key names the planning repo, as `owner/name` matching `^[\w.-]+/[\w.-]+$`, that refine launches run in. Setup leaves it out; set it by hand on a machine that should take decision tickets.
+
+## Refine launches
+
+A delegated issue with any label whose name starts with `wayfinder:` is a decision ticket, and the Runner gives it a refine launch:
+
+- It skips the `[level=]` and `[repo=]` tags. A `[model=]` pin still applies.
+- It runs in the `refineRepo` checkout, matched in Orca like a repo tag. Without `refineRepo`, the Runner refuses with a message saying to set it.
+- It uses the model that `levels.deep` names.
+- It prompts `<prefix>do-refine <issue id>` with the attended line `Attended run: a person will join this session in Orca. Ask every question with your question tool (AskUserQuestion) and wait for the answer.`, and skips Orca setup.
+- Once launched, it replies `Refining in Orca on <machine>; continue there.` and isn't watched for a PR.
+
+Launch recovery after a lost report works as for any other launch.
 
 ## Refusals
 
@@ -56,6 +70,7 @@ Each refusal names the field and what was expected:
 
 - `level`: expected a `[level=…]` tag with light, standard or deep.
 - `repo`: expected a `[repo=owner/name]` tag matching `^[\w.-]+/[\w.-]+$`.
+- `refineRepo`: a refine launch on a machine without the `refineRepo` config key.
 - At pickup, the Runner requires exactly one matching GitHub checkout from `orca repo list --json`; missing or ambiguous registrations refuse dispatch.
 
 Runtime and launch failures are handled separately by the Runner.
@@ -68,7 +83,7 @@ the repo tag case-insensitively to `gitRemoteIdentity.canonicalKey` on a Git rep
 repos are eligible for allowed creators; no separate repo config or restart is needed.
 Unreadable listings and missing or duplicate matches refuse before worktree creation.
 
-The Runner resolves the model pin or level mapping and configured skill, then launches the Linear branch with Orca:
+The Runner resolves the model pin or level mapping and configured skill, then launches the Linear branch with Orca. A refine launch swaps in `do-refine`, the attended line and `--setup skip`:
 
 ```text
 orca worktree create --name <last segment of the branch> --repo path:<local checkout> --branch <Linear gitBranchName> --agent <agent> --model <model> [--effort <effort>] "--prompt=<agent-specific prefix><skill> <issue id>\nDelegated run: nobody is watching this session." --setup run|skip --linear-issue <issue id> --json

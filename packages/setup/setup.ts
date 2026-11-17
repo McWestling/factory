@@ -338,6 +338,8 @@ async function offerRunner(deps: SetupDeps): Promise<Result> {
     }
     if ('ok' in inbox) return inbox;
     const example = readJson(join(deps.root, DELEGATOR, 'config.example.json'));
+    // Optional and only a placeholder here: a machine takes decision tickets once it's set by hand.
+    delete example.refineRepo;
     const user = (await ask('Your Linear user id, so the Runner takes your delegations (ask your agent to call Linear whoami): ')).trim();
     const models: Record<string, { model: string }> = example.models;
     for (const [name, settings] of Object.entries(models)) {

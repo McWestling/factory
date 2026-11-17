@@ -3,7 +3,7 @@ export type Level = typeof LEVELS[number];
 export type DelegatorIssue = { repo: string; level: Level; model?: string };
 export type Refusal = { field: 'level' | 'repo'; expected: string };
 
-function readTag(description: string, key: string, valid: (value: string) => boolean = value => !!value): string | undefined {
+export function readTag(description: string, key: string, valid: (value: string) => boolean = value => !!value): string | undefined {
   const tags = new RegExp(String.raw`\\\[${key}=([^\]\r\n]*)\\\]|\[${key}=([^\]\r\n]*)\]`, 'g');
   for (const tag of description.matchAll(tags)) {
     const value = tag[1] ?? tag[2];

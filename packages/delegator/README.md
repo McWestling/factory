@@ -70,6 +70,7 @@ For manual configuration, copy [config.example.json](config.example.json) to
 | `models` | Model names mapped to Orca `agent`, `model` and optional `effort`. |
 | `levels` | A configured model name for each of `light`, `standard` and `deep`. |
 | `skill` | Skill to launch; defaults to `do-implement`. |
+| `refineRepo` | Optional `owner/name` planning repo for decision tickets, which launch `do-refine`; remove it to refuse them. |
 
 Model names are local config keys, selected by a level or an issue's `[model=]`
 pin. Pins match without case or punctuation: exact match first, then a unique
