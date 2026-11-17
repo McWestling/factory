@@ -489,10 +489,15 @@ test('a viewer-only app updates on a later run without the Runner\'s Node 26', a
   mac.m.output.length = 0;
   mac.m.questions.length = 0;
   answer(mac, []);
-  await mac.run();
-  assert.ok(!mac.m.output.some((line) => line.startsWith('prerequisites:')), mac.m.output.join('\n'));
+  const exec = mac.m.deps.exec;
+  mac.m.deps.exec = async (file, args, timeout) => file === 'sh' && args[1] === '--build-app' ? stagedBuild(mac, file, args) : exec(file, args, timeout);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  assert.ok(!mac.m.output.some((line) => line.startsWith('prerequisites:')), 'no Node 26 refusal');
   assert.ok(mac.m.calls.some((call) => call.endsWith('install.sh --build-app ' + join(mac.home, 'Applications/Factory Runner.app.staged'))), 'takes the update path');
+  assert.equal(runnerLine(mac.m.output), 'runner: refreshed the app; no Runner agent is installed.');
   assert.ok(!mac.m.questions.some(({ question }) => /Runner|Cloud Inbox/.test(question)), 'asks no install question again');
+  assert.ok(!existsSync(runnerConfig(mac.home)), 'no Runner config');
+  assert.ok(!existsSync(join(mac.home, PLIST)), 'no Runner agent');
 });
 
 test('a viewer-only app still needs swiftc to rebuild', async () => {
@@ -892,26 +897,29 @@ test('with nobody at the terminal, read roots are left alone', async () => {
   assert.ok(!existsSync(join(mac.home, '.claude')));
 });
 
+/** Fakes a successful `install.sh --build-app <staged>`: a bundle whose sources match the checkout byte for byte. */
+function stagedBuild(mac: ReturnType<typeof machine>, file: string, args: string[]) {
+  mac.m.calls.push(`${file} ${args.join(' ')}`);
+  for (const path of ['job.ts', 'parse-issue.ts', 'runner/runner.ts', 'runner/launchd/install.sh', 'runner/launchd/runner.plist', 'menubar/menubar.plist']) {
+    const source = join(mac.root, 'packages/delegator', path);
+    const target = join(args[2]!, 'Contents/Resources', path);
+    mkdirSync(join(source, '..'), { recursive: true });
+    mkdirSync(join(target, '..'), { recursive: true });
+    writeFileSync(source, 'fixture');
+    writeFileSync(target, 'fixture');
+  }
+  const binary = join(args[2]!, 'Contents/MacOS/FactoryRunnerMenuBar');
+  mkdirSync(join(binary, '..'), { recursive: true });
+  writeFileSync(binary, '', { mode: 0o755 });
+  return { stdout: '' };
+}
+
 for (const outcome of ['success', 'build failure', 'open failure', 'not running', 'skipped'] as const) test(`menu bar relaunch: ${outcome}`, async () => {
   const mac = machine();
   if (outcome !== 'skipped') installApp(mac.home);
   const exec = mac.m.deps.exec;
   mac.m.deps.exec = async (file, args, timeout) => {
-    if (file === 'sh' && args[1] === '--build-app' && outcome !== 'build failure') {
-      mac.m.calls.push(`${file} ${args.join(' ')}`);
-      for (const path of ['job.ts', 'parse-issue.ts', 'runner/runner.ts', 'runner/launchd/install.sh', 'runner/launchd/runner.plist', 'menubar/menubar.plist']) {
-        const source = join(mac.root, 'packages/delegator', path);
-        const target = join(args[2]!, 'Contents/Resources', path);
-        mkdirSync(join(source, '..'), { recursive: true });
-        mkdirSync(join(target, '..'), { recursive: true });
-        writeFileSync(source, 'fixture');
-        writeFileSync(target, 'fixture');
-      }
-      const binary = join(args[2]!, 'Contents/MacOS/FactoryRunnerMenuBar');
-      mkdirSync(join(binary, '..'), { recursive: true });
-      writeFileSync(binary, '', { mode: 0o755 });
-      return { stdout: '' };
-    }
+    if (file === 'sh' && args[1] === '--build-app' && outcome !== 'build failure') return stagedBuild(mac, file, args);
     if (file === 'pkill' || file === 'open') {
       mac.m.calls.push(`${file} ${args.join(' ')}`);
       if (file === 'pkill' && outcome === 'not running') throw Object.assign(new Error('no process'), { code: 1 });

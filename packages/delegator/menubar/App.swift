@@ -166,8 +166,10 @@ private enum AppCommands {
         guard let (inbox, secret) = poolAccess() else { return .failure(PoolProblem(message: "Not set up. Run npm run setup.")) }
         var request = URLRequest(url: inbox.appending(path: "pool"), timeoutInterval: 15)
         request.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
         do {
-            let (data, response) = try await URLSession(configuration: .ephemeral).data(for: request)
+            let (data, response) = try await session.data(for: request)
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             guard code == 200 else { return .failure(PoolProblem(message: "Cloud Inbox answered \(code).")) }
             return poolLines(json: data).map { .success($0) } ?? .failure(PoolProblem(message: "Cloud Inbox sent no pool."))
