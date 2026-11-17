@@ -143,6 +143,7 @@ function machine({ agents = ['claude'], installed = ['claude', 'codex'], verify 
       }
       if (call === `sh ${join(root, 'packages/delegator/runner/launchd/install.sh')} --app-only`) {
         mkdirSync(join(home, 'Applications/Factory Runner.app/Contents/MacOS'), { recursive: true });
+        installApp(home);
         m.menuLoaded = true;
         return { stdout: '' };
       }
@@ -270,6 +271,8 @@ test('missing prerequisites refuse before anything changes', async () => {
 test('an existing Runner needs its build tools checked too', async () => {
   const mac = machine();
   installApp(mac.home);
+  mkdirSync(join(mac.home, 'Library/LaunchAgents'), { recursive: true });
+  writeFileSync(join(mac.home, PLIST), '');
   mac.m.deps.nodeVersion = '24.1.0';
   assert.equal(await mac.run(), 1);
   assert.match(mac.m.output.join('\n'), /Runner needs Node 26/);
@@ -476,6 +479,35 @@ test('declining the Runner can install the menu bar app alone, with the viewer s
   assert.ok(mac.m.calls.includes(`open ${join(mac.home, 'Applications/Factory Runner.app')}`), 'opens the app');
   assert.match(runnerLine(mac.m.output)!, /^runner: not installed\. The menu bar app is installed alone/);
   assert.ok(!mac.m.output.join('\n').includes(VIEWER), 'prints no secret');
+});
+
+test('a viewer-only app updates on a later run without the Runner\'s Node 26', async () => {
+  const mac = machine();
+  mac.m.deps.nodeVersion = '22.20.0';
+  answer(mac, ['n', 'y', `${DEPLOYED.origin}/delegator`, VIEWER]);
+  assert.equal(await mac.run(), 0, mac.m.output.join('\n'));
+  mac.m.output.length = 0;
+  mac.m.questions.length = 0;
+  answer(mac, []);
+  await mac.run();
+  assert.ok(!mac.m.output.some((line) => line.startsWith('prerequisites:')), mac.m.output.join('\n'));
+  assert.ok(mac.m.calls.some((call) => call.endsWith('install.sh --build-app ' + join(mac.home, 'Applications/Factory Runner.app.staged'))), 'takes the update path');
+  assert.ok(!mac.m.questions.some(({ question }) => /Runner|Cloud Inbox/.test(question)), 'asks no install question again');
+});
+
+test('a viewer-only app still needs swiftc to rebuild', async () => {
+  const mac = machine();
+  installApp(mac.home);
+  mac.m.deps.nodeVersion = '22.20.0';
+  mac.m.deps.exec = ((exec) => async (file: string, args: string[], timeout: number) => {
+    if (file === 'swiftc') throw Object.assign(new Error('swiftc: command not found'), { code: 127 });
+    return exec(file, args, timeout);
+  })(mac.m.deps.exec);
+  assert.equal(await mac.run(), 1);
+  const output = mac.m.output.join('\n');
+  assert.match(output, /needs swiftc to rebuild/);
+  assert.doesNotMatch(output, /Node 26/);
+  assert.deepEqual(changes(mac.m.calls), []);
 });
 
 test('a viewer answer that isn\'t a Cloud Inbox URL stores nothing and installs nothing', async () => {

@@ -42,7 +42,7 @@ finish an interrupted installation.
 Decline the Runner and setup offers to install the menu bar app alone. It asks
 for the Cloud Inbox URL and a [viewer secret](cloud-inbox/README.md#pool-status)
 from `npm run inbox -- viewer <name>`, with hidden input, and stores both in the
-macOS Keychain as the `com.factory.factory-delegator.pool` item. The secret never
+macOS Keychain as the `com.mcwestling.factory-delegator.pool` item. The secret never
 touches a file or a log. The menu then shows the Pool section and no Runner controls.
 
 ### Update after merging Factory changes

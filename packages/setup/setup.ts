@@ -45,7 +45,7 @@ const atLeast = (version: string, major: number, minor = 0) => {
 };
 
 /** Fails unless every tool the setup needs is present, before anything changes. */
-async function prerequisites(deps: SetupDeps, agents: string[], runner: boolean): Promise<string[]> {
+async function prerequisites(deps: SetupDeps, agents: string[], app: boolean): Promise<string[]> {
   const problems: string[] = [];
   const has = (file: string, args: string[]) => deps.exec(file, args, 30_000).then(() => true, () => false);
   if (!atLeast(deps.nodeVersion, 22, 20)) problems.push(`Node ${deps.nodeVersion} is too old. Install Node 22.20 or newer.`);
@@ -55,9 +55,12 @@ async function prerequisites(deps: SetupDeps, agents: string[], runner: boolean)
     if (!AGENTS[name]) problems.push(`${name} isn't a supported agent. Choose from: ${Object.keys(AGENTS).join(', ')}.`);
     else if (!await has(AGENTS[name].bin, ['--version'])) problems.push(`${name}: the ${AGENTS[name].bin} command is missing. Install it, sign in, then rerun.`);
   }
-  if (runner) {
-    if (!atLeast(deps.nodeVersion, 26)) problems.push(`The Factory Runner needs Node 26 to rebuild; this is Node ${deps.nodeVersion}.`);
-    if (!await has('swiftc', ['--version'])) problems.push('The Factory Runner needs swiftc to rebuild. Run: xcode-select --install');
+  if (app) {
+    // A viewer-only app has neither a Runner agent nor a config, so only its Swift rebuild needs checking.
+    const runner = ['Library/LaunchAgents/com.factory.factory-delegator.runner.plist', '.config/factory-delegator/config.json']
+      .some((path) => existsSync(join(deps.home, path)));
+    if (runner && !atLeast(deps.nodeVersion, 26)) problems.push(`The Factory Runner needs Node 26 to rebuild; this is Node ${deps.nodeVersion}.`);
+    if (!await has('swiftc', ['--version'])) problems.push('The Factory Runner app needs swiftc to rebuild. Run: xcode-select --install');
   }
   return problems;
 }
@@ -384,7 +387,7 @@ async function offerRunner(deps: SetupDeps): Promise<Result> {
 }
 
 /** The Keychain item the menu bar app reads on a Mac without a Runner. */
-const POOL_SERVICE = 'com.factory.factory-delegator.pool';
+const POOL_SERVICE = 'com.mcwestling.factory-delegator.pool';
 
 /** Offers the menu bar app alone, showing the pool with a viewer secret kept in the Keychain. */
 async function offerViewer(deps: SetupDeps, ask: NonNullable<SetupDeps['ask']>): Promise<Result> {
