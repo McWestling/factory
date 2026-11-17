@@ -54,23 +54,6 @@ start_runner() {
 	launchctl bootstrap "$domain" "$plist"
 }
 
-# Moves each agent from before the com.mcwestling rename to its new label, keeping its plist and whether it's
-# disabled, so a Mac never runs two Runners. Each mode below then installs, starts or removes the new agents.
-rename_agents() {
-	for new in "$label" "$menu_label"; do
-		old="com.factory.${new#com.mcwestling.}"
-		[ -f "$agents/$old.plist" ] || continue
-		if [ "${FACTORY_LAUNCHD_RENDER_ONLY:-}" != 1 ]; then
-			if launchctl print-disabled "$domain" | grep -qF "\"$old\" => disabled"; then launchctl disable "$domain/$new"; fi
-			launchctl bootout "$domain/$old" 2>/dev/null || true
-		fi
-		[ -f "$agents/$new.plist" ] || { sed "s|$old|$new|g" "$agents/$old.plist" > "$agents/$new.plist"; chmod 600 "$agents/$new.plist"; }
-		rm -f "$agents/$old.plist"
-	done
-}
-# A staged build touches nothing installed.
-[ "${1:-}" = --build-app ] || rename_agents
-
 case "${1:-}" in
 	--uninstall)
 		[ "$#" -eq 1 ] || { echo "usage: install.sh [--app-only|--install-runner|--uninstall-runner|--uninstall]" >&2; exit 2; }
