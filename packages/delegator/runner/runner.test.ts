@@ -478,6 +478,41 @@ for (const afterDelivery of [false, true]) {
   });
 }
 
+for (const accepted of [false, true]) {
+  test(`a refine response lost ${accepted ? 'after Cloud Inbox accepts it' : 'before Cloud Inbox accepts it'} is posted once after a restart`, async () => {
+    const inbox = realInbox(['wayfinder:grilling']);
+    await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
+    const first = fakes();
+    let lost = false;
+    first.deps.fetch = async (input, init) => {
+      if (!lost && String(input).includes('/updates') && JSON.parse(String(init?.body)).type === 'response') {
+        lost = true;
+        if (accepted) await inbox.fetch(input, init);
+        throw new TypeError('lost response');
+      }
+      return inbox.fetch(input, init);
+    };
+    await poll(refineConfig, first.deps);
+    assert.ok(lost);
+    assert.deepEqual(inbox.state(), ['launched']);
+    await inbox.queue.deliver();
+
+    // A new process with the same launches, watches and status files.
+    const second = fakes();
+    const restarted: Deps = { ...first.deps, exec: second.deps.exec, fetch: inbox.fetch };
+    await checkWatches(refineConfig, restarted);
+    await inbox.queue.deliver();
+    inbox.clock.now += 10 * 60_000;
+    assert.equal(await poll(refineConfig, restarted), false);
+    await checkWatches(refineConfig, restarted);
+    await inbox.queue.deliver();
+
+    assert.deepEqual(inbox.responses, [refining]);
+    assert.equal([...first.argv, ...second.argv].filter((args) => args[0] === 'worktree').length, 1);
+    assert.deepEqual(readWatches(restarted), {});
+  });
+}
+
 test('a final response accepted before a lost acknowledgement is not queued twice', async () => {
   const inbox = realInbox();
   await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
