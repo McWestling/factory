@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { loadConfig } from '../delegator/runner/runner.ts';
-import { claudeVerdict, cliArgs, codexVerdict, setup, type SetupDeps } from './setup.ts';
+import { claudeVerdict, cliArgs, codexVerdict, setup, viewerUrl, type SetupDeps } from './setup.ts';
 import { readRule } from './read-roots.ts';
 
 const HEAD = 'b'.repeat(40);
@@ -515,13 +515,30 @@ test('a viewer-only app still needs swiftc to rebuild', async () => {
   assert.deepEqual(changes(mac.m.calls), []);
 });
 
-test('a viewer answer that isn\'t a Cloud Inbox URL stores nothing and installs nothing', async () => {
-  const mac = machine();
-  answer(mac, ['n', 'y', 'factory-cloud-inbox.someone.workers.dev', VIEWER]);
-  assert.equal(await mac.run(), 1);
-  assert.equal(mac.m.keychain, null);
-  assert.match(runnerLine(mac.m.output)!, /ending in \/delegator/);
-  noRunnerChanges(mac);
+for (const url of ['factory-cloud-inbox.someone.workers.dev', 'https://example.test/#/delegator']) {
+  test(`a viewer answer of ${url} stores nothing and installs nothing`, async () => {
+    const mac = machine();
+    answer(mac, ['n', 'y', url, VIEWER]);
+    assert.equal(await mac.run(), 1);
+    assert.equal(mac.m.keychain, null);
+    assert.ok(!mac.m.calls.some((call) => call.includes('--app-only')), 'installs no app');
+    assert.ok(!existsSync(join(mac.home, 'Applications/Factory Runner.app')), 'no app bundle');
+    assert.match(runnerLine(mac.m.output)!, /ending in \/delegator/);
+    noRunnerChanges(mac);
+  });
+}
+
+test('a viewer URL must be https with exactly the /delegator path, and nothing that moves or decorates it', () => {
+  assert.equal(viewerUrl('https://Inbox.Example.test/delegator'), 'https://inbox.example.test/delegator');
+  assert.equal(viewerUrl('https://inbox.example.test:8443/delegator'), 'https://inbox.example.test:8443/delegator');
+  assert.equal(viewerUrl('https://example.test/delegator/../delegator'), 'https://example.test/delegator', 'saves the normalized path');
+  for (const url of [
+    'https://example.test/#/delegator', 'https://example.test/delegator#x', 'https://example.test/delegator#',
+    'https://example.test/delegator?x=1', 'https://example.test/delegator?', 'https://user:pass@example.test/delegator',
+    'https://user@example.test/delegator', 'http://example.test/delegator', 'https://example.test/delegator/',
+    'https://example.test/other/delegator', 'https://example.test/%64elegator',
+    'https://example.test/del"egator', 'https://example.test\\delegator', 'https://exa mple.test/delegator', 'not a url', '',
+  ]) assert.equal(viewerUrl(url), null, url);
 });
 
 test('with nobody at the terminal, a missing Runner is left alone', async () => {

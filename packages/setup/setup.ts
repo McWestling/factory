@@ -394,9 +394,9 @@ async function offerViewer(deps: SetupDeps, ask: NonNullable<SetupDeps['ask']>):
   const stop = (ok: boolean, why: string) => ({ ok, line: `runner: not installed. ${why}` });
   if (!/^y/i.test((await ask('Install the menu bar app alone, to watch the pool of Runners from this Mac? [y/N] ')).trim())) return stop(true, 'You can install it on a later run.');
   if (!await deps.exec('swiftc', ['--version'], 30_000).then(() => true, () => false)) return stop(false, 'The menu bar app needs swiftc. Run: xcode-select --install, then rerun.');
-  const url = (await ask('Cloud Inbox URL, ending in /delegator: ')).trim();
+  const url = viewerUrl((await ask('Cloud Inbox URL, ending in /delegator: ')).trim());
+  if (!url) return stop(false, 'That isn\'t an https Cloud Inbox URL ending in /delegator, with no query, fragment or credentials. Nothing was saved; rerun to try again.');
   // Both go to `security` quoted on one line, so neither may hold quotes, backslashes or whitespace.
-  if (!/^https:\/\/[^\s"\\]+\/delegator$/.test(url)) return stop(false, 'That isn\'t an https Cloud Inbox URL ending in /delegator. Nothing was saved; rerun to try again.');
   const secret = (await ask('Viewer secret, from npm run inbox -- viewer <name>: ', true)).trim();
   if (!/^[^\s"\\]+$/.test(secret)) return stop(false, 'That viewer secret is empty or holds spaces, quotes or backslashes. Nothing was saved; rerun to try again.');
   try { await deps.keychain(url, secret); } catch (error) { return stop(false, `The Keychain didn't take the viewer secret (${lastLine(error)}).`); }
@@ -404,6 +404,18 @@ async function offerViewer(deps: SetupDeps, ask: NonNullable<SetupDeps['ask']>):
     return stop(false, `The viewer secret is in the Keychain, but the menu bar app didn't install (${lastLine(error)}). Fix that, then run sh ${DELEGATOR}/runner/launchd/install.sh --app-only.`);
   }
   return stop(true, `The menu bar app is installed alone and shows the pool from ${url}.`);
+}
+
+/**
+ * The Cloud Inbox URL the menu bar app appends `pool` to, or null. Its path must be exactly `/delegator`:
+ * a query or fragment would move that path, and credentials have no place in a Keychain comment.
+ */
+export function viewerUrl(input: string): string | null {
+  let url: URL;
+  try { url = new URL(input); } catch { return null; }
+  if (/[\s"\\]/.test(input) || url.protocol !== 'https:' || url.username || url.password
+    || url.search || url.hash || input.includes('?') || input.includes('#') || url.pathname !== '/delegator') return null;
+  return `${url.origin}${url.pathname}`;
 }
 
 /** Stores the viewer pair through `security -i`, so the secret travels on stdin, never in a process's arguments. */
