@@ -139,8 +139,10 @@ PR watches run every 45 seconds and survive restarts in
 It verifies attached PRs against the recorded repository and exact branch before
 the Runner posts the final PR response. This ends Linear's working state; it
 neither merges the PR nor marks the issue Done. Linear's GitHub integration must
-attach the PR to the issue. GitHub checks use its unauthenticated public API:
-private PRs, rate limits and outages prevent confirmation. After 24 hours without
+attach the PR to the issue. GitHub checks use its public API, unauthenticated
+unless the optional [GitHub token](cloud-inbox/README.md#secrets) is set; without it
+private PRs can't be confirmed, and with a token that can't read the PR the Runner
+says so once. Rate limits and outages also prevent confirmation. After 24 hours without
 a confirmed PR, the Runner asks you to check the Orca worktree. Terminal sessions
 are dropped without another response.
 

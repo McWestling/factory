@@ -29,6 +29,7 @@ export const MESSAGES = {
   replaced: 'Replaced by a newer delegation.',
   stopped: 'Stopped watching. The agent in Orca keeps running; stop it there if needed.',
   replies: "Delegator doesn't read replies; steer the agent in Orca.",
+  unreadable: "Can't read the PR; check the GitHub token.",
 };
 
 // Every Linear document Cloud Inbox sends. Variables come only from the job, never the machine.
@@ -139,6 +140,7 @@ export class JobQueue {
   #now: () => number;
   #schedule: (at: number) => void;
   #draining?: Promise<void>;
+  #githubToken?: string;
 
   constructor(
     sql: Sql,
@@ -146,12 +148,14 @@ export class JobQueue {
     schedule: (at: number) => void,
     fetchFn: typeof fetch = (input, init) => fetch(input, init),
     now: () => number = Date.now,
+    githubToken?: string,
   ) {
     this.#sql = sql;
     this.#auth = auth;
     this.#fetch = fetchFn;
     this.#now = now;
     this.#schedule = schedule;
+    this.#githubToken = githubToken;
     // `machine` is the machine whose claim holds the job.
     sql.exec(`CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, issue_id TEXT NOT NULL,
       state TEXT NOT NULL, lease_until INTEGER, updated_at INTEGER NOT NULL, claim_id TEXT, machine TEXT,
@@ -159,6 +163,8 @@ export class JobQueue {
     sql.exec('CREATE TABLE IF NOT EXISTS seen (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     sql.exec('CREATE TABLE IF NOT EXISTS seen_activities (id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     sql.exec('CREATE TABLE IF NOT EXISTS ended (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
+    // Sessions already told GitHub refused to show their PR, so the thought posts once.
+    sql.exec('CREATE TABLE IF NOT EXISTS unreadable (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     // Sessions whose issue was delegated again, so their write-backs never apply.
     sql.exec('CREATE TABLE IF NOT EXISTS superseded (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     // `queued` marks the queued thought, which a claim cancels.
@@ -350,6 +356,7 @@ export class JobQueue {
     const urls = (data.issue.attachments?.nodes ?? []).map((a) => a.url ?? '');
     const [launch] = this.#sql.exec('SELECT launch_repo, launch_branch FROM jobs WHERE id = ? AND claim_id = ?', id, claimId).toArray();
     const pullRequests: string[] = [];
+    let unreadable = false;
     if (launch?.launch_repo && launch.launch_branch) {
       const metadataSignal = AbortSignal.timeout(METADATA_TIMEOUT_MS);
       for (const url of urls.filter((url) => PULL_REQUEST.test(url))) {
@@ -357,14 +364,20 @@ export class JobQueue {
         const path = new URL(url).pathname.split('/');
         if (`${path[1]}/${path[2]}`.toLowerCase() !== String(launch.launch_repo).toLowerCase()) continue;
         try {
-          // shortcut: public metadata only, add GitHub credentials when private PR detection is required.
+          // Without a token, only public repos' PRs can be read.
           const response = await this.#fetch(`https://api.github.com/repos/${path[1]}/${path[2]}/pulls/${path[4]}`, {
-            headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'factory-delegator' },
+            headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'factory-delegator',
+              ...(this.#githubToken ? { Authorization: `Bearer ${this.#githubToken}` } : {}) },
             // Workers' fetch throws on `redirect: 'error'`; a redirect stays unverified as a non-2xx.
             signal: metadataSignal, redirect: 'manual',
           });
           if (!response.ok) {
             log({ event: 'watch', session: id, outcome: `pr-metadata-${response.status}` });
+            // A missing, expired or unapproved token, or a repo it doesn't cover; a rate limit
+            // (primary or secondary, as GitHub marks them) is transient, not a token problem.
+            const limited = response.status === 403 && (response.headers.get('x-ratelimit-remaining') === '0'
+              || response.headers.has('retry-after') || /rate limit/i.test(await response.text()));
+            if ([401, 403, 404].includes(response.status) && !limited) unreadable = true;
             continue;
           }
           const pr = await response.json() as { base?: { repo?: { full_name?: string } }; head?: { ref?: string; repo?: { full_name?: string } } };
@@ -383,6 +396,12 @@ export class JobQueue {
     if (this.#sql.exec('SELECT 1 FROM superseded WHERE session_id = ?', id).toArray().length) return 'not-claimed';
     if (this.#sql.exec('SELECT 1 FROM ended WHERE session_id = ?', id).toArray().length) {
       return { sessionStatus: 'complete', pullRequests: [] };
+    }
+    if (unreadable && !pullRequests.length && this.#sql.exec(
+      'INSERT INTO unreadable (session_id, at) VALUES (?, ?) ON CONFLICT DO NOTHING RETURNING session_id',
+      id, this.#now()).toArray().length) {
+      this.#enqueue(id, 'thought', MESSAGES.unreadable, this.#now());
+      this.#wake();
     }
     return { sessionStatus: status, issueState: data.issue.state?.type, pullRequests };
   }
@@ -461,6 +480,7 @@ export class JobQueue {
     this.#sql.exec('DELETE FROM seen WHERE at <= ?', now - HISTORY_MS);
     this.#sql.exec('DELETE FROM seen_activities WHERE at <= ?', now - HISTORY_MS);
     this.#sql.exec('DELETE FROM ended WHERE at <= ?', now - HISTORY_MS);
+    this.#sql.exec('DELETE FROM unreadable WHERE at <= ?', now - HISTORY_MS);
     // Kept while a write-back of the session is still pending, however old.
     this.#sql.exec('DELETE FROM superseded WHERE at <= ? AND session_id NOT IN (SELECT session_id FROM outbox)',
       now - HISTORY_MS);

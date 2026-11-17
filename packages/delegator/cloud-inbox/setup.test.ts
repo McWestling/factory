@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { setup, credentials, viewer, type SetupIO } from './setup.ts';
+import { setup, credentials, githubToken, viewer, type SetupIO } from './setup.ts';
 
 test('setup resumes an interrupted registration and reruns without changing credentials or redeploying', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'inbox-test-'));
@@ -13,7 +13,7 @@ test('setup resumes an interrupted registration and reruns without changing cred
   let interrupted = true;
   const answers: Record<string, string> = {
     accountId: 'account-example', name: 'factory-cloud-inbox', machine: 'example-machine',
-    orgId: 'org-example', clientId: 'client-example', clientSecret: 'private-client', webhookSecret: 'private-webhook',
+    orgId: 'org-example', clientId: 'client-example', clientSecret: 'private-client', webhookSecret: 'private-webhook', githubOwner: '',
   };
   const io: SetupIO = {
     async ask(key) {
@@ -69,7 +69,7 @@ test('an interrupted secret upload retries the identical complete configuration'
   let uploaded: string | undefined;
   let fail = true;
   const answers: Record<string, string> = { accountId: 'account-example', name: 'factory-cloud-inbox',
-    machine: 'example-machine', orgId: 'org-example', clientId: 'client-example', clientSecret: 'secret', webhookSecret: 'webhook' };
+    machine: 'example-machine', orgId: 'org-example', clientId: 'client-example', clientSecret: 'secret', webhookSecret: 'webhook', githubOwner: '' };
   const io: SetupIO = {
     async ask(key) { return answers[key]!; }, say() {}, async open() {},
     async command(args, input) {
@@ -99,7 +99,7 @@ test('guided credential correction preserves owner, machine authority and identi
   const dir = await mkdtemp(join(tmpdir(), 'inbox-test-'));
   const file = join(dir, 'setup.local.json');
   const answers: Record<string, string> = { accountId: 'account-example', name: 'factory-cloud-inbox',
-    machine: 'example-machine', orgId: 'org-example', clientId: 'client-example', clientSecret: 'wrong-secret', webhookSecret: 'webhook' };
+    machine: 'example-machine', orgId: 'org-example', clientId: 'client-example', clientSecret: 'wrong-secret', webhookSecret: 'webhook', githubOwner: '' };
   let upload = '';
   const io: SetupIO = {
     async ask(key) { return answers[key]!; }, say() {}, async open() {},
@@ -123,11 +123,73 @@ test('guided credential correction preserves owner, machine authority and identi
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+for (const owner of ['', 'example-org']) {
+  test(`setup ${owner ? 'opens a prefilled GitHub token page and stores the token as a Worker secret' : 'skips the GitHub token on an empty owner'}`, async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'inbox-test-'));
+    const file = join(dir, 'setup.local.json');
+    const answers: Record<string, string> = { accountId: 'account-example', name: 'factory-cloud-inbox',
+      machine: 'example-machine', orgId: 'org-example', clientId: 'client-example', clientSecret: 'secret', webhookSecret: 'webhook',
+      githubOwner: owner, githubToken: 'github-token-example' };
+    const asked: string[] = [];
+    const hidden: string[] = [];
+    const opened: string[] = [];
+    const puts: [string[], string | undefined][] = [];
+    const io: SetupIO = {
+      async ask(key, _label, secret) { asked.push(key); if (secret) hidden.push(key); return answers[key]!; },
+      say() {}, async open(url) { opened.push(url); },
+      async command(args, input) {
+        if (args.includes('deploy')) return 'https://factory-cloud-inbox.example.workers.dev';
+        if (args.includes('bulk')) assert.equal(JSON.parse(input!).GITHUB_TOKEN, undefined);
+        if (args.includes('put')) puts.push([args.slice(0, 3), input]);
+        return args.includes('list') ? '[]' : '';
+      },
+    };
+    try {
+      await setup(file, io);
+      const github = opened.filter((url) => url.startsWith('https://github.com/'));
+      if (!owner) {
+        assert.deepEqual([github, puts, asked.includes('githubToken')], [[], [], false]);
+      } else {
+        assert.equal(github.length, 1);
+        const page = new URL(github[0]!);
+        assert.equal(page.origin + page.pathname, 'https://github.com/settings/personal-access-tokens/new');
+        assert.deepEqual(Object.fromEntries(page.searchParams), { name: 'Delegator PR check',
+          description: 'Lets Cloud Inbox read pull requests in private repos for Delegator.',
+          target_name: 'example-org', expires_in: 'none', pull_requests: 'read' });
+        assert.ok(hidden.includes('githubToken'));
+        assert.deepEqual(puts, [[['secret', 'put', 'GITHUB_TOKEN'], 'github-token-example']]);
+      }
+      assert.doesNotMatch(await readFile(file, 'utf8'), /github-token-example/);
+      await setup(file, { ...io, async ask() { throw new Error('rerun must not prompt'); } });
+      // Replacing the token reuses the saved owner.
+      asked.length = 0;
+      answers.githubOwner = 'example-org';
+      answers.githubToken = 'github-token-rotated';
+      await githubToken(file, io);
+      assert.deepEqual(asked, owner ? ['githubToken'] : ['githubOwner', 'githubToken']);
+      assert.deepEqual(puts.at(-1), [['secret', 'put', 'GITHUB_TOKEN'], 'github-token-rotated']);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+}
+
+test('setup refuses a GitHub owner that is not a GitHub name', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'inbox-test-'));
+  const answers: Record<string, string> = { accountId: 'account-example', name: 'factory-cloud-inbox',
+    machine: 'example-machine', orgId: 'org-example', clientId: 'client-example', clientSecret: 'secret', webhookSecret: 'webhook',
+    githubOwner: 'evil.example/x?y' };
+  try {
+    await assert.rejects(setup(join(dir, 'setup.local.json'), {
+      async ask(key) { return answers[key]!; }, say() {}, async open() {},
+      async command(args) { return args.includes('deploy') ? 'https://factory-cloud-inbox.example.workers.dev' : args.includes('list') ? '[]' : ''; },
+    }), /GitHub user or org name/);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test('a viewer secret is printed once, uploaded only as its hash, and leaves other credentials alone', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'inbox-test-'));
   const file = join(dir, 'setup.local.json');
   const answers: Record<string, string> = { accountId: 'account-example', name: 'factory-cloud-inbox',
-    machine: 'example-machine', orgId: 'org-example', clientId: 'client-example', clientSecret: 'secret', webhookSecret: 'webhook' };
+    machine: 'example-machine', orgId: 'org-example', clientId: 'client-example', clientSecret: 'secret', webhookSecret: 'webhook', githubOwner: '' };
   let upload = '';
   const said: string[] = [];
   const io: SetupIO = {

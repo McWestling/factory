@@ -20,6 +20,8 @@ Setup asks for the account ID, Worker name, stable machine key and Linear worksp
 UUID. It deploys to a `workers.dev` HTTPS address, generates owner and machine
 secrets, and opens a prefilled app registration page. Keep Agent session event
 webhooks enabled. Enter the app credentials when asked; setup uploads the config.
+It then opens a prefilled GitHub page for an optional [token](#secrets) that lets the
+PR check read private repos.
 Custom domains require manual configuration.
 
 Back up `.cloud-inbox.local.json` in your secret manager. It and its generated
@@ -45,6 +47,7 @@ Linear tokens; there is no pairing flow.
 Also requiring the deployed Inbox and checkpoint: `npm run inbox -- update`
 deploys code while preserving configuration, tokens and jobs;
 `npm run inbox -- credentials` corrects the original app's credentials;
+`npm run inbox -- github-token` sets or replaces the [GitHub token](#secrets);
 `npm run inbox -- disconnect` blocks token use and verifies revocation at Linear;
 `npm run inbox -- reconnect` starts browser approval again;
 `npm run inbox -- viewer <name>` issues a read-only [viewer secret](#pool-status).
@@ -69,6 +72,24 @@ bundle validation are in [Test locally](../README.md#test-locally); they need no
 Invalid configuration returns 503 without deleting jobs or installation state.
 Only Cloud Inbox stores and refreshes Linear access and refresh tokens.
 
+`GITHUB_TOKEN` (optional) lets the PR check read pull requests in private repos;
+without it only public repos' PRs are seen. Use a fine-grained token, not a classic
+one, owned by the account or org that owns the repos, with **All repositories** and
+**Pull requests: Read-only**, nothing else, so new repos need no change. The token
+has no general **Contents** access, but it can read any source code that PR diffs and
+patches show, across all of that owner's repos, plus repo metadata. One token covers
+one owner. An org that requires approval returns 404 until it approves the token (an
+org owner's token is approved automatically). An org that caps token lifetime makes
+GitHub ask for an expiry; replace the token before it ends.
+
+Setup asks for the owner and opens GitHub's token page with the name, owner, no
+expiry and the permission filled in. GitHub can't preselect repository access, so
+choose **All repositories** there, check that **Pull requests: Read-only** is still
+listed, generate the token and paste it; setup reads it with hidden input and stores
+it only as a Worker secret. An empty owner or token skips it. Replace it, for
+example when it expires, with `npm run inbox -- github-token`, which reuses the saved
+owner. Cloud Inbox sends it only to `api.github.com` and never logs or returns it.
+
 ## Routes
 
 All routes are under `/delegator`. Owner routes require the Basic password;
@@ -87,7 +108,7 @@ accepts a viewer secret.
 | `GET /jobs/<id>/task` | Reads issue and delegation details for the claim. |
 | `POST /jobs/<id>/updates` | Queues a thought, response or error (1–2000 characters). |
 | `POST /jobs/<id>/launched` or `/jobs/<id>/failed` | Records outcome and queues field writes. |
-| `GET /jobs/<id>/watch` | Reads session, issue and verified PR status. |
+| `GET /jobs/<id>/watch` | Reads session, issue and verified PR status; a GitHub 401, 403 or 404 that isn't a rate limit posts "Can't read the PR; check the GitHub token." once. |
 | `POST /jobs/<id>/pull-request` | Links a verified PR from this launch. |
 | `PUT /pool/snapshot` | Stores this machine's latest `status.json` (JSON object, at most 64 KiB). |
 | `GET /pool` | Lists every machine's latest snapshot, last-seen time and online state, plus queue depth. |
