@@ -104,7 +104,7 @@ Slicing turns settled build work into implementation issues, one PR each. Slice 
 
 The user names an idea or a map (by URL or name), and maybe a ticket. Pick the mode from the map's state, top row first, and tell the user which you picked. If the user asks for a mode outright ("slice this map"), use that.
 
-A named ticket whose map is still a stub, such as its [chart ticket](maps.md#chart-ticket), means **Chart a map**, not **Resolve a decision**: the top row wins.
+An open [chart ticket](maps.md#chart-ticket) on a map that's no longer a stub is leftover: close it as done with a comment linking the map, then pick the mode as usual.
 
 | Map state                                                                | Mode                                           |
 | ------------------------------------------------------------------------ | ---------------------------------------------- |
@@ -115,7 +115,7 @@ A named ticket whose map is still a stub, such as its [chart ticket](maps.md#cha
 
 ### Chart a map
 
-When a stub map holds a [chart ticket](maps.md#chart-ticket), [claim](#blocking-and-the-frontier) it before any other work, whether the session started from the ticket or from the map URL. It isn't a decision: don't turn it into a ticket or fog like a capture, and don't count it as the map's first claim, so the map still goes to a charted status. A stub without one charts as below.
+When a stub map holds a [chart ticket](maps.md#chart-ticket), [claim](#blocking-and-the-frontier) it before any other work, whether the session started from the ticket or from the map URL. It's a decision ticket in shape only: don't turn it into a ticket or fog like a capture, and don't count it as the map's first claim, so the map still goes to a charted status. A stub without one charts as below.
 
 1. **Name the destination.** Call the Skill tool for "grilling" (and for "domain-modeling" when the effort brings new domain terms) to settle what the map is heading for. Do this first; it fixes the scope.
 2. **Survey the way.** Grill again, broad rather than deep: cover the whole space to surface the open decisions, the build work and the first steps that can be taken now. If nothing is left open, skip decision tickets: make the map with an empty frontier and go straight to [Slicing](#slicing) in this session.

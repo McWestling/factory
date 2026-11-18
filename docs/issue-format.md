@@ -62,8 +62,6 @@ A delegated issue with any label whose name starts with `wayfinder:` is a decisi
 - It prompts `<prefix>do-refine <issue id>` with the attended line `Attended run: a person will join this session in Orca. Ask every question with your question tool (AskUserQuestion) and wait for the answer.`, and skips Orca setup.
 - Once launched, it replies `Refining in Orca on <machine>; continue there.` and isn't watched for a PR.
 
-A stub map's chart ticket (see `skills/do-refine/maps.md`) is a decision ticket and launches the same way.
-
 Launch recovery after a lost report works as for any other launch.
 
 ## Refusals

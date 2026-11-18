@@ -69,7 +69,7 @@ The body never states the type; the label does. The answer isn't written into th
 
 ### Chart ticket
 
-Every stub map holds one **chart ticket**: a decision ticket whose job is to get the map charted, so delegating it in the tracker starts a `do-refine` session on the map. Triage creates it with the stub.
+Every stub map holds one **chart ticket**: a decision ticket whose job is to get the map charted, so delegating it in the tracker starts a `do-refine` session on the map, which claims and closes it (see [Chart a map](SKILL.md#chart-a-map)). Triage creates it with the stub.
 
 - **Title:** `Chart <map name>`.
 - **Labels:** `wayfinder:grilling` plus the labels **Labels** puts on every product issue.
@@ -83,8 +83,6 @@ Every stub map holds one **chart ticket**: a decision ticket whose job is to get
 
   What is this map's Destination, and which decisions and build work lie on the way to it?
   ```
-
-- **Lifecycle:** `do-refine` claims it before charting starts, whether the session began from the ticket or the map URL. When charting ends, it posts a short **Decision resolved** comment per **Comment shape** linking the charted map, and sets the ticket to the done status. Charting isn't a decision, so the chart ticket never gets a line in **Decisions so far**.
 
 ### Implementation issues
 
