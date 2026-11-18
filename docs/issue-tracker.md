@@ -96,7 +96,7 @@ The factory expects the shared Factory views below and one work view per active 
 | `Factory: Agent Work` | Issues   | Status `In Progress` or `In Review`, and either delegated to an agent or carrying a `Dispatch target` label; grouped by Product, then project |
 | `Factory: All Work`   | Issues   | Status `In Progress` or `In Review`, or `Todo` with an assignee or a delegate                                                                 |
 
-Each active product (an initiative with status `Active`) has one shared work view named `<Product>: Work` on the same team. It includes issues with that Product label and either (`Todo` and not blocked), `In Progress` or `In Review`, including decision tickets. Group it by status, with Project and Labels as row properties.
+Each active product (an initiative with status `Active`) has one shared work view named `Work: <Product>` on the same team. It includes issues with that Product label and either (`Todo` and not blocked), `In Progress` or `In Review`, including decision tickets. Group it by status, with Project and Labels as row properties.
 
 ## Triage
 
