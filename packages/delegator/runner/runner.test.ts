@@ -1279,3 +1279,128 @@ test('a started issue without a PR keeps its watch before 24 hours', async () =>
   assert.deepEqual(f.updates, []);
   assert.ok(JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1']);
 });
+
+const STOPPED = 'The agent stopped without a PR; see its comment if it left one, or check the Orca worktree. Undelegate to release.';
+/** Answers `orca worktree ps` with `agents` on the watch's worktree, counting the calls. */
+function agentsAre(f: Awaited<ReturnType<typeof watching>>, agents: () => unknown[] | string | Error) {
+  const clock = { now: Date.now(), ps: 0 };
+  f.deps.now = () => clock.now;
+  const exec = f.deps.exec;
+  f.deps.exec = async (file, args, timeout) => {
+    if (args[0] !== 'worktree' || args[1] !== 'ps') return exec(file, args, timeout);
+    clock.ps++;
+    const value = agents();
+    if (value instanceof Error) throw value;
+    return { stdout: typeof value === 'string' ? value : JSON.stringify({ ok: true, result: { worktrees: [
+      { branch: 'refs/heads/other/branch', agents: [] },
+      { branch: `refs/heads/${goodTask.branchName}`, agents: value },
+    ] } }) };
+  };
+  return clock;
+}
+const MINUTE = 60_000;
+
+for (const [label, agents] of [['done', [{ state: 'done' }, { state: 'done' }]], ['gone', []]] as const) {
+  test(`an agent ${label} without a PR gets the stop reply once at 10 minutes`, async () => {
+    const f = await watching();
+    const clock = agentsAre(f, () => [...agents]);
+    await watchJobs(config, f.deps);
+    clock.now += 10 * MINUTE - 1;
+    await watchJobs(config, f.deps);
+    assert.deepEqual(f.updates, []);
+    clock.now += 1;
+    await watchJobs(config, f.deps);
+    await watchJobs(config, f.deps);
+    assert.deepEqual(f.updates, [['response', STOPPED]]);
+    assert.deepEqual(JSON.parse(readFileSync(f.deps.watches, 'utf8')), {});
+  });
+}
+
+test('a working agent gets no reply, and working again resets the 10-minute clock', async () => {
+  const f = await watching();
+  let state = 'working';
+  const clock = agentsAre(f, () => [{ state: 'done' }, { state }]);
+  await watchJobs(config, f.deps);
+  clock.now += 20 * MINUTE;
+  await watchJobs(config, f.deps);
+  assert.deepEqual(f.updates, []);
+  state = 'done';
+  await watchJobs(config, f.deps);
+  clock.now += 9 * MINUTE;
+  state = 'blocked';
+  await watchJobs(config, f.deps);
+  state = 'done';
+  await watchJobs(config, f.deps);
+  clock.now += 9 * MINUTE;
+  await watchJobs(config, f.deps);
+  assert.deepEqual(f.updates, []);
+  clock.now += MINUTE;
+  await watchJobs(config, f.deps);
+  assert.deepEqual(f.updates, [['response', STOPPED]]);
+});
+
+for (const [label, output] of [
+  ['no matching worktree', JSON.stringify({ ok: true, result: { worktrees: [{ branch: 'refs/heads/other/branch', agents: [] }] } })],
+  ['a failing orca', new Error('exit 1')],
+  ['an orca error', JSON.stringify({ ok: false, error: { code: 'runtime_unavailable' } })],
+  ['unparseable output', 'not json'],
+] as const) {
+  test(`${label} leaves a stopped watch to the 24 h reply`, async () => {
+    const f = await watching();
+    const at = JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1'].at;
+    const clock = agentsAre(f, () => output);
+    clock.now = at + 24 * 60 * 60_000 - 1;
+    await watchJobs(config, f.deps);
+    await watchJobs(config, f.deps);
+    assert.deepEqual(f.updates, []);
+    clock.now += 1;
+    await watchJobs(config, f.deps);
+    assert.deepEqual(f.updates, [['response', 'No PR after 24 h; check the Orca worktree.']]);
+  });
+}
+
+test('a watch without launch evidence never asks Orca and gets only the 24 h reply', async () => {
+  const f = await watching();
+  const saved = JSON.parse(readFileSync(f.deps.watches, 'utf8'));
+  delete saved['session-1'].launch;
+  writeFileSync(f.deps.watches, JSON.stringify(saved));
+  const clock = agentsAre(f, () => []);
+  clock.now = saved['session-1'].at + 24 * 60 * 60_000 - 1;
+  await watchJobs(config, f.deps);
+  await watchJobs(config, f.deps);
+  assert.deepEqual(f.updates, []);
+  assert.equal(clock.ps, 0);
+  clock.now += 1;
+  await watchJobs(config, f.deps);
+  assert.deepEqual(f.updates, [['response', 'No PR after 24 h; check the Orca worktree.']]);
+});
+
+for (const [label, set, body] of [
+  ['a linked PR', (s: { pullRequests: string[] }) => { s.pullRequests = ['https://github.com/owner/repo/pull/7']; }, 'Opened https://github.com/owner/repo/pull/7.'],
+  ['a canceled issue', (s: { issueState: string }) => { s.issueState = 'canceled'; }, 'Issue canceled; stopped watching.'],
+  ['a completed issue', (s: { issueState: string }) => { s.issueState = 'completed'; }, 'Issue completed; stopped watching. No PR from this launch was recognized.'],
+] as const) {
+  test(`${label} wins over the stop reply`, async () => {
+    const f = await watching();
+    const clock = agentsAre(f, () => []);
+    await watchJobs(config, f.deps);
+    clock.now += 10 * MINUTE;
+    set(f.status as never);
+    await watchJobs(config, f.deps);
+    assert.deepEqual(f.updates, [['response', body]]);
+  });
+}
+
+test('Orca is asked about agents once per pass, however many watches', async () => {
+  const f = await watching();
+  const saved = JSON.parse(readFileSync(f.deps.watches, 'utf8'));
+  saved['session-2'] = { ...saved['session-1'], sessionId: 'session-2' };
+  writeFileSync(f.deps.watches, JSON.stringify(saved));
+  const clock = agentsAre(f, () => []);
+  await watchJobs(config, f.deps);
+  assert.equal(clock.ps, 1);
+  clock.now += 10 * MINUTE;
+  await watchJobs(config, f.deps);
+  assert.equal(clock.ps, 2);
+  assert.deepEqual(f.updates, [['response', STOPPED], ['response', STOPPED]]);
+});

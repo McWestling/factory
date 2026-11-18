@@ -389,6 +389,27 @@ async function hasWorktree(deps: Deps, launch: Launch): Promise<boolean> {
   }
 }
 
+/** When each watch's agent was first seen stopped; a restart forgets it. */
+const stoppedSince = new WeakMap<Deps, Map<string, number>>();
+const STOP_WAIT_MS = 10 * 60_000;
+
+/** Each worktree branch → whether all its Orca agents are done; null when Orca can't say. */
+async function stoppedBranches(deps: Deps): Promise<Map<string, boolean> | null> {
+  try {
+    const ps = JSON.parse((await deps.exec('orca', ['worktree', 'ps', '--limit', '10000', '--json'], 30_000)).stdout);
+    if (ps?.ok !== true || !Array.isArray(ps.result?.worktrees)) return null;
+    const stopped = new Map<string, boolean>();
+    for (const row of ps.result.worktrees) {
+      if (isObject(row) && typeof row.branch === 'string' && Array.isArray(row.agents)) {
+        stopped.set(row.branch, row.agents.every((agent: unknown) => isObject(agent) && agent.state === 'done'));
+      }
+    }
+    return stopped;
+  } catch {
+    return null;
+  }
+}
+
 type Watching = Claim & { at: number; ready: boolean; launch?: LaunchEvidence; identifier?: string };
 type Watches = Record<string, Watching>;
 
@@ -442,6 +463,20 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
   catch { deps.log({ event: 'watch', outcome: 'watches-unreadable' }); writeStatus(deps); return; }
   const api = inbox(config, deps);
   const launches = readLaunches(deps);
+  const since = stoppedSince.get(deps) ?? new Map<string, number>();
+  stoppedSince.set(deps, since);
+  for (const session of since.keys()) if (!watches[session]) since.delete(session);
+  let branches: Promise<Map<string, boolean> | null> | undefined;
+  /** True once the watch's agent has been stopped for STOP_WAIT_MS; unknown leaves the clock alone. */
+  const stoppedLong = async (job: Watching) => {
+    if (!job.launch) return false;
+    const stopped = (await (branches ??= stoppedBranches(deps)))?.get(`refs/heads/${job.launch.branch}`);
+    if (stopped === false) since.delete(job.sessionId);
+    if (stopped !== true) return false;
+    const now = (deps.now ?? Date.now)();
+    if (!since.has(job.sessionId)) since.set(job.sessionId, now);
+    return now - since.get(job.sessionId)! >= STOP_WAIT_MS;
+  };
   for (const job of Object.values(watches)) {
     const log = (outcome: string) => deps.log({ event: 'watch', session: job.sessionId, outcome });
     const change = (edit: (watches: Watches) => void) => changeWatches(deps, (current) => {
@@ -489,6 +524,8 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
         body = 'Issue canceled; stopped watching.';
       } else if (status.issueState === 'completed') {
         body = 'Issue completed; stopped watching. No PR from this launch was recognized.';
+      } else if (await stoppedLong(job)) {
+        body = 'The agent stopped without a PR; see its comment if it left one, or check the Orca worktree. Undelegate to release.';
       } else if ((deps.now ?? Date.now)() - job.at >= 24 * 60 * 60_000) {
         body = 'No PR after 24 h; check the Orca worktree.';
       } else { log('no-pr-yet'); continue; }
