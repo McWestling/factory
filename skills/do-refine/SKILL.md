@@ -161,7 +161,7 @@ Only commands the user pastes get a fenced block.
 
 When the destination is reached and no open issues remain, set the map to its finished status. Open implementation issues keep a map open until their PRs merge; closing those out belongs to whoever merges, not to this skill.
 
-End with a bold verdict line, after **What you can do next**, as plain Markdown. It isn't a code block; don't fence it. When anything is open, follow it with a short bullet list:
+Last, after **What you can do next**, end with a bold verdict line as plain Markdown. It isn't a code block; don't fence it. When anything is open, follow it with a short bullet list:
 
 **Verdict:** Not yet
 
@@ -172,8 +172,9 @@ End with a bold verdict line, after **What you can do next**, as plain Markdown.
 The verdict is **Good to close** only when nothing this session started is unfinished. Any of these makes it **Not yet**:
 
 - A research subagent this session started is still running.
-- A question to the user is unanswered.
+- A ticket this session claimed is neither resolved nor released.
+- A question this session asked the user is unanswered.
 - A tracker change failed or wasn't saved.
 - The session left uncommitted or unpushed work in a checkout, such as a prototype.
 
-Open tickets on the map don't count: they belong to later sessions and are already under **What you can do next**. A refine thread never needs `do-closeout`; this verdict is the answer.
+Open tickets this session didn't claim, and **Waiting on you** items for later sessions, don't count: they belong to later sessions and are already under **What you can do next**. When a **Still open** item finishes later in the same thread, give the verdict again. A refine thread doesn't need `do-closeout` to find out; this verdict is the answer.
