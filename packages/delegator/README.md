@@ -145,7 +145,9 @@ unless the optional [GitHub token](cloud-inbox/README.md#secrets) is set; withou
 private PRs can't be confirmed, and with a token that can't read the PR the Runner
 says so once. Rate limits and outages also prevent confirmation. When `orca worktree ps`
 shows the watch's agent stopped (every agent `done`, or none left) for 10 minutes
-without a PR, the Runner replies that the agent stopped and ends the watch. The
+without a PR, the Runner replies that the agent stopped and ends the watch. It
+counts only the one worktree on this Mac in the repo's one registered checkout, at
+the watch's exact branch; anything else waits for the 24 h reply. The
 stopped time is kept in memory, so a restart starts it over. Otherwise, after 24 hours without
 a confirmed PR, the Runner asks you to check the Orca worktree. Terminal sessions
 are dropped without another response.

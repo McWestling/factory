@@ -393,21 +393,38 @@ async function hasWorktree(deps: Deps, launch: Launch): Promise<boolean> {
 const stoppedSince = new WeakMap<Deps, Map<string, number>>();
 const STOP_WAIT_MS = 10 * 60_000;
 
-/** Each worktree branch → whether all its Orca agents are done; null when Orca can't say. */
-async function stoppedBranches(deps: Deps): Promise<Map<string, boolean> | null> {
+/** A registered Orca repo row that is a checkout of GitHub `owner/name`. */
+const isCheckoutOf = (row: Record<string, unknown>, repo: string) => row.kind === 'git'
+  && isObject(row.gitRemoteIdentity) && typeof row.gitRemoteIdentity.canonicalKey === 'string'
+  && row.gitRemoteIdentity.canonicalKey.toLowerCase() === `github.com/${repo.toLowerCase()}`;
+
+type OrcaState = { repos: unknown[]; worktrees: unknown[] };
+
+/** Orca's registered repos and worktrees, for one watch pass; null when Orca can't say. */
+async function orcaState(deps: Deps): Promise<OrcaState | null> {
   try {
+    const repos = JSON.parse((await deps.exec('orca', ['repo', 'list', '--json'], 30_000)).stdout);
+    if (repos?.ok !== true || !Array.isArray(repos.result?.repos)) return null;
     const ps = JSON.parse((await deps.exec('orca', ['worktree', 'ps', '--limit', '10000', '--json'], 30_000)).stdout);
     if (ps?.ok !== true || !Array.isArray(ps.result?.worktrees)) return null;
-    const stopped = new Map<string, boolean>();
-    for (const row of ps.result.worktrees) {
-      if (isObject(row) && typeof row.branch === 'string' && Array.isArray(row.agents)) {
-        stopped.set(row.branch, row.agents.every((agent: unknown) => isObject(agent) && agent.state === 'done'));
-      }
-    }
-    return stopped;
+    return { repos: repos.result.repos, worktrees: ps.result.worktrees };
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether every agent in the launch's worktree is done, matched like hasWorktree: the one registered
+ * checkout of its GitHub repo, on this machine, at its exact branch. Undefined unless exactly one matches.
+ */
+function agentsDone(orca: OrcaState, launch: LaunchEvidence): boolean | undefined {
+  const repos = orca.repos.filter(isObject).filter((row) => isCheckoutOf(row, launch.repo));
+  const id = repos.length === 1 ? repos[0]!.id : undefined;
+  if (!isText(id)) return undefined;
+  const rows = orca.worktrees.filter(isObject).filter((row) => row.repoId === id && row.hostId === 'local'
+    && row.branch === `refs/heads/${launch.branch}`);
+  const agents = rows.length === 1 ? rows[0]!.agents : undefined;
+  return Array.isArray(agents) ? agents.every((agent: unknown) => isObject(agent) && agent.state === 'done') : undefined;
 }
 
 type Watching = Claim & { at: number; ready: boolean; launch?: LaunchEvidence; identifier?: string };
@@ -466,11 +483,12 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
   const since = stoppedSince.get(deps) ?? new Map<string, number>();
   stoppedSince.set(deps, since);
   for (const session of since.keys()) if (!watches[session]) since.delete(session);
-  let branches: Promise<Map<string, boolean> | null> | undefined;
+  let orca: Promise<OrcaState | null> | undefined;
   /** True once the watch's agent has been stopped for STOP_WAIT_MS; unknown leaves the clock alone. */
   const stoppedLong = async (job: Watching) => {
     if (!job.launch) return false;
-    const stopped = (await (branches ??= stoppedBranches(deps)))?.get(`refs/heads/${job.launch.branch}`);
+    const state = await (orca ??= orcaState(deps));
+    const stopped = state ? agentsDone(state, job.launch) : undefined;
     if (stopped === false) since.delete(job.sessionId);
     if (stopped !== true) return false;
     const now = (deps.now ?? Date.now)();
@@ -721,9 +739,7 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
     paths = [];
     for (const row of listing.result.repos) {
       if (!isObject(row)) throw new Error('invalid repo row');
-      if (row.kind !== 'git' || !isObject(row.gitRemoteIdentity)
-        || typeof row.gitRemoteIdentity.canonicalKey !== 'string'
-        || row.gitRemoteIdentity.canonicalKey.toLowerCase() !== `github.com/${issue.repo.toLowerCase()}`) continue;
+      if (!isCheckoutOf(row, issue.repo)) continue;
       if (!isText(row.path) || !isAbsolute(row.path) || row.path.includes('\0')) throw new Error('invalid repo path');
       paths.push(row.path);
     }

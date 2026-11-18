@@ -38,7 +38,7 @@ const goodTask: Task = {
   statusType: 'unstarted',
 };
 const ok = JSON.stringify({ ok: true, result: {} });
-const registeredRepo = { kind: 'git', path: '/repos/repo', gitRemoteIdentity: { canonicalKey: 'github.com/owner/repo' } };
+const registeredRepo = { id: 'repo-1', kind: 'git', path: '/repos/repo', gitRemoteIdentity: { canonicalKey: 'github.com/owner/repo' } };
 const repoList = (repos: unknown[] = [registeredRepo]) => JSON.stringify({ ok: true, result: { repos } });
 const orcaError = (code: string) => Object.assign(new Error('exit 1'), { stdout: JSON.stringify({ ok: false, error: { code } }) });
 
@@ -1281,20 +1281,25 @@ test('a started issue without a PR keeps its watch before 24 hours', async () =>
 });
 
 const STOPPED = 'The agent stopped without a PR; see its comment if it left one, or check the Orca worktree. Undelegate to release.';
+const psOutput = (worktrees: unknown[]) => JSON.stringify({ ok: true, result: { worktrees } });
+const row = (repoId: string, agents: unknown[], hostId = 'local', branch = goodTask.branchName) =>
+  ({ repoId, hostId, branch: `refs/heads/${branch}`, agents });
+const otherRepo = { id: 'repo-2', kind: 'git', path: '/repos/other', gitRemoteIdentity: { canonicalKey: 'github.com/other/repo' } };
 /** Answers `orca worktree ps` with `agents` on the watch's worktree, counting the calls. */
-function agentsAre(f: Awaited<ReturnType<typeof watching>>, agents: () => unknown[] | string | Error) {
-  const clock = { now: Date.now(), ps: 0 };
+function agentsAre(f: Awaited<ReturnType<typeof watching>>, agents: () => unknown[] | string | Error, repos: unknown[] = [registeredRepo, otherRepo]) {
+  const clock = { now: Date.now(), ps: 0, repos: 0 };
   f.deps.now = () => clock.now;
   const exec = f.deps.exec;
   f.deps.exec = async (file, args, timeout) => {
+    if (args[0] === 'repo' && args[1] === 'list') { clock.repos++; return { stdout: repoList(repos) }; }
     if (args[0] !== 'worktree' || args[1] !== 'ps') return exec(file, args, timeout);
     clock.ps++;
     const value = agents();
     if (value instanceof Error) throw value;
-    return { stdout: typeof value === 'string' ? value : JSON.stringify({ ok: true, result: { worktrees: [
-      { branch: 'refs/heads/other/branch', agents: [] },
-      { branch: `refs/heads/${goodTask.branchName}`, agents: value },
-    ] } }) };
+    return { stdout: typeof value === 'string' ? value : psOutput([
+      row('repo-1', [], 'local', 'other/branch'),
+      row('repo-1', value),
+    ]) };
   };
   return clock;
 }
@@ -1349,8 +1354,10 @@ for (const [label, output] of [
     const f = await watching();
     const at = JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1'].at;
     const clock = agentsAre(f, () => output);
-    clock.now = at + 24 * 60 * 60_000 - 1;
+    // Seen 10 minutes before the 24 h mark, so a wrong match would post the stop reply first.
+    clock.now = at + 24 * 60 * 60_000 - 10 * MINUTE - 1;
     await watchJobs(config, f.deps);
+    clock.now += 10 * MINUTE;
     await watchJobs(config, f.deps);
     assert.deepEqual(f.updates, []);
     clock.now += 1;
@@ -1398,9 +1405,47 @@ test('Orca is asked about agents once per pass, however many watches', async () 
   writeFileSync(f.deps.watches, JSON.stringify(saved));
   const clock = agentsAre(f, () => []);
   await watchJobs(config, f.deps);
-  assert.equal(clock.ps, 1);
+  assert.deepEqual([clock.ps, clock.repos], [1, 1]);
   clock.now += 10 * MINUTE;
   await watchJobs(config, f.deps);
-  assert.equal(clock.ps, 2);
+  assert.deepEqual([clock.ps, clock.repos], [2, 2]);
   assert.deepEqual(f.updates, [['response', STOPPED], ['response', STOPPED]]);
 });
+
+for (const [watched, other] of [['done', 'working'], ['working', 'done']]) {
+  for (const reversed of [false, true]) {
+    test(`a ${watched} agent is judged by its own repo when another repo's ${other} agent shares the branch${reversed ? ', listed first' : ''}`, async () => {
+      const f = await watching();
+      const rows = [row('repo-1', [{ state: watched }]), row('repo-2', [{ state: other }]),
+        row('repo-1', [{ state: other }], 'ssh-elsewhere')];
+      const clock = agentsAre(f, () => psOutput(reversed ? [...rows].reverse() : rows));
+      await watchJobs(config, f.deps);
+      clock.now += 10 * MINUTE;
+      await watchJobs(config, f.deps);
+      assert.deepEqual(f.updates, watched === 'done' ? [['response', STOPPED]] : []);
+    });
+  }
+}
+
+for (const [label, repos, rows] of [
+  ['two registered checkouts of the watched repo', [registeredRepo, { ...otherRepo, gitRemoteIdentity: registeredRepo.gitRemoteIdentity }], [row('repo-1', [])]],
+  ['no registered checkout of the watched repo', [otherRepo], [row('repo-1', [])]],
+  ['two local rows for the watched repo and branch', [registeredRepo], [row('repo-1', []), row('repo-1', [{ state: 'working' }])]],
+  ['only another host has the branch', [registeredRepo], [row('repo-1', [], 'ssh-elsewhere')]],
+  ['only another repo has the branch', [registeredRepo, otherRepo], [row('repo-2', [])]],
+] as const) {
+  test(`${label} leaves the watch to the 24 h reply`, async () => {
+    const f = await watching();
+    const at = JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1'].at;
+    const clock = agentsAre(f, () => psOutput([...rows]), [...repos]);
+    // Seen 10 minutes before the 24 h mark, so a wrong match would post the stop reply first.
+    clock.now = at + 24 * 60 * 60_000 - 10 * MINUTE - 1;
+    await watchJobs(config, f.deps);
+    clock.now += 10 * MINUTE;
+    await watchJobs(config, f.deps);
+    assert.deepEqual(f.updates, []);
+    clock.now += 1;
+    await watchJobs(config, f.deps);
+    assert.deepEqual(f.updates, [['response', 'No PR after 24 h; check the Orca worktree.']]);
+  });
+}
