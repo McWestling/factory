@@ -77,6 +77,13 @@ pin. Pins match without case or punctuation: exact match first, then a unique
 substring. Unknown or ambiguous pins fall back to the level's model with a thought
 in Linear. See the [issue format](../../docs/issue-format.md).
 
+Model routing can be changed from the menu bar: its **Models** section has a
+submenu for each level listing the configured models. Picking one rewrites only
+that level in `config.json`. Closeouts use the standard level and Refinement the
+deep one. The Runner rereads the config before each claim, so a change applies to
+the next launch without a restart. If a reread finds the config invalid, it keeps
+the last good one and logs `config` / `invalid`.
+
 From `packages/delegator`, run the configured Runner in the foreground:
 
 ```sh

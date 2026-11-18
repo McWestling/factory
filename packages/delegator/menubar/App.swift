@@ -13,6 +13,7 @@ private final class RunnerModel: ObservableObject {
     @Published var runnerLoaded = false
     @Published var loginEnabled = true
     @Published var actionError: String?
+    @Published var routing: ModelRouting?
 
     private var stateDirectory: URL {
         let configured = ProcessInfo.processInfo.environment["XDG_STATE_HOME"] ?? ""
@@ -53,7 +54,8 @@ private final class RunnerModel: ObservableObject {
             let loaded = AppCommands.launchctl("print", "gui/\(getuid())/\(runnerLabel)")
             let status = runnerState(json: try? Data(contentsOf: path), launchAgentLoaded: loaded, now: .now)
             let loginEnabled = AppCommands.loginEnabled(menuBarLabel)
-            await self?.finishRefresh(loaded: loaded, status: status, loginEnabled: loginEnabled)
+            let routing = (try? Data(contentsOf: configFile)).flatMap(modelRouting)
+            await self?.finishRefresh(loaded: loaded, status: status, loginEnabled: loginEnabled, routing: routing)
         }
     }
 
@@ -80,6 +82,29 @@ private final class RunnerModel: ObservableObject {
         if value && !runnerLoaded { run("--start-runner") } else { refresh() }
     }
 
+    /// Rewrites only `levels.<level>`, atomically and still mode 600. The Runner rereads it before its next claim.
+    func pick(_ model: String, for level: String) {
+        let temporary = configFile.appendingPathExtension("tmp")
+        do {
+            guard let edited = settingLevel(level, to: model, in: try Data(contentsOf: configFile)) else {
+                actionError = "Couldn't change the \(level) model: the config isn't valid or has no such model."
+                return
+            }
+            try? FileManager.default.removeItem(at: temporary)
+            let descriptor = Darwin.open(temporary.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+            guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            try handle.write(contentsOf: edited)
+            try handle.close()
+            guard Darwin.rename(temporary.path, configFile.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            actionError = nil
+            routing = modelRouting(json: edited)
+        } catch {
+            try? FileManager.default.removeItem(at: temporary)
+            actionError = "Couldn't change the \(level) model: \(error.localizedDescription)"
+        }
+    }
+
     func openOrca() {
         guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.stablyai.orca") else {
             actionError = "Orca isn't installed."
@@ -94,8 +119,9 @@ private final class RunnerModel: ObservableObject {
         NSWorkspace.shared.open(path)
     }
 
-    private func finishRefresh(loaded: Bool, status: RunnerStatus, loginEnabled: Bool) {
+    private func finishRefresh(loaded: Bool, status: RunnerStatus, loginEnabled: Bool, routing: ModelRouting?) {
         refreshing = false
+        if self.routing != routing { self.routing = routing }
         if runnerLoaded != loaded { runnerLoaded = loaded }
         if self.status != status { self.status = status }
         if self.loginEnabled != loginEnabled { self.loginEnabled = loginEnabled }
@@ -250,12 +276,33 @@ struct FactoryRunnerMenuBarApp: App {
     }
 }
 
+private let levelMenus: [(level: String, title: String, note: String?)] = [
+    ("light", "Light", nil),
+    ("standard", "Standard", "Closeouts use this level too"),
+    ("deep", "Deep", "Refinement uses this level too"),
+]
+
 private struct RunnerMenu: View {
     @ObservedObject var runner: RunnerModel
     @ObservedObject var pool: PoolModel
 
     var body: some View {
         if runner.runnerInstalled { local }
+        if runner.runnerInstalled, let routing = runner.routing {
+            Section("Models") {
+                ForEach(levelMenus, id: \.level) { item in
+                    Menu(item.title) {
+                        if let note = item.note { Text(note) }
+                        ForEach(routing.models, id: \.self) { model in
+                            Toggle(model, isOn: Binding(
+                                get: { routing.levels[item.level] == model },
+                                set: { if $0 { runner.pick(model, for: item.level) } }
+                            ))
+                        }
+                    }
+                }
+            }
+        }
         let display = pool.display
         if !display.isEmpty {
             Section("Pool") {
