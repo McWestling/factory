@@ -130,18 +130,25 @@ neither, so it never matches. Each launch queues one closeout at most, so replay
 
 The outbox then creates a new agent session on the issue, beside the launch's thread,
 and retries until Linear accepts it; only then is the job queued, with the session id
-as its id and pinned to the launch's machine. A claim gets a closeout job only when it
-asks with `?kinds=closeout`, so older Runners never see one. A new delegation of the
-issue replaces a waiting closeout, and one that arrives first drops it. A merge whose
+as its id and pinned to the launch's machine. The job records the launch it closes out
+and the PR's URL. A claim gets a closeout job only when it asks with `?kinds=closeout`,
+so older Runners never see one. A new delegation of the issue replaces a waiting
+closeout, and one that arrives first drops it. Finishing a closeout job writes nothing
+back to the issue, and one no machine claims within 30 days is ended. A merge whose
 webhook never arrives, or that comes more than 30 days after its launch, gets no
 closeout job; run `do-closeout` by hand.
+
+Linear also sends a `created` webhook for the new session, possibly before the create
+returns, or when its response is lost. A `created` session with no human creator, on an
+issue with a closeout, is logged `own-session` and never queued as a delegation; if its
+closeout is still waiting on the create, the session becomes the closeout job.
 
 ### Pool status
 
 Each Runner poll sends its `status.json` to `PUT /pool/snapshot`, plus once when a
 job's issue is read. Cloud Inbox keeps only each machine's latest snapshot. A machine
 is offline after 5 minutes unseen, so a long job can show offline until it ends.
-`queueDepth` counts issues waiting to be claimed, expired leases included.
+`queueDepth` counts issues waiting to be claimed, expired leases included. Closeout jobs wait for their own machine, so they don't count.
 
 A Runner sends one report at a time and keeps only the newest waiting. Ordering is
 best effort within one process: a report the Runner timed out on, or a second Runner

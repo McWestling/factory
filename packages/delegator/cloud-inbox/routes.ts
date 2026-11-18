@@ -40,12 +40,12 @@ type Payload = {
   organizationId?: unknown;
   appUserId?: unknown;
   webhookTimestamp?: unknown;
-  agentSession?: { id?: unknown; issueId?: unknown; issue?: { id?: unknown } };
+  agentSession?: { id?: unknown; issueId?: unknown; issue?: { id?: unknown }; creatorId?: unknown };
   agentActivity?: { id?: unknown; signal?: unknown };
   data?: { issueId?: unknown; metadata?: PullRequest };
   updatedFrom?: { metadata?: PullRequest };
 };
-type PullRequest = { status?: unknown; repoLogin?: unknown; repoName?: unknown; branch?: unknown };
+type PullRequest = { status?: unknown; url?: unknown; repoLogin?: unknown; repoName?: unknown; branch?: unknown };
 
 const filled = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
 
@@ -54,8 +54,8 @@ function mergeEvent({ action, data, updatedFrom }: Payload): MergeEvent | null {
   const pr = data?.metadata;
   if (action !== 'update' || pr?.status !== 'merged' || !updatedFrom?.metadata || updatedFrom.metadata.status === 'merged') return null;
   const { issueId } = data!;
-  if (!filled(issueId) || !filled(pr.repoLogin) || !filled(pr.repoName) || !filled(pr.branch)) return null;
-  return { action: 'merged', issueId, repo: `${pr.repoLogin}/${pr.repoName}`, branch: pr.branch };
+  if (!filled(issueId) || !filled(pr.url) || !filled(pr.repoLogin) || !filled(pr.repoName) || !filled(pr.branch)) return null;
+  return { action: 'merged', issueId, url: pr.url, repo: `${pr.repoLogin}/${pr.repoName}`, branch: pr.branch };
 }
 
 async function signatureMatches(secret: string, raw: ArrayBuffer, signature: string): Promise<boolean> {
@@ -135,6 +135,7 @@ export async function handleWebhook(request: Request, config: Config, inbox: Inb
     issueId: typeof issueId === 'string' && issueId ? issueId : undefined,
     activityId: typeof activityId === 'string' ? activityId : undefined,
     stop,
+    creatorId: filled(agentSession?.creatorId) ? agentSession.creatorId : undefined,
   };
 
   const result = await inbox.webhook(event);

@@ -312,6 +312,8 @@ test('a merged PR from a launch opens a new session on the issue and queues one 
   const create = h.linear.requests.find((r) => r.query.includes('agentSessionCreateOnIssue'));
   assert.deepEqual(create?.variables, { issue: 'issue-1' });
   assert.deepEqual(closeouts(h), [{ id: 'session-created-1', issue_id: 'issue-1', state: 'queued', machine: 'example-machine' }]);
+  assert.deepEqual({ ...h.sql.exec("SELECT closes, pull_request FROM jobs WHERE kind = 'closeout'").toArray()[0] },
+    { closes: 'session-1', pull_request: 'https://github.com/owner/repo/pull/1' });
   assert.deepEqual(h.rows().outbox, []);
   // The launch's own job and thread are untouched.
   assert.deepEqual(h.rows().jobs.map((j) => [j.id, j.state]), [['session-1', 'launched'], ['session-created-1', 'queued']]);
@@ -355,6 +357,7 @@ for (const [label, edit] of [
   ['a merge without an issue', (p) => { delete p.data.issueId; }],
   ['a merge without a branch', (p) => { delete p.data.metadata.branch; }],
   ['a merge without a repo', (p) => { delete p.data.metadata.repoName; }],
+  ['a merge without a URL', (p) => { delete p.data.metadata.url; }],
 ] as [string, (p: Record<string, any>) => void][]) {
   test(`${label} Attachment event is answered 200, logged as ignored and queues nothing`, async (t) => {
     const h = await launchedJob();
@@ -444,12 +447,114 @@ test('a delegation arriving while the session is created ends the new session an
     [['session-created-1', 'response', MESSAGES.replaced]]);
 });
 
-test("Linear's created webhook for the closeout's own session queues no delegation", async () => {
+/** Linear's `created` webhook for a session Cloud Inbox made: no human creator. */
+const ownCreated = (h: Harness, sessionId: string, creatorId: string | null = null) => {
+  const payload = h.createdPayload(sessionId);
+  payload.agentSession.creatorId = creatorId;
+  return payload;
+};
+/** The launch's Runner still watches it: nothing superseded it. */
+const stillWatched = async (h: Harness) =>
+  assert.deepEqual((await (await h.runner('GET', '/jobs/watching')).json() as { sessionId: string }[]).map((w) => w.sessionId), ['session-1']);
+
+test("Linear's created webhook for the closeout's own session queues no delegation", async (t) => {
   const h = await launchedJob();
   await h.deliver(mergedPayload());
-  await h.deliver(h.createdPayload('session-created-1'));
+  const lines = webhookLog(t);
+  await h.deliver(ownCreated(h, 'session-created-1'));
+  await h.deliver(ownCreated(h, 'session-created-1', 'app-user-example'));
+  assert.deepEqual(lines().map((line) => line.outcome), ['own-session', 'own-session']);
   assert.deepEqual(h.rows().jobs.map((j) => [j.id, j.state]), [['session-1', 'launched'], ['session-created-1', 'queued']]);
+  assert.equal(h.posts.length, 0);
+  await stillWatched(h);
+});
+
+test("Linear's created webhook arriving before the session create returns adopts the session as the closeout", async (t) => {
+  const h = await launchedJob();
+  await h.send(mergedPayload());
+  const { waiting, release } = h.linear.hold();
+  const delivering = h.flush();
+  await waiting;
+  const lines = webhookLog(t);
+  await h.send(ownCreated(h, 'session-created-1'));
+  assert.deepEqual(lines().map((line) => line.outcome), ['own-session']);
+  assert.deepEqual(closeouts(h), [{ id: 'session-created-1', issue_id: 'issue-1', state: 'queued', machine: 'example-machine' }]);
+  release();
+  await delivering;
+  await h.flush();
+  assert.equal(sessionsCreated(h), 1);
   assert.equal(closeouts(h).length, 1);
+  assert.deepEqual(h.rows().outbox, []);
+  assert.equal(h.posts.length, 0);
+  await stillWatched(h);
+});
+
+test('a delegation after an adopted session, before the create returns, ends that session once', async () => {
+  const h = await launchedJob();
+  await h.send(mergedPayload());
+  const { waiting, release } = h.linear.hold();
+  const delivering = h.flush();
+  await waiting;
+  await h.send(ownCreated(h, 'session-created-1'));
+  await h.send(h.createdPayload('session-2'));
+  release();
+  await delivering;
+  await h.flush();
+  assert.deepEqual(h.rows().jobs.map((j) => [j.id, j.state]), [['session-1', 'launched'], ['session-2', 'queued']]);
+  assert.deepEqual(sent(h.posts).filter(([session]) => session === 'session-created-1'),
+    [['session-created-1', 'response', MESSAGES.replaced]]);
+});
+
+test("a session create whose response is lost is adopted from Linear's webhook, not created again", async () => {
+  const h = await launchedJob();
+  await h.send(mergedPayload());
+  const answer = h.linear.answer;
+  h.linear.answer = (query, variables) => {
+    const data = answer(query, variables);
+    if (query.includes('agentSessionCreateOnIssue')) throw new Error('response lost');
+    return data;
+  };
+  await h.flush();
+  h.linear.answer = answer;
+  assert.deepEqual(closeouts(h), []);
+  await h.deliver(ownCreated(h, 'session-created-1'));
+  assert.equal(closeouts(h).length, 1);
+  assert.deepEqual(h.rows().outbox, []);
+  h.clock.now += 60_000;
+  await h.flush();
+  assert.equal(sessionsCreated(h), 1);
+  await stillWatched(h);
+});
+
+test('a person delegating the issue after its merge is a delegation, and replaces the waiting closeout', async (t) => {
+  const h = await launchedJob();
+  await h.deliver(mergedPayload());
+  const lines = webhookLog(t);
+  await h.created('session-2');
+  assert.deepEqual(lines().map((line) => line.outcome), ['queued']);
+  assert.deepEqual(h.rows().jobs.map((j) => [j.id, j.state]), [['session-1', 'launched'], ['session-2', 'queued']]);
+});
+
+test('finishing a closeout job writes nothing back to the issue', async () => {
+  const h = await launchedJob();
+  await h.deliver(mergedPayload());
+  for (const outcome of ['launched', 'failed']) {
+    const res = await h.runner('POST', '/jobs/claim?kinds=closeout');
+    const { sessionId, claimId } = await res.json() as { sessionId: string; claimId: string };
+    assert.equal((await h.runner('POST', `/jobs/${sessionId}/${outcome}?claimId=${claimId}`)).status, 204);
+    assert.deepEqual(h.rows().outbox, [], outcome);
+    h.sql.exec("UPDATE jobs SET state = 'queued', claim_id = NULL WHERE kind = 'closeout'");
+  }
+});
+
+test('a closeout no machine claims is ended after 30 days and never counts toward the queue depth', async () => {
+  const h = await launchedJob();
+  await h.deliver(mergedPayload());
+  assert.equal((await (await h.runner('GET', '/pool')).json() as { queueDepth: number }).queueDepth, 0);
+  h.clock.now += 30 * 86_400_000;
+  await h.flush();
+  assert.deepEqual(closeouts(h), []);
+  assert.deepEqual(sent(h.posts), [['session-created-1', 'response', MESSAGES.expired]]);
 });
 
 test('a duplicate created webhook is deduped', async () => {
