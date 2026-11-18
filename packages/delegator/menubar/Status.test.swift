@@ -56,5 +56,21 @@ enum StatusCheck {
         assert(poolLines(json: Data(#"{"queueDepth":1,"machines":[]}"#.utf8)) == ["1 job waiting"])
         assert(poolLines(json: Data(#"{"queueDepth":0,"machines":[{"name":"odd","online":true,"lastSeenAt":null,"snapshot":{}}]}"#.utf8)) == ["odd · idle", "No jobs waiting"])
         assert(poolLines(json: Data("<html>".utf8)) == nil)
+
+        // config.json's model routing, read for the Models section and edited one level at a time.
+        let config = #"{"inboxUrl":"https://inbox.example/delegator","bearerSecret":"s","paused":true,"allowedCreatorIds":["u1"],"models":{"Opus":{"agent":"claude","model":"opus"},"Luna":{"agent":"codex","model":"luna","effort":"high"}},"levels":{"light":"Luna","standard":"Opus","deep":"Opus"},"refineRepo":"owner/repo"}"#
+        let routing = modelRouting(json: Data(config.utf8))!
+        assert(routing.models == ["Luna", "Opus"])
+        assert(routing.levels == ["light": "Luna", "standard": "Opus", "deep": "Opus"])
+        assert(modelRouting(json: Data("{}".utf8)) == nil)
+        let edited = settingLevel("deep", to: "Luna", in: Data(config.utf8))!
+        let before = try! JSONSerialization.jsonObject(with: Data(config.utf8)) as! NSDictionary
+        let after = try! JSONSerialization.jsonObject(with: edited) as! NSDictionary
+        let expected = before.mutableCopy() as! NSMutableDictionary
+        expected["levels"] = ["light": "Luna", "standard": "Opus", "deep": "Luna"]
+        assert(after == expected)
+        assert(modelRouting(json: edited)!.levels["deep"] == "Luna")
+        assert(settingLevel("deep", to: "Unknown", in: Data(config.utf8)) == nil)
+        assert(settingLevel("deep", to: "Luna", in: Data("[]".utf8)) == nil)
     }
 }

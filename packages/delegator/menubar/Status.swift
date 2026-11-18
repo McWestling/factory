@@ -116,3 +116,26 @@ func poolLines(json: Data) -> [String]? {
     let waiting = pool.queueDepth == 0 ? "No jobs waiting" : "\(pool.queueDepth) job\(pool.queueDepth == 1 ? "" : "s") waiting"
     return machines + [waiting]
 }
+
+/// The Models section's choices: `config.json`'s model names and the one each level uses. Nil when the config has neither.
+struct ModelRouting: Equatable {
+    let models: [String]
+    let levels: [String: String]
+}
+
+func modelRouting(json: Data) -> ModelRouting? {
+    guard let config = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
+          let models = config["models"] as? [String: Any], !models.isEmpty,
+          let levels = config["levels"] as? [String: String] else { return nil }
+    return ModelRouting(models: models.keys.sorted(), levels: levels)
+}
+
+/// `config.json` with only `levels.<level>` set to a configured model; every other key is kept. Nil when that can't be done.
+func settingLevel(_ level: String, to model: String, in json: Data) -> Data? {
+    guard var config = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
+          let models = config["models"] as? [String: Any], models[model] != nil,
+          var levels = config["levels"] as? [String: Any] else { return nil }
+    levels[level] = model
+    config["levels"] = levels
+    return try? JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+}

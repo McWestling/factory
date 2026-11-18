@@ -216,6 +216,26 @@ export function loadConfig(path = CONFIG_PATH): RunnerConfig {
   };
 }
 
+const configProblems = new WeakMap<Deps, string>();
+
+/** Rereads the config before a claim, keeping the last good one when it's unusable. Logs once per change, never the value. */
+export function rereadConfig(last: RunnerConfig, deps: Deps, path = CONFIG_PATH): RunnerConfig {
+  try {
+    const config = loadConfig(path);
+    configProblems.delete(deps);
+    return config;
+  } catch (error) {
+    let changed = '';
+    try { changed = String(statSync(path).mtimeMs); } catch {}
+    const problem = `${(error as Error).message} ${changed}`;
+    if (configProblems.get(deps) !== problem) {
+      configProblems.set(deps, problem);
+      deps.log({ event: 'config', outcome: 'invalid' });
+    }
+    return last;
+  }
+}
+
 /** The Runner API from Cloud Inbox. Every operation on a job carries its claim id. */
 function inbox(config: RunnerConfig, deps: Deps) {
   const call = async (method: string, path: string, body?: unknown) => {
@@ -845,6 +865,7 @@ if (import.meta.main) {
   void check();
   setInterval(check, 45_000);
   for (;;) {
+    config = rereadConfig(config, deps);
     // Ids and outcomes only: the error itself may carry the URL or a body.
     await poll(config, deps).catch((error: Error) => deps.log({ event: 'claim', outcome: error.message.startsWith('cloud-inbox-') ? error.message : 'unreachable' }));
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));

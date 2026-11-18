@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import type { AppAuth } from '../cloud-inbox/auth.ts';
 import { JobQueue } from '../cloud-inbox/queue.ts';
 import { handleRunner } from '../cloud-inbox/routes.ts';
-import { acknowledgeDrain, checkWatches, readWatches, startStatusHeartbeat, handleJob, launchArgs, loadConfig, NOT_ALLOWED, poll, resumeWatches, watchJobs, type Deps, type RunnerConfig, type Task } from './runner.ts';
+import { acknowledgeDrain, checkWatches, readWatches, startStatusHeartbeat, handleJob, launchArgs, loadConfig, NOT_ALLOWED, poll, rereadConfig, resumeWatches, watchJobs, type Deps, type RunnerConfig, type Task } from './runner.ts';
 
 const example = new URL('../config.example.json', import.meta.url);
 const config: RunnerConfig = {
@@ -816,6 +816,34 @@ for (const [label, value] of badConfigs) {
     assert.throws(() => loadConfig(writeConfig(dir, value)));
   });
 }
+
+test("a config edit changes the next launch's level model without a restart", async () => {
+  const path = writeConfig(mkdtempSync(join(tmpdir(), 'runner-')), config);
+  const f = fakes({ ...goodTask, description: '[repo=owner/repo] [level=standard]' });
+  writeConfig(dirname(dirname(dirname(path))), { ...config, levels: { ...config.levels, standard: 'GPT-6 Luna' } });
+  assert.equal(await handleJob(rereadConfig(config, f.deps, path), f.deps, claim), 'launched');
+  assert.ok(f.argv[2]!.includes('gpt-6-luna'));
+});
+
+test('an invalid config on reread keeps the last good one and logs once per change, without its value', () => {
+  const path = writeConfig(mkdtempSync(join(tmpdir(), 'runner-')), config);
+  const logs: Record<string, string>[] = [];
+  const f = fakes();
+  f.deps.log = (fields) => logs.push(fields);
+  const home = dirname(dirname(dirname(path)));
+  writeConfig(home, { ...config, bearerSecret: '' });
+  assert.equal(rereadConfig(config, f.deps, path), config);
+  assert.equal(rereadConfig(config, f.deps, path), config);
+  assert.deepEqual(logs, [{ event: 'config', outcome: 'invalid' }]);
+  writeConfig(home, { ...config, levels: { ...config.levels, light: 'nope' } });
+  rereadConfig(config, f.deps, path);
+  assert.equal(logs.length, 2);
+  writeConfig(home, config);
+  assert.deepEqual(rereadConfig(config, f.deps, path), config);
+  writeConfig(home, { ...config, bearerSecret: '' });
+  rereadConfig(config, f.deps, path);
+  assert.equal(logs.length, 3);
+});
 
 const runner = new URL('./runner.ts', import.meta.url).pathname;
 const exits: [string, (home: string) => void][] = [
