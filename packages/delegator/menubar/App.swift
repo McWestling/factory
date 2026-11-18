@@ -95,6 +95,7 @@ private final class RunnerModel: ObservableObject {
             guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
             let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
             try handle.write(contentsOf: edited)
+            try handle.synchronize()
             try handle.close()
             guard Darwin.rename(temporary.path, configFile.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
             actionError = nil
