@@ -390,7 +390,7 @@ export class JobQueue {
   async task(machine: string, id: string, claimId: string): Promise<Task | Refusal> {
     const issueId = this.#held(machine, id, claimId);
     if (!issueId) return 'not-claimed';
-    // A closeout's launch is the job it closes; that row is pruned 30 days after the launch.
+    // A closeout's launch is the job it closes, kept as long as the closeout.
     const [job] = this.#sql.exec(`SELECT c.kind, l.launch_repo, l.launch_branch FROM jobs c
       LEFT JOIN jobs l ON l.id = c.closes WHERE c.id = ?`, id).toArray();
     const closeout = job?.kind === 'closeout';
@@ -588,7 +588,9 @@ export class JobQueue {
     // Remove stopped claims before pruning the markers that prevent requeueing.
     this.#sql.exec(`DELETE FROM jobs WHERE state = 'claimed' AND lease_until <= ?
       AND id IN (SELECT session_id FROM ended)`, now);
-    this.#sql.exec("DELETE FROM jobs WHERE state IN ('launched', 'failed') AND updated_at <= ?", now - HISTORY_MS);
+    // A launch stays while a closeout of it is in the window, so its task can still name the launch.
+    this.#sql.exec(`DELETE FROM jobs WHERE state IN ('launched', 'failed') AND updated_at <= ?
+      AND id NOT IN (SELECT closes FROM jobs WHERE closes IS NOT NULL AND updated_at > ?)`, now - HISTORY_MS, now - HISTORY_MS);
     const unclaimed = this.#sql.exec("DELETE FROM jobs WHERE kind = 'closeout' AND state = 'queued' AND updated_at <= ? RETURNING id",
       now - HISTORY_MS).toArray();
     for (const { id } of unclaimed) this.#end(String(id), MESSAGES.expired, now);
@@ -596,8 +598,8 @@ export class JobQueue {
     this.#sql.exec('DELETE FROM seen_activities WHERE at <= ?', now - HISTORY_MS);
     this.#sql.exec('DELETE FROM ended WHERE at <= ?', now - HISTORY_MS);
     this.#sql.exec('DELETE FROM unreadable WHERE at <= ?', now - HISTORY_MS);
-    // A launch row is pruned before its closeout marker, which is never older.
-    this.#sql.exec('DELETE FROM closeouts WHERE at <= ?', now - HISTORY_MS);
+    // Kept while its launch row is, so a launch never queues a second closeout.
+    this.#sql.exec('DELETE FROM closeouts WHERE at <= ? AND launch_id NOT IN (SELECT id FROM jobs)', now - HISTORY_MS);
     // Kept while a write-back of the session is still pending, however old.
     this.#sql.exec('DELETE FROM superseded WHERE at <= ? AND session_id NOT IN (SELECT session_id FROM outbox)',
       now - HISTORY_MS);

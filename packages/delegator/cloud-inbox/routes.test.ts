@@ -1319,6 +1319,23 @@ test("a closeout task with the launch's merged PR attached returns the launch's 
   assert.deepEqual(await h.task(), { kind: 'closeout', launch: LAUNCH, skip: undefined });
 });
 
+test("a closeout claimed more than 30 days after its launch still gets the launch's repo and branch", async () => {
+  const h = await launchedJob();
+  h.clock.now += 29 * 86_400_000;
+  await h.deliver(mergedPayload());
+  h.clock.now += 2 * 86_400_000;
+  h.linear.world.issues['issue-1']!.attachments = ['https://github.com/owner/repo/pull/1'];
+  h.linear.github = () => Response.json(launchPr());
+  const { sessionId, claimId } = await (await h.runner('POST', '/jobs/claim?kinds=closeout')).json() as Record<string, string>;
+  const { kind, launch, skip } = await (await call(h, 'GET', 'task', claimId, undefined, sessionId)).json() as Record<string, unknown>;
+  assert.deepEqual({ kind, launch, skip }, { kind: 'closeout', launch: LAUNCH, skip: undefined });
+  // Once the closeout is gone too, so is its launch.
+  assert.equal((await call(h, 'POST', 'launched', claimId, undefined, sessionId)).status, 204);
+  h.clock.now += 30 * 86_400_000;
+  await h.flush();
+  assert.deepEqual(h.rows().jobs, []);
+});
+
 test('a closeout task for a canceled issue skips as canceled without asking GitHub', async () => {
   const h = await claimedCloseout();
   h.linear.world.issues['issue-1']!.stateId = 'state-canceled';
