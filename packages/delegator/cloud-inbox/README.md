@@ -105,7 +105,7 @@ accepts a viewer secret.
 | `POST /webhook` | Receives signed Linear Agent session events and PR `Attachment` events. |
 | `POST /jobs/claim` | Claims oldest eligible delegation for 10 minutes; `?kinds=closeout` claims a [closeout job](#closeout-jobs) instead, `?kinds=delegation,closeout` either; 204 when empty. |
 | `GET /jobs/watching` | Recovers this machine's launched jobs. |
-| `GET /jobs/<id>/task` | Reads issue and delegation details for the claim. |
+| `GET /jobs/<id>/task` | Reads issue and delegation details for the claim; for a [closeout job](#closeout-jobs), also what to close out. |
 | `POST /jobs/<id>/updates` | Queues a thought, response or error (1–2000 characters). |
 | `POST /jobs/<id>/launched` or `/jobs/<id>/failed` | Records outcome and queues field writes. |
 | `GET /jobs/<id>/watch` | Reads session, issue and verified PR status; a GitHub 401, 403 or 404 that isn't a rate limit posts "Can't read the PR; check the GitHub token." once. |
@@ -133,8 +133,16 @@ and retries until Linear accepts it; only then is the job queued, with the sessi
 as its id and pinned to the launch's machine. The job records the launch it closes out
 and the PR's URL. A claim gets a closeout job only when it asks with `?kinds=closeout`,
 so older Runners never see one. A new delegation of the issue replaces a waiting
-closeout, and one that arrives first drops it. Finishing a closeout job writes nothing
-back to the issue, and one no machine claims within 30 days is ended. A merge whose
+closeout, and one that arrives first drops it. Finishing a closeout job, as `launched`
+or `failed`, writes nothing back to the issue: no status, label or delegate change. One
+no machine claims within 30 days is ended.
+
+A closeout job's task adds `kind: "closeout"` and `launch`, the `{repo, branch}` its
+launch recorded. It adds `skip: "canceled"` when the issue is canceled. Otherwise it
+checks the issue's PR attachments the way `watch` does, base and head repo equal to the
+launch's repo and head branch equal to its branch, and also needs that PR merged. If
+none passes, or the launch's record is gone, it adds `skip: "unverified"`. The Runner
+turns a skip into the session's final response instead of launching. A merge whose
 webhook never arrives, or that comes more than 30 days after its launch, gets no
 closeout job; run `do-closeout` by hand.
 

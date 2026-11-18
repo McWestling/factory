@@ -185,6 +185,7 @@ function fakeWorld() {
       { id: 'state-review', type: 'started', position: 3 },
       { id: 'state-progress', type: 'started', position: 2 },
       { id: 'state-done', type: 'completed', position: 4 },
+      { id: 'state-canceled', type: 'canceled', position: 5 },
     ],
     labels: [
       { id: 'label-orca', name: 'Orca', team: null, parent: { id: 'group-dispatch' } },
@@ -235,7 +236,8 @@ function answer(world: World, query: string, variables: Record<string, any>) {
     const { identifier, description, branchName, delegateId } = issue;
     return {
       issue: { identifier, description, branchName, state: { type: state().type }, delegate: delegateId && { id: delegateId },
-        labels: { nodes: issue.labelIds.map((id) => ({ name: world.labels.find((l) => l.id === id)!.name })) } },
+        labels: { nodes: issue.labelIds.map((id) => ({ name: world.labels.find((l) => l.id === id)!.name })) },
+        attachments: { nodes: issue.attachments.map((url) => ({ url })) } },
       agentSession: { creator },
     };
   }
@@ -1288,6 +1290,60 @@ test('task and watch answer 502 when Linear fails', async () => {
   h.linear.failNext = 2;
   assert.equal((await call(h, 'GET', 'task', h.claimId)).status, 502);
   assert.equal((await call(h, 'GET', 'watch', h.claimId)).status, 502);
+});
+
+/** GitHub's view of the launch's PR, merged unless changed. */
+const launchPr = (edit?: (pr: Record<string, any>) => void) => {
+  const pr = { merged: true, base: { repo: { full_name: 'owner/repo' } }, head: { ref: LAUNCH.branch, repo: { full_name: 'owner/repo' } } };
+  edit?.(pr);
+  return pr;
+};
+/** session-1's launch PR merged, and its closeout job claimed; `task()` reads the closeout's task. */
+async function claimedCloseout(attachment = 'https://github.com/owner/repo/pull/1') {
+  const h = await launchedJob();
+  await h.deliver(mergedPayload());
+  h.linear.world.issues['issue-1']!.attachments = ['https://example.com/doc', attachment];
+  h.linear.github = () => Response.json(launchPr());
+  const { sessionId, claimId } = await (await h.runner('POST', '/jobs/claim?kinds=closeout')).json() as Record<string, string>;
+  const task = async () => {
+    const res = await call(h, 'GET', 'task', claimId, undefined, sessionId);
+    assert.equal(res.status, 200);
+    const { kind, launch, skip } = await res.json() as Record<string, unknown>;
+    return { kind, launch, skip };
+  };
+  return { ...h, task };
+}
+
+test("a closeout task with the launch's merged PR attached returns the launch's repo and branch, with no skip", async () => {
+  const h = await claimedCloseout();
+  assert.deepEqual(await h.task(), { kind: 'closeout', launch: LAUNCH, skip: undefined });
+});
+
+test('a closeout task for a canceled issue skips as canceled without asking GitHub', async () => {
+  const h = await claimedCloseout();
+  h.linear.world.issues['issue-1']!.stateId = 'state-canceled';
+  h.linear.github = () => assert.fail('GitHub must not be read');
+  assert.deepEqual(await h.task(), { kind: 'closeout', launch: LAUNCH, skip: 'canceled' });
+});
+
+for (const [label, attachment, edit] of [
+  ['from another repo', 'https://github.com/other/repo/pull/1', undefined],
+  ['from a fork', undefined, (pr) => { pr.head.repo.full_name = 'someone/repo'; }],
+  ['into another base repo', undefined, (pr) => { pr.base.repo.full_name = 'other/repo'; }],
+  ['from another branch', undefined, (pr) => { pr.head.ref = 'other-branch'; }],
+  ['not merged', undefined, (pr) => { pr.merged = false; }],
+] as [string, string | undefined, ((pr: Record<string, any>) => void) | undefined][]) {
+  test(`a closeout task whose only PR is ${label} skips as unverified`, async () => {
+    const h = await claimedCloseout(attachment);
+    if (edit) h.linear.github = () => Response.json(launchPr(edit));
+    assert.deepEqual(await h.task(), { kind: 'closeout', launch: LAUNCH, skip: 'unverified' });
+  });
+}
+
+test('a closeout task whose PR GitHub refuses skips as unverified', async () => {
+  const h = await claimedCloseout();
+  h.linear.github = () => new Response(null, { status: 404 });
+  assert.deepEqual(await h.task(), { kind: 'closeout', launch: LAUNCH, skip: 'unverified' });
 });
 
 test('a status update posts only its type and body, on the job session', async () => {
