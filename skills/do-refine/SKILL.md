@@ -104,14 +104,18 @@ Slicing turns settled build work into implementation issues, one PR each. Slice 
 
 The user names an idea or a map (by URL or name), and maybe a ticket. Pick the mode from the map's state, top row first, and tell the user which you picked. If the user asks for a mode outright ("slice this map"), use that.
 
+An open [chart ticket](maps.md#chart-ticket) on a map that's no longer a stub is leftover: close it as done with a comment linking the map, then pick the mode as usual.
+
 | Map state                                                                | Mode                                           |
 | ------------------------------------------------------------------------ | ---------------------------------------------- |
-| No map yet, or a stub map from triage                                    | [Chart a map](#chart-a-map)                    |
+| No map yet, or a stub map from triage (even when a ticket is named)      | [Chart a map](#chart-a-map)                    |
 | The user named a decision ticket, or the frontier has one                | [Resolve a decision](#resolve-a-decision)      |
 | Nothing on the frontier, but settled build work isn't sliced             | [Slice a map](#slice-a-map)                    |
 | No open decision tickets, **Not yet specified** empty, everything sliced | Report the map as refined; [Wrap up](#wrap-up) |
 
 ### Chart a map
+
+When a stub map holds a [chart ticket](maps.md#chart-ticket), [claim](#blocking-and-the-frontier) it before any other work, whether the session started from the ticket or from the map URL. It's a decision ticket in shape only: don't turn it into a ticket or fog like a capture, and don't count it as the map's first claim, so the map still goes to a charted status. A stub without one charts as below.
 
 1. **Name the destination.** Call the Skill tool for "grilling" (and for "domain-modeling" when the effort brings new domain terms) to settle what the map is heading for. Do this first; it fixes the scope.
 2. **Survey the way.** Grill again, broad rather than deep: cover the whole space to surface the open decisions, the build work and the first steps that can be taken now. If nothing is left open, skip decision tickets: make the map with an empty frontier and go straight to [Slicing](#slicing) in this session.
@@ -121,7 +125,8 @@ The user names an idea or a map (by URL or name), and maybe a ticket. Pick the m
 
 4. **Ticket what you can.** Create the decision tickets you can state now, flat in the project and in the ready status. Then, in a second pass, wire `blocks` / `blockedBy` and write any cross-references with the real ids. Wiring sorts tickets into the frontier and the blocked. Everything else stays fog. Build work that's already settled can be sliced now.
 5. **Start the research.** For each `wayfinder:research` ticket you created, start a subagent that calls the Skill tool with "research" and resolves it in parallel. It writes its findings to a throwaway `research/<name>` branch, pushed but never opened as a PR, and links that branch from the ticket.
-6. **Stop.** Charting is a whole session. It resolves nothing by hand.
+6. **Close the chart ticket**, if the map has one: post a short **Decision resolved** comment per **Comment shape** linking the charted map, and set the ticket to the done status. It gets no line in **Decisions so far**.
+7. **Stop.** Charting is a whole session. It resolves nothing by hand.
 
 ### Resolve a decision
 
