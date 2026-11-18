@@ -19,7 +19,7 @@ npm run inbox -- setup
 Setup asks for the account ID, Worker name, stable machine key and Linear workspace
 UUID. It deploys to a `workers.dev` HTTPS address, generates owner and machine
 secrets, and opens a prefilled app registration page. Keep Agent session event
-webhooks enabled. Enter the app credentials when asked; setup uploads the config.
+webhooks enabled, and tick `Attachment` events too for [closeout jobs](#closeout-jobs). Enter the app credentials when asked; setup uploads the config.
 It then opens a prefilled GitHub page for an optional [token](#secrets) that lets the
 PR check read private repos.
 Custom domains require manual configuration.
@@ -102,8 +102,8 @@ accepts a viewer secret.
 | `GET /callback` | Validates state, workspace and exact scopes; stores tokens. |
 | `GET /status` | Owner verifies connection; returns `{connected: boolean}`. |
 | `POST /disconnect` | Owner blocks and revokes tokens; preserves jobs. |
-| `POST /webhook` | Receives signed Linear Agent session events. |
-| `POST /jobs/claim` | Claims oldest eligible job for 10 minutes; 204 when empty. |
+| `POST /webhook` | Receives signed Linear Agent session events and PR `Attachment` events. |
+| `POST /jobs/claim` | Claims oldest eligible delegation for 10 minutes; `?kinds=closeout` claims a [closeout job](#closeout-jobs) instead, `?kinds=delegation,closeout` either; 204 when empty. |
 | `GET /jobs/watching` | Recovers this machine's launched jobs. |
 | `GET /jobs/<id>/task` | Reads issue and delegation details for the claim. |
 | `POST /jobs/<id>/updates` | Queues a thought, response or error (1–2000 characters). |
@@ -118,12 +118,37 @@ Expired leases return to the same machine only. Stop or delegate again if that
 machine cannot return. Webhook activities and field writes retry through a durable
 outbox; delivery is at least once. There is no token-sharing endpoint.
 
+### Closeout jobs
+
+When a PR the Runner launched merges, Cloud Inbox queues a closeout job for the
+machine that launched it. It acts only on an `Attachment` update that moves a PR to
+`merged`, and only when the issue's newest launch that no newer delegation replaced
+recorded that PR's repo (case-insensitive) and head branch. A refine launch records
+neither, so it never matches. Each launch queues one closeout at most, so replays and
+`closed` → `open` → `merged` flips add nothing. Each `Attachment` event is logged as
+`queued`, `no-match`, `duplicate` or `ignored`.
+
+The outbox then creates a new agent session on the issue, beside the launch's thread,
+and retries until Linear accepts it; only then is the job queued, with the session id
+as its id and pinned to the launch's machine. The job records the launch it closes out
+and the PR's URL. A claim gets a closeout job only when it asks with `?kinds=closeout`,
+so older Runners never see one. A new delegation of the issue replaces a waiting
+closeout, and one that arrives first drops it. Finishing a closeout job writes nothing
+back to the issue, and one no machine claims within 30 days is ended. A merge whose
+webhook never arrives, or that comes more than 30 days after its launch, gets no
+closeout job; run `do-closeout` by hand.
+
+Linear also sends a `created` webhook for the new session, possibly before the create
+returns, or when its response is lost. A `created` session with no human creator, on an
+issue with a closeout, is logged `own-session` and never queued as a delegation; if its
+closeout is still waiting on the create, the session becomes the closeout job.
+
 ### Pool status
 
 Each Runner poll sends its `status.json` to `PUT /pool/snapshot`, plus once when a
 job's issue is read. Cloud Inbox keeps only each machine's latest snapshot. A machine
 is offline after 5 minutes unseen, so a long job can show offline until it ends.
-`queueDepth` counts issues waiting to be claimed, expired leases included.
+`queueDepth` counts issues waiting to be claimed, expired leases included. Closeout jobs wait for their own machine, so they don't count.
 
 A Runner sends one report at a time and keeps only the newest waiting. Ordering is
 best effort within one process: a report the Runner timed out on, or a second Runner

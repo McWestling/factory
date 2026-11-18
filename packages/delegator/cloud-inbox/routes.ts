@@ -3,7 +3,8 @@
 
 import { isLaunchEvidence } from '../job.ts';
 import { hex, sha256, timingSafeEqual, type Config } from './auth.ts';
-import { MAX_UPDATE_CHARS, type AgentEvent, type JobQueue, type Refusal, type Snapshot, type UpdateType } from './queue.ts';
+import { JOB_KINDS, MAX_UPDATE_CHARS, type AgentEvent, type JobKind, type JobQueue, type MergeEvent, type Refusal, type Snapshot,
+  type UpdateType } from './queue.ts';
 
 const TIMESTAMP_WINDOW_MS = 60_000;
 /** Far above any agent session event; anything larger is refused before it's parsed. */
@@ -39,9 +40,23 @@ type Payload = {
   organizationId?: unknown;
   appUserId?: unknown;
   webhookTimestamp?: unknown;
-  agentSession?: { id?: unknown; issueId?: unknown; issue?: { id?: unknown } };
+  agentSession?: { id?: unknown; issueId?: unknown; issue?: { id?: unknown }; creatorId?: unknown };
   agentActivity?: { id?: unknown; signal?: unknown };
+  data?: { issueId?: unknown; metadata?: PullRequest };
+  updatedFrom?: { metadata?: PullRequest };
 };
+type PullRequest = { status?: unknown; url?: unknown; repoLogin?: unknown; repoName?: unknown; branch?: unknown };
+
+const filled = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
+
+/** An `Attachment` update that moved a PR to `merged`, or null for any other `Attachment` event. */
+function mergeEvent({ action, data, updatedFrom }: Payload): MergeEvent | null {
+  const pr = data?.metadata;
+  if (action !== 'update' || pr?.status !== 'merged' || !updatedFrom?.metadata || updatedFrom.metadata.status === 'merged') return null;
+  const { issueId } = data!;
+  if (!filled(issueId) || !filled(pr.url) || !filled(pr.repoLogin) || !filled(pr.repoName) || !filled(pr.branch)) return null;
+  return { action: 'merged', issueId, url: pr.url, repo: `${pr.repoLogin}/${pr.repoName}`, branch: pr.branch };
+}
 
 async function signatureMatches(secret: string, raw: ArrayBuffer, signature: string): Promise<boolean> {
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret),
@@ -96,6 +111,12 @@ export async function handleWebhook(request: Request, config: Config, inbox: Inb
   if (payload.organizationId !== config.orgId) return reject(403, 'org');
 
   const { type, action, appUserId, agentSession, agentActivity } = payload;
+  if (type === 'Attachment') {
+    const merge = mergeEvent(payload);
+    const outcome = merge ? await inbox.webhook(merge) : 'ignored';
+    log({ event: 'webhook', type, ...(merge && { issue: merge.issueId }), outcome });
+    return text(200, 'OK');
+  }
   if (type !== 'AgentSessionEvent' || (action !== 'created' && action !== 'prompted')) {
     log({ event: 'webhook', outcome: 'ignored' });
     return text(200, 'OK');
@@ -114,6 +135,7 @@ export async function handleWebhook(request: Request, config: Config, inbox: Inb
     issueId: typeof issueId === 'string' && issueId ? issueId : undefined,
     activityId: typeof activityId === 'string' ? activityId : undefined,
     stop,
+    creatorId: filled(agentSession?.creatorId) ? agentSession.creatorId : undefined,
   };
 
   const result = await inbox.webhook(event);
@@ -199,7 +221,9 @@ export async function handleRunner(request: Request, config: Config, inbox: Inbo
   }
 
   if (method === 'POST' && route === 'jobs' && id === 'claim' && op === undefined) {
-    const job = await inbox.claim(machine);
+    // Absent or unknown kinds claim delegations, as Runners did before closeout jobs.
+    const asked = (url.searchParams.get('kinds') ?? '').split(',').filter((kind): kind is JobKind => JOB_KINDS.includes(kind as JobKind));
+    const job = await inbox.claim(machine, asked.length ? [...new Set(asked)] : undefined);
     log({ event: 'claim', machine, outcome: job ? 'claimed' : 'empty', ...(job && { session: job.sessionId }) });
     return job ? Response.json(job) : new Response(null, { status: 204 });
   }
