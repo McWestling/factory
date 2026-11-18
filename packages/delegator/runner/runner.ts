@@ -389,6 +389,44 @@ async function hasWorktree(deps: Deps, launch: Launch): Promise<boolean> {
   }
 }
 
+/** When each watch's agent was first seen stopped; a restart forgets it. */
+const stoppedSince = new WeakMap<Deps, Map<string, number>>();
+const STOP_WAIT_MS = 10 * 60_000;
+
+/** A registered Orca repo row that is a checkout of GitHub `owner/name`. */
+const isCheckoutOf = (row: Record<string, unknown>, repo: string) => row.kind === 'git'
+  && isObject(row.gitRemoteIdentity) && typeof row.gitRemoteIdentity.canonicalKey === 'string'
+  && row.gitRemoteIdentity.canonicalKey.toLowerCase() === `github.com/${repo.toLowerCase()}`;
+
+type OrcaState = { repos: unknown[]; worktrees: unknown[] };
+
+/** Orca's registered repos and worktrees, for one watch pass; null when Orca can't say. */
+async function orcaState(deps: Deps): Promise<OrcaState | null> {
+  try {
+    const repos = JSON.parse((await deps.exec('orca', ['repo', 'list', '--json'], 30_000)).stdout);
+    if (repos?.ok !== true || !Array.isArray(repos.result?.repos)) return null;
+    const ps = JSON.parse((await deps.exec('orca', ['worktree', 'ps', '--limit', '10000', '--json'], 30_000)).stdout);
+    if (ps?.ok !== true || !Array.isArray(ps.result?.worktrees)) return null;
+    return { repos: repos.result.repos, worktrees: ps.result.worktrees };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether every agent in the launch's worktree is done, matched like hasWorktree: the one registered
+ * checkout of its GitHub repo, on this machine, at its exact branch. Undefined unless exactly one matches.
+ */
+function agentsDone(orca: OrcaState, launch: LaunchEvidence): boolean | undefined {
+  const repos = orca.repos.filter(isObject).filter((row) => isCheckoutOf(row, launch.repo));
+  const id = repos.length === 1 ? repos[0]!.id : undefined;
+  if (!isText(id)) return undefined;
+  const rows = orca.worktrees.filter(isObject).filter((row) => row.repoId === id && row.hostId === 'local'
+    && row.branch === `refs/heads/${launch.branch}`);
+  const agents = rows.length === 1 ? rows[0]!.agents : undefined;
+  return Array.isArray(agents) ? agents.every((agent: unknown) => isObject(agent) && agent.state === 'done') : undefined;
+}
+
 type Watching = Claim & { at: number; ready: boolean; launch?: LaunchEvidence; identifier?: string };
 type Watches = Record<string, Watching>;
 
@@ -442,6 +480,21 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
   catch { deps.log({ event: 'watch', outcome: 'watches-unreadable' }); writeStatus(deps); return; }
   const api = inbox(config, deps);
   const launches = readLaunches(deps);
+  const since = stoppedSince.get(deps) ?? new Map<string, number>();
+  stoppedSince.set(deps, since);
+  for (const session of since.keys()) if (!watches[session]) since.delete(session);
+  let orca: Promise<OrcaState | null> | undefined;
+  /** True once the watch's agent has been stopped for STOP_WAIT_MS; unknown leaves the clock alone. */
+  const stoppedLong = async (job: Watching) => {
+    if (!job.launch) return false;
+    const state = await (orca ??= orcaState(deps));
+    const stopped = state ? agentsDone(state, job.launch) : undefined;
+    if (stopped === false) since.delete(job.sessionId);
+    if (stopped !== true) return false;
+    const now = (deps.now ?? Date.now)();
+    if (!since.has(job.sessionId)) since.set(job.sessionId, now);
+    return now - since.get(job.sessionId)! >= STOP_WAIT_MS;
+  };
   for (const job of Object.values(watches)) {
     const log = (outcome: string) => deps.log({ event: 'watch', session: job.sessionId, outcome });
     const change = (edit: (watches: Watches) => void) => changeWatches(deps, (current) => {
@@ -489,6 +542,8 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
         body = 'Issue canceled; stopped watching.';
       } else if (status.issueState === 'completed') {
         body = 'Issue completed; stopped watching. No PR from this launch was recognized.';
+      } else if (await stoppedLong(job)) {
+        body = 'The agent stopped without a PR; see its comment if it left one, or check the Orca worktree. Undelegate to release.';
       } else if ((deps.now ?? Date.now)() - job.at >= 24 * 60 * 60_000) {
         body = 'No PR after 24 h; check the Orca worktree.';
       } else { log('no-pr-yet'); continue; }
@@ -684,9 +739,7 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
     paths = [];
     for (const row of listing.result.repos) {
       if (!isObject(row)) throw new Error('invalid repo row');
-      if (row.kind !== 'git' || !isObject(row.gitRemoteIdentity)
-        || typeof row.gitRemoteIdentity.canonicalKey !== 'string'
-        || row.gitRemoteIdentity.canonicalKey.toLowerCase() !== `github.com/${issue.repo.toLowerCase()}`) continue;
+      if (!isCheckoutOf(row, issue.repo)) continue;
       if (!isText(row.path) || !isAbsolute(row.path) || row.path.includes('\0')) throw new Error('invalid repo path');
       paths.push(row.path);
     }
