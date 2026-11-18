@@ -109,15 +109,18 @@ The label records where the work was dispatched from, not where the session runs
 
 ## Views
 
-The factory expects exactly these shared views on the `{{KEY}}` team. Keep them, and find them by exact name with `list_custom_views`.
+The factory expects the shared Factory views below and one work view per active product on the `{{KEY}}` team. Keep them, and find them by exact name with `list_custom_views`.
 
 | View                  | Kind     | Filters                                                                                                                                       |
 | --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Factory: Maps`       | Projects | Project status not `Done` or `Won't Do`; grouped by initiative (product), sub-grouped and ordered by project status                           |
+| `Factory: Uncharted`  | Projects | Project status `Uncharted`; grouped by initiative                                                                                             |
 | `Factory: Decisions`  | Issues   | Status `Todo`, no assignee, not blocked, a `wayfinder:` label, in a project                                                                   |
 | `Factory: Ready`      | Issues   | Status `Todo`, no assignee, not blocked, no `wayfinder:` label; grouped by Product, then project                                              |
 | `Factory: Agent Work` | Issues   | Status `In Progress` or `In Review`, and either delegated to an agent or carrying a `Dispatch target` label; grouped by Product, then project |
-| `Factory: All Work`   | Issues   | Status `In Progress` or `In Review`                                                                                                           |
+| `Factory: All Work`   | Issues   | Status `In Progress` or `In Review`, or `Todo` with an assignee or a delegate                                                                 |
+
+Each active product (an initiative with status `Active`) has one shared work view named `<Product>: Work` on the same team. It includes issues with that Product label and either (`Todo` and not blocked), `In Progress` or `In Review`, including decision tickets. Group it by status, with Project and Labels as row properties.
 
 ## Triage
 

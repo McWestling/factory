@@ -86,3 +86,6 @@ _Avoid_: preflight, which is Factory Verifier's term
 **Adding a repo block**:
 The first `toml` code block under an exact `## Adding a repo` heading on a service page linked from a workspace's Tool Stack document. It lists the commands and maintainer steps that set a repo up for that service; `do-repo-setup` runs it through `adopt.py`. Format: `skills/do-repo-setup/adding-a-repo.example.toml`.
 _Avoid_: setup script, onboarding steps
+
+**Work view**:
+One shared Linear issue view per active product (an initiative with status `Active`), named `<Product>: Work`. It shows issues with that Product label in `Todo` and not blocked, `In Progress` or `In Review`, grouped by status with Project and Labels as row properties.
