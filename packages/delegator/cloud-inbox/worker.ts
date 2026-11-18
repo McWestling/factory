@@ -5,7 +5,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { LaunchEvidence } from '../job.ts';
 import { AppAuth, isAdmin, readConfig, type InstallResult } from './auth.ts';
-import { JobQueue, type AgentEvent, type Outcome, type Snapshot, type UpdateType } from './queue.ts';
+import { JobQueue, type AgentEvent, type JobKind, type MergeEvent, type Outcome, type Snapshot, type UpdateType } from './queue.ts';
 import { BASE_PATH, handleRunner, handleWebhook, log, text, underBasePath, type Inbox } from './routes.ts';
 
 interface Env {
@@ -50,7 +50,7 @@ export default {
     const stub = env.MACHINE.get(env.MACHINE.idFromName(INBOX));
     const inbox: Inbox = {
       webhook: (event) => stub.webhook(event),
-      claim: (machine) => stub.claim(machine),
+      claim: (machine, kinds) => stub.claim(machine, kinds),
       finish: (machine, id, claimId, outcome, launch) => stub.finish(machine, id, claimId, outcome, launch),
       task: (machine, id, claimId) => stub.task(machine, id, claimId),
       update: (machine, id, claimId, type, body) => stub.update(machine, id, claimId, type, body),
@@ -132,9 +132,9 @@ export class Machine extends DurableObject<Env> {
   /** Delivers the outbox. Fires right after a queue change and again for each retry. */
   async alarm() { await this.#jobs.deliver(); }
 
-  webhook(event: AgentEvent) { return this.#jobs.webhook(event); }
+  webhook(event: AgentEvent | MergeEvent) { return this.#jobs.webhook(event); }
 
-  claim(machine: string) { return this.#jobs.claim(machine); }
+  claim(machine: string, kinds?: readonly JobKind[]) { return this.#jobs.claim(machine, kinds); }
 
   finish(machine: string, id: string, claimId: string, outcome: Outcome, launch?: LaunchEvidence) {
     return this.#jobs.finish(machine, id, claimId, outcome, launch);

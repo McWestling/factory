@@ -24,6 +24,10 @@ _Avoid_: Dispatch, Factory Dispatch
 The `{issueId, sessionId}` payload Cloud Inbox queues for whichever machine's Runner claims it first; the Runner reads the issue through Cloud Inbox at pickup.
 _Avoid_: task, dispatch payload
 
+**Job kind**:
+`delegation`, the default, for a job Linear's delegation started; or `closeout`, for a job Cloud Inbox queues itself when a PR the Runner launched merges, on a new agent session and pinned to the machine that launched it. A Runner claims a closeout job only by asking for that kind.
+_Avoid_: job type
+
 **Job state**:
 One of `queued`, `claimed`, `launched`, or `failed`, tracked by the queue separately from the job payload.
 _Avoid_: job status

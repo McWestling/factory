@@ -48,6 +48,8 @@ const LAUNCH = `query ($issue: String!, $session: String!) {
   issueLabels(filter: { name: { eq: "${DISPATCH_LABEL}" } }) { nodes { id team { id } parent { id } } } }`;
 const DELEGATE = 'query ($issue: String!) { issue(id: $issue) { delegate { id } } }';
 const ISSUE_UPDATE = 'mutation ($issue: String!, $input: IssueUpdateInput!) { issueUpdate(id: $issue, input: $input) { success } }';
+const CREATE_SESSION = `mutation ($issue: String!) {
+  agentSessionCreateOnIssue(input: { issueId: $issue }) { success agentSession { id } } }`;
 
 export type Sql = {
   exec(query: string, ...bindings: (string | number | null)[]): { toArray(): Record<string, unknown>[] };
@@ -64,14 +66,22 @@ export type AgentEvent = {
   stop: boolean;
 };
 
-export type WebhookResult = 'queued' | 'duplicate' | 'answered' | 'ended' | 'no-issue' | 'app-user';
+/** A merged-PR `Attachment` update: the issue, and the PR's repo (`owner/name`) and head branch. */
+export type MergeEvent = { action: 'merged'; issueId: string; repo: string; branch: string };
+
+/** `delegation` jobs come from Linear; Cloud Inbox queues a `closeout` job itself when a launch's PR merges. */
+export type JobKind = 'delegation' | 'closeout';
+export const JOB_KINDS: readonly JobKind[] = ['delegation', 'closeout'];
+
+export type WebhookResult = 'queued' | 'duplicate' | 'no-match' | 'answered' | 'ended' | 'no-issue' | 'app-user';
 export type Outcome = 'launched' | 'failed';
 export type UpdateType = 'thought' | 'response' | 'error';
 /**
  * An outbox row: an activity, or a write-back. `launch` applies a launch's field changes
- * and `release` clears the delegate; their body holds the issue id, not text.
+ * and `release` clears the delegate; their body holds the issue id, not text. `closeout`
+ * creates a closeout job's session and then the job; its body holds the launch as JSON.
  */
-type RowType = UpdateType | 'launch' | 'release';
+type RowType = UpdateType | 'launch' | 'release' | 'closeout';
 
 /** Why a Runner operation was refused: no current claim, an ended session, no PR, or Linear failed. */
 export type Refusal = 'not-claimed' | 'ended' | 'no-pr' | 'linear';
@@ -162,7 +172,10 @@ export class JobQueue {
     // `machine` is the machine whose claim holds the job.
     sql.exec(`CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, issue_id TEXT NOT NULL,
       state TEXT NOT NULL, lease_until INTEGER, updated_at INTEGER NOT NULL, claim_id TEXT, machine TEXT,
-      launch_repo TEXT, launch_branch TEXT)`);
+      launch_repo TEXT, launch_branch TEXT, kind TEXT NOT NULL DEFAULT 'delegation')`);
+    if (!sql.exec('PRAGMA table_info(jobs)').toArray().some((column) => column.name === 'kind')) {
+      sql.exec("ALTER TABLE jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'delegation'");
+    }
     sql.exec('CREATE TABLE IF NOT EXISTS seen (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     sql.exec('CREATE TABLE IF NOT EXISTS seen_activities (id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     sql.exec('CREATE TABLE IF NOT EXISTS ended (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
@@ -170,6 +183,8 @@ export class JobQueue {
     sql.exec('CREATE TABLE IF NOT EXISTS unreadable (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     // Sessions whose issue was delegated again, so their write-backs never apply.
     sql.exec('CREATE TABLE IF NOT EXISTS superseded (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
+    // Launch jobs whose merge already queued a closeout, so it queues once.
+    sql.exec('CREATE TABLE IF NOT EXISTS closeouts (launch_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     // `queued` marks the queued thought, which a claim cancels.
     sql.exec(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL,
       type TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
@@ -204,7 +219,8 @@ export class JobQueue {
   }
 
   /** Acts on a webhook whose signature, timestamp and org the Worker already checked. */
-  async webhook(event: AgentEvent): Promise<WebhookResult> {
+  async webhook(event: AgentEvent | MergeEvent): Promise<WebhookResult> {
+    if (event.action === 'merged') return this.#merged(event);
     const app = await this.#auth.installation();
     if (!app || app.appUserId !== event.appUserId) return 'app-user';
     // No await from here on, so each change and the activities it needs are atomic.
@@ -248,16 +264,40 @@ export class JobQueue {
     return 'queued';
   }
 
-  /** Claims the oldest waiting job new or last held by `machine`, with a fresh lease, or returns undefined. */
-  async claim(machine: string): Promise<Claim | undefined> {
+  /**
+   * Queues a closeout once per launch, when the issue's newest unsuperseded launch made this
+   * PR. The session is created later, from the outbox; `#closeout` then queues the job.
+   */
+  #merged(event: MergeEvent): WebhookResult {
+    const now = this.#now();
+    const [launch] = this.#sql.exec(`SELECT id, machine, launch_repo, launch_branch FROM jobs
+      WHERE issue_id = ? AND state = 'launched' AND kind = 'delegation' AND id NOT IN (SELECT session_id FROM superseded)
+      ORDER BY rowid DESC LIMIT 1`, event.issueId).toArray();
+    // A refine launch has no evidence, so it never matches.
+    if (!launch?.launch_repo || String(launch.launch_repo).toLowerCase() !== event.repo.toLowerCase()
+      || launch.launch_branch !== event.branch) return 'no-match';
+    const id = String(launch.id);
+    if (!this.#sql.exec('INSERT INTO closeouts (launch_id, at) VALUES (?, ?) ON CONFLICT DO NOTHING RETURNING launch_id',
+      id, now).toArray().length) return 'duplicate';
+    this.#enqueue(`closeout:${id}`, 'closeout', JSON.stringify({ launch: id, issue: event.issueId, machine: launch.machine }), now);
+    this.#wake();
+    return 'queued';
+  }
+
+  /**
+   * Claims the oldest waiting job of `kinds` new or last held by `machine`, with a fresh
+   * lease, or returns undefined. Only a Runner that asks for closeout jobs gets them.
+   */
+  async claim(machine: string, kinds: readonly JobKind[] = ['delegation']): Promise<Claim | undefined> {
     const now = this.#now();
     if (this.#settle(now)) this.#wake();
     const claimId = crypto.randomUUID();
     const [row] = this.#sql.exec(
       `UPDATE jobs SET state = 'claimed', lease_until = ?, updated_at = ?, claim_id = ?, machine = ?
-       WHERE id = (SELECT id FROM jobs WHERE state = 'queued' AND (machine IS NULL OR machine = ?) ORDER BY rowid LIMIT 1)
+       WHERE id = (SELECT id FROM jobs WHERE state = 'queued' AND (machine IS NULL OR machine = ?)
+         AND kind IN (${kinds.map(() => '?').join(', ')}) ORDER BY rowid LIMIT 1)
        RETURNING id, issue_id`,
-      now + LEASE_MS, now, claimId, machine, machine).toArray();
+      now + LEASE_MS, now, claimId, machine, machine, ...kinds).toArray();
     if (!row) return undefined;
     // The Runner owns the session now, so its queued thought is obsolete. One already in
     // flight is never retried: a failure updates a row that is gone.
@@ -485,6 +525,8 @@ export class JobQueue {
     this.#sql.exec('DELETE FROM seen_activities WHERE at <= ?', now - HISTORY_MS);
     this.#sql.exec('DELETE FROM ended WHERE at <= ?', now - HISTORY_MS);
     this.#sql.exec('DELETE FROM unreadable WHERE at <= ?', now - HISTORY_MS);
+    // A launch row is pruned before its closeout marker, which is never older.
+    this.#sql.exec('DELETE FROM closeouts WHERE at <= ?', now - HISTORY_MS);
     // Kept while a write-back of the session is still pending, however old.
     this.#sql.exec('DELETE FROM superseded WHERE at <= ? AND session_id NOT IN (SELECT session_id FROM outbox)',
       now - HISTORY_MS);
@@ -527,6 +569,7 @@ export class JobQueue {
       if (!this.#sql.exec('SELECT 1 FROM outbox WHERE id = ?', id).toArray().length) return true;
       if (type === 'launch') return await this.#launch(token, id, body, sessionId);
       if (type === 'release') return await this.#release(token, id, body, sessionId);
+      if (type === 'closeout') return await this.#closeout(token, body);
       const data = await this.#linear<{ agentActivityCreate?: { success?: boolean } }>(token, ACTIVITY,
         { input: { agentSessionId: sessionId, content: { type, body } } });
       return data.agentActivityCreate?.success === true;
@@ -571,6 +614,32 @@ export class JobQueue {
     const app = await this.#auth.installation();
     if (!app || issue.delegate?.id !== app.appUserId) return true;
     return this.#updateIssue(token, row, issueId, sessionId, { delegateId: null });
+  }
+
+  /**
+   * Creates a closeout's session on the issue, then queues the job pinned to the launch's
+   * machine, with the session id as its id. Dropped once a newer delegation supersedes the
+   * launch, so a closeout never replaces a waiting delegation.
+   */
+  async #closeout(token: string, body: string): Promise<boolean> {
+    const { launch, issue, machine } = JSON.parse(body) as { launch: string; issue: string; machine: string };
+    const superseded = () => this.#sql.exec('SELECT 1 FROM superseded WHERE session_id = ?', launch).toArray().length > 0;
+    if (superseded()) return true;
+    const data = await this.#linear<{ agentSessionCreateOnIssue?: { success?: boolean; agentSession?: Id } }>(
+      token, CREATE_SESSION, { issue });
+    const session = data.agentSessionCreateOnIssue?.agentSession?.id;
+    if (data.agentSessionCreateOnIssue?.success !== true || !session) return false;
+    // No await from here on. Marked seen, so Linear's `created` webhook for it queues nothing.
+    // ponytail: a `created` webhook landing before this returns would queue it as a delegation; confirm Linear's order live.
+    const now = this.#now();
+    this.#sql.exec('INSERT INTO seen (session_id, at) VALUES (?, ?) ON CONFLICT DO NOTHING', session, now);
+    if (superseded()) {
+      this.#end(session, MESSAGES.replaced, now);
+      return true;
+    }
+    this.#sql.exec(`INSERT INTO jobs (id, issue_id, state, updated_at, machine, kind) VALUES (?, ?, 'queued', ?, ?, 'closeout')
+      ON CONFLICT DO NOTHING`, session, issue, now, machine);
+    return true;
   }
 
   /**
