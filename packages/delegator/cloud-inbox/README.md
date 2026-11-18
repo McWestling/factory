@@ -18,8 +18,9 @@ npm run inbox -- setup
 
 Setup asks for the account ID, Worker name, stable machine key and Linear workspace
 UUID. It deploys to a `workers.dev` HTTPS address, generates owner and machine
-secrets, and opens a prefilled app registration page. Keep Agent session event
-webhooks enabled, and tick `Attachment` events too for [closeout jobs](#closeout-jobs). Enter the app credentials when asked; setup uploads the config.
+secrets, and opens a prefilled app registration page. Keep webhooks enabled, with
+Agent session events and `Attachment` events (for [closeout jobs](#closeout-jobs))
+both ticked. Enter the app credentials when asked; setup uploads the config.
 It then opens a prefilled GitHub page for an optional [token](#secrets) that lets the
 PR check read private repos.
 Custom domains require manual configuration.
