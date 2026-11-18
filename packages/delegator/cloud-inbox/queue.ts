@@ -303,6 +303,8 @@ export class JobQueue {
   #ownSession(event: AgentEvent, appUserId: string): boolean {
     if (event.creatorId && event.creatorId !== appUserId) return false;
     if (!this.#sql.exec('SELECT 1 FROM closeouts WHERE issue_id = ?', event.issueId!).toArray().length) return false;
+    // A replay of a session already handled must not take another closeout's pending create.
+    if (this.#sql.exec('SELECT 1 FROM seen WHERE session_id = ?', event.sessionId).toArray().length) return true;
     const now = this.#now();
     const [pending] = this.#sql.exec(`SELECT id, body FROM outbox WHERE type = 'closeout'
       AND json_extract(body, '$.issue') = ? ORDER BY id LIMIT 1`, event.issueId!).toArray();

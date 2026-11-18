@@ -526,6 +526,26 @@ test("a session create whose response is lost is adopted from Linear's webhook, 
   await stillWatched(h);
 });
 
+test("a replayed created webhook for an earlier closeout's session leaves a later closeout's pending create alone", async () => {
+  const h = await launchedJob();
+  await h.deliver(mergedPayload());
+  await h.deliver(ownCreated(h, 'session-created-1'));
+  // The issue is delegated again, launched, and its PR merges while Linear is failing.
+  await h.created('session-2');
+  const claim = await h.claimed();
+  await h.runner('POST', `/jobs/session-2/launched?claimId=${claim!.claimId}`, BEARER, LAUNCH);
+  await h.flush();
+  await h.send(mergedPayload());
+  h.linear.failNext = 1;
+  await h.flush();
+  assert.deepEqual(h.rows().outbox, [{ session_id: 'closeout:session-2', type: 'closeout' }]);
+  await h.deliver(ownCreated(h, 'session-created-1'));
+  h.clock.now += 60_000;
+  await h.flush();
+  assert.deepEqual(h.sql.exec("SELECT id, closes FROM jobs WHERE kind = 'closeout'").toArray().map((row) => ({ ...row })),
+    [{ id: 'session-created-2', closes: 'session-2' }]);
+});
+
 test('a person delegating the issue after its merge is a delegation, and replaces the waiting closeout', async (t) => {
   const h = await launchedJob();
   await h.deliver(mergedPayload());
