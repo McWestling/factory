@@ -86,6 +86,7 @@ Triage makes the map; a separate `do-refine` session charts it. Charting is a wh
 - **Notes:** `Stub from triage on YYYY-MM-DD; chart with do-refine.`, plus anything the user said while routing. Link related maps, and name any map you considered and ruled out, with the reason.
 - **Not yet specified:** one line per absorbed capture, linking it.
 - Move the cluster's issues into the project in the backlog status, unchanged. Charting turns each into a ticket or folds it into fog.
+- Create the map's [chart ticket](../do-refine/maps.md#chart-ticket) in the project, in the shape `maps.md` gives, with the map's real URL. Delegating it charts the map.
 
 ### Record the decision
 
@@ -100,7 +101,7 @@ When the queue is empty, or the user stops, list Triage again to confirm what's 
 After the table, print **What you can do next**, grouped by action, with a name and link on every line:
 
 - **Dispatch now:** each unblocked, ready implementation issue to delegate to an agent in the tracker, with no command or level tag. Compare **Touches:** lines, flag pairs that overlap, and say which to delegate first.
-- **Chart next:** each stub map with a one-line why and its own fenced `text` block holding only `/do-refine <map URL>`, to paste into a fresh session. Recommend which to chart first.
+- **Chart next:** each stub map with a one-line why and its chart ticket, linked, to delegate to an agent in the tracker. To chart it by hand instead, give its own fenced `text` block holding only `/do-refine <map URL>`, to paste into a fresh session. Recommend which to chart first.
 - **Waiting on you:** skipped items and open questions.
 - **Where to see it:** the views per **Views** that now show these items, found by exact name. If an item won't show in any view, say so.
 

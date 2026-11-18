@@ -67,6 +67,25 @@ The body is one plain sentence saying what the ticket is, then the question. Siz
 
 The body never states the type; the label does. The answer isn't written into the body: it goes in a comment when the ticket is resolved. Link anything made while resolving a ticket (a prototype, a research branch) from the issue rather than pasting it in.
 
+### Chart ticket
+
+Every stub map holds one **chart ticket**: a decision ticket whose job is to get the map charted, so delegating it in the tracker starts a `do-refine` session on the map. Triage creates it with the stub.
+
+- **Title:** `Chart <map name>`.
+- **Labels:** `wayfinder:grilling` plus the labels **Labels** puts on every product issue.
+- **Status:** the ready status, no assignee, flat in the map's project.
+- **Body:**
+
+  ```markdown
+  Delegate this ticket to Delegator to chart [<map name>](<map URL>) with `do-refine`.
+
+  ## Question
+
+  What is this map's Destination, and which decisions and build work lie on the way to it?
+  ```
+
+- **Lifecycle:** `do-refine` claims it before charting starts, whether the session began from the ticket or the map URL. When charting ends, it posts a short **Decision resolved** comment per **Comment shape** linking the charted map, and sets the ticket to the done status. Charting isn't a decision, so the chart ticket never gets a line in **Decisions so far**.
+
 ### Implementation issues
 
 An implementation issue is one PR of build work. It carries no `wayfinder:` label, follows [brief-template.md](brief-template.md), and passes [dispatch-gates.md](dispatch-gates.md) before anyone dispatches it. A refine session writes implementation issues but never works one.

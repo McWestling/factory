@@ -4,6 +4,10 @@ The toolkit: the workflow skills, contracts and configs that every factory repo 
 
 ## Delegator
 
+**Chart ticket**:
+The one `wayfinder:grilling` ticket `do-triage` puts in every stub map, titled `Chart <map name>`. Delegating it gives a refine launch that charts the map; `do-refine` claims it before charting and closes it, done, when charting ends. Shape: `skills/do-refine/maps.md`.
+_Avoid_: charting ticket, map ticket
+
 **Claim id**:
 The identifier Cloud Inbox issues with each claim attempt; the Runner must send it to record that attempt's outcome, so an expired or superseded claim can't change the job.
 _Avoid_: lease id, job id
