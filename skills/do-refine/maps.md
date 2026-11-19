@@ -65,7 +65,7 @@ The body is one plain sentence saying what the ticket is, then the question. Siz
 <The decision or investigation this ticket settles.>
 ```
 
-The body never states the type; the label does. The answer isn't written into the body: it goes in a comment when the ticket is resolved. Link anything made while resolving a ticket (a prototype, a research branch) from the issue rather than pasting it in.
+The body never states the type; the label does. The answer isn't written into the body: it goes in a comment when the ticket is resolved. Link anything made while resolving a ticket (a prototype, a research document) from the issue rather than pasting it in.
 
 ### Chart ticket
 
