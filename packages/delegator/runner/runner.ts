@@ -343,14 +343,14 @@ function closeoutArgs(config: RunnerConfig, worktree: string, model: string, ide
     '--prompt', `${agent === 'codex' ? '$' : '/'}do-closeout ${identifier}\n${DELEGATED}`, '--json'];
 }
 
-/** Runs `orca`, returning null on success or Orca's error code; a lost launch reply's id goes in `lost`. */
+/** Runs `orca`, returning null on success or Orca's error code; a lost launch reply's id, or a created worktree's selector, goes in `reply`. */
 // Open, create and its retry stay well inside Cloud Inbox's 10-minute lease. A closeout's worst case
 // (open, lookups, launch, retry and replay) comes near it; an expired lease stays on this machine and its record recovers it.
 // ponytail: a create killed at its timeout may leave a worktree behind; the job still fails.
-async function orca(exec: Exec, args: string[], lost?: { operationId?: string }): Promise<string | null> {
+async function orca(exec: Exec, args: string[], reply?: Reply): Promise<string | null> {
   let stdout: string;
   try {
-    ({ stdout } = await exec('orca', args, args[0] === 'open' ? 60_000 : 120_000));
+    ({ stdout } = await exec('orca', args, args[0] === 'open' ? 60_000 : args[1] === 'set' ? 30_000 : 120_000));
   } catch (error) {
     // Orca prints its JSON error and exits non-zero; no output means it never ran.
     stdout = String((error as { stdout?: unknown }).stdout ?? '');
@@ -358,15 +358,29 @@ async function orca(exec: Exec, args: string[], lost?: { operationId?: string })
   }
   try {
     const result = JSON.parse(stdout);
-    if (result?.ok === true) return null;
+    if (result?.ok === true) {
+      // Orca leaves out the worktree when it can't show it after a launch; the launch's worktree id still selects it.
+      const path = result.result?.worktree?.path;
+      const id = result.result?.launch?.worktreeId;
+      if (reply && isText(path) && isAbsolute(path) && !path.includes('\0')) reply.worktree = `path:${path}`;
+      else if (reply && isText(id) && !id.includes('\0')) reply.worktree = `id:${id}`;
+      return null;
+    }
     const code = result?.error?.code;
     const operationId = result?.error?.data?.operationId;
-    if (lost && typeof operationId === 'string' && OPERATION.test(operationId)) lost.operationId = operationId;
+    if (reply && typeof operationId === 'string' && OPERATION.test(operationId)) reply.operationId = operationId;
     return typeof code === 'string' && /^[a-z0-9_]{1,64}$/.test(code) ? code : 'orca_failed';
   } catch {
     return 'orca_bad_output';
   }
 }
+
+type Reply = { operationId?: string; worktree?: string };
+
+/** Each stage the Runner launches, marked on its Orca workspace and Linear messages; GLOSSARY.md defines them. */
+const STAGES = { refine: '🗺️', implement: '🛠️', closeout: '🧹' } as const;
+const stage = (launch: Pick<Launch, 'refine' | 'closeout'>) =>
+  STAGES[launch.closeout ? 'closeout' : launch.refine ? 'refine' : 'implement'];
 
 type Launch = {
   at: number;
@@ -626,14 +640,14 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
   }
 }
 
-const refining = (config: RunnerConfig) => `Refining in Orca on ${config.machine}; continue there.`;
-const closing = (config: RunnerConfig) => `Closing out in Orca on ${config.machine}; its completion comment lists anything still open.`;
+const refining = (config: RunnerConfig) => `${STAGES.refine} Refining in Orca on ${config.machine}; continue there.`;
+const closing = (config: RunnerConfig) => `${STAGES.closeout} Closing out in Orca on ${config.machine}; its completion comment lists anything still open.`;
 
 /** Reports a recorded launch, retaining its claim for completion watching unless it's a refine or closeout launch. */
 async function reportLaunch(config: RunnerConfig, api: ReturnType<typeof inbox>, deps: Deps, claim: Claim, log: (outcome: string) => void, launch: Launch) {
   const launched = launch.closeout ? 'closeout-launched' : 'launched';
   if (!launch.thoughtPosted) {
-    const posted = await api.update(claim, 'thought', `Started ${launch.model} in Orca on \`${launch.branch}\`${launch.closeout ? ' for closeout' : ''}.`)
+    const posted = await api.update(claim, 'thought', `${stage(launch)} Started ${launch.model} in Orca on \`${launch.branch}\`${launch.closeout ? ' for closeout' : ''}.`)
       .then(() => true, () => false);
     if (!posted) {
       // Keep the claim recoverable until its thought can be queued too.
@@ -847,12 +861,12 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
   }
   const args = closeout ? closeoutArgs(config, worktree as string, model, identifier)
     : launchArgs(config, repoPath, model, { identifier, branchName }, refine);
-  const lost: { operationId?: string } = {};
-  let code = await orca(deps.exec, args, lost);
-  if (code === 'runtime_unavailable') code = await orca(deps.exec, args, lost);
+  const reply: Reply = {};
+  let code = await orca(deps.exec, args, reply);
+  if (code === 'runtime_unavailable') code = await orca(deps.exec, args, reply);
   // A lost reply may have started the agent: replay it once by its id, never as a fresh launch.
-  if (closeout && code === 'agent_session_operation_unknown' && lost.operationId) {
-    code = await orca(deps.exec, [...args, '--retry-launch', lost.operationId]);
+  if (closeout && code === 'agent_session_operation_unknown' && reply.operationId) {
+    code = await orca(deps.exec, [...args, '--retry-launch', reply.operationId]);
   }
   if (code === 'runtime_unavailable') {
     return refuse('orca-unavailable', `Orca isn't running on ${config.machine}. ${closeout ? `Open Orca. ${BY_HAND}` : 'Open Orca and delegate again to retry.'}`);
@@ -871,7 +885,12 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
   launch.launched = true;
   record(deps, log, (launches) => { launches[claim.sessionId] = launch; });
   log(closeout ? 'closeout-launched' : 'launched');
-  return reportLaunch(config, api, deps, claim, log, launch);
+  const outcome = await reportLaunch(config, api, deps, claim, log, launch);
+  // Cosmetic, after the report: a failed rename is only logged, and a recovered launch keeps whatever name it has.
+  const selector = closeout ? `path:${worktree as string}` : reply.worktree;
+  const name = `${stage(launch)} ${branchName.split('/').pop()}`;
+  if (!selector || await orca(deps.exec, ['worktree', 'set', '--worktree', selector, '--display-name', name, '--json'])) log('rename-failed');
+  return outcome;
 }
 
 /** One poll: claims a job and handles it. Returns whether there was one. */

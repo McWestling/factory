@@ -52,6 +52,10 @@ _Avoid_: decision launch
 The local process on a machine that claims jobs from Cloud Inbox through its restricted machine-facing API and launches them in Orca. It holds no Linear credentials. Lives in `packages/delegator/runner/`.
 _Avoid_: daemon, local client
 
+**Stage**:
+Where a launched issue is in its life, marked with an emoji on its Orca workspace name and the Runner's Linear messages: 🗺️ refine, 🛠️ implement, 🧹 closeout. The Runner holds the same set in one constant.
+_Avoid_: phase, step
+
 ## Verifier
 
 **Verifier**:

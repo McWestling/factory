@@ -254,7 +254,7 @@ for (const statusType of ['unstarted', 'started', 'completed']) {
       'POST /jobs/session-1/updates',
       'POST /jobs/session-1/launched',
     ]);
-    assert.deepEqual(f.updates, [['thought', 'Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing`.']]);
+    assert.deepEqual(f.updates, [['thought', '🛠️ Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing`.']]);
   });
 }
 
@@ -412,7 +412,61 @@ function realInbox(labels: string[] = []) {
 const refineTask: Partial<Task> = { ...goodTask, description: 'Decide which way to go.', labels: ['Factory', 'wayfinder:grilling'] };
 const refineConfig: RunnerConfig = { ...config, levels: { ...config.levels, deep: 'GPT-6 Luna' } };
 const attended = 'Attended run: a person will join this session in Orca. Ask every question with your question tool (AskUserQuestion) and wait for the answer.';
-const refining = 'Refining in Orca on Example Mac; continue there.';
+const refining = '🗺️ Refining in Orca on Example Mac; continue there.';
+
+const created = (path: string) => JSON.stringify({ ok: true, result: { worktree: { path } } });
+const renamed = (path: string, name: string) => ['worktree', 'set', '--worktree', `path:${path}`, '--display-name', name, '--json'];
+
+for (const [stage, task, cfg, name] of [
+  ['an implement', goodTask, config, '🛠️ abc-123-do-the-thing'],
+  ['a refine', refineTask, refineConfig, '🗺️ abc-123-do-the-thing'],
+] as const) {
+  test(`${stage} launch names its new workspace with the stage emoji, keeping --name plain`, async () => {
+    const f = fakes(task, [ok, created('/worktrees/abc-123')]);
+    assert.equal(await handleJob(cfg, f.deps, claim), 'launched');
+    const create = f.argv.find((args) => args[1] === 'create')!;
+    assert.equal(create[create.indexOf('--name') + 1], 'abc-123-do-the-thing');
+    assert.deepEqual(f.argv.at(-1), renamed('/worktrees/abc-123', name));
+  });
+}
+
+test('a failed rename is logged but leaves the outcome, lastError and messages alone', async () => {
+  const outcomes: unknown[] = [];
+  const f = fakes(goodTask, [ok, created('/worktrees/abc-123'), orcaError('worktree_not_found')]);
+  f.deps.log = (fields) => outcomes.push(fields.outcome);
+  assert.equal(await handleJob(config, f.deps, claim), 'launched');
+  assert.deepEqual(f.argv.filter((args) => args[1] === 'set').length, 1);
+  assert.ok(outcomes.includes('rename-failed'));
+  assert.equal(JSON.parse(readFileSync(f.deps.status, 'utf8')).lastError, null);
+  assert.deepEqual(f.updates, [['thought', '🛠️ Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing`.']]);
+});
+
+test('a rename gets a short timeout, so a hung Orca holds the job for 30 seconds at most', async () => {
+  const f = fakes(goodTask, [ok, created('/worktrees/abc-123')]);
+  const timeouts: number[] = [];
+  const exec = f.deps.exec;
+  f.deps.exec = async (file, args, timeout) => { if (args[1] === 'set') timeouts.push(timeout); return exec(file, args, timeout); };
+  await handleJob(config, f.deps, claim);
+  assert.deepEqual(timeouts, [30_000]);
+});
+
+test('a create reply without the worktree renames it by the launch\'s worktree id instead', async () => {
+  const reply = JSON.stringify({ ok: true, result: { lineage: null, launch: { worktreeId: 'repo-1::/worktrees/abc-123' } } });
+  const f = fakes(goodTask, [ok, reply]);
+  assert.equal(await handleJob(config, f.deps, claim), 'launched');
+  assert.deepEqual(f.argv.at(-1), ['worktree', 'set', '--worktree', 'id:repo-1::/worktrees/abc-123',
+    '--display-name', '🛠️ abc-123-do-the-thing', '--json']);
+});
+
+test('a create reply naming no worktree runs no rename and logs it as failed', async () => {
+  const outcomes: unknown[] = [];
+  const f = fakes(goodTask, [ok, ok]);
+  f.deps.log = (fields) => outcomes.push(fields.outcome);
+  assert.equal(await handleJob(config, f.deps, claim), 'launched');
+  assert.ok(!f.argv.some((args) => args[1] === 'set'));
+  assert.ok(outcomes.includes('rename-failed'));
+  assert.equal(JSON.parse(readFileSync(f.deps.status, 'utf8')).lastError, null);
+});
 
 test('a wayfinder issue without tags launches do-refine in refineRepo with the deep model, attended, without setup', async () => {
   const f = fakes(refineTask);
@@ -445,7 +499,7 @@ test('a refine launch posts its response after reporting launched, and is never 
   await poll(refineConfig, f.deps);
   assert.deepEqual(f.requests, ['POST /jobs/claim', 'GET /jobs/session-1/task', 'POST /jobs/session-1/updates',
     'POST /jobs/session-1/launched', 'POST /jobs/session-1/updates']);
-  assert.deepEqual(f.updates, [['thought', 'Started GPT-6 Luna in Orca on `someone/abc-123-do-the-thing`.'], ['response', refining]]);
+  assert.deepEqual(f.updates, [['thought', '🗺️ Started GPT-6 Luna in Orca on `someone/abc-123-do-the-thing`.'], ['response', refining]]);
   assert.deepEqual(readWatches(f.deps), {});
   assert.equal(readFileSync(f.deps.launches, 'utf8'), '{}');
 });
@@ -607,7 +661,7 @@ for (const restart of [false, true]) {
     assert.ok(!inbox.ops.includes('failed'));
     assert.ok(inbox.issueEdits.length > 0 && inbox.issueEdits.every((edit) => !('delegateId' in edit)));
     assert.equal(readFileSync(f.deps.launches, 'utf8'), '{}');
-    assert.deepEqual(inbox.thoughts, ['Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing`.']);
+    assert.deepEqual(inbox.thoughts, ['🛠️ Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing`.']);
   });
 }
 
@@ -637,7 +691,7 @@ test("another machine can't relaunch a job whose launch report was lost; the ori
   assert.equal(a.argv.filter((args) => args[0] === 'worktree').length, 1);
   assert.equal(readFileSync(a.deps.launches, 'utf8'), '{}');
   assert.equal(JSON.parse(readFileSync(a.deps.watches, 'utf8'))['session-1'].ready, true);
-  assert.deepEqual(inbox.thoughts, ['Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing`.']);
+  assert.deepEqual(inbox.thoughts, ['🛠️ Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing`.']);
   assert.equal(await poll(other, b.deps), false);
   assert.deepEqual(b.argv, []);
 });
@@ -730,7 +784,7 @@ test('recovery posts a lost thought once and remembers it across another reclaim
     await inbox.queue.deliver();
     assert.deepEqual(restarted.argv, []);
   }
-  assert.deepEqual(inbox.thoughts, ['Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing`.']);
+  assert.deepEqual(inbox.thoughts, ['🛠️ Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing`.']);
   assert.deepEqual(inbox.state(), ['launched']);
 });
 
@@ -1069,7 +1123,7 @@ for (const [pin, model, id] of [
     const models = { ...config.models, 'GPT-6 Astra': { agent: 'codex', model: 'gpt-6-astra' } };
     assert.equal(await handleJob({ ...config, models }, f.deps, claim), 'launched');
     assert.equal(f.argv[2]![f.argv[2]!.indexOf('--model') + 1], id);
-    assert.equal(f.updates.at(-1)?.[1], `Started ${model} in Orca on \`someone/abc-123-do-the-thing\`.`);
+    assert.equal(f.updates.at(-1)?.[1], `🛠️ Started ${model} in Orca on \`someone/abc-123-do-the-thing\`.`);
     assert.equal(f.updates.length, pin === 'luna' ? 1 : 2);
   });
 }
@@ -1481,7 +1535,7 @@ for (const [label, repos, rows] of [
 const closeoutTask: Partial<Task> = { ...goodTask, delegated: false, creatorId: null, statusType: 'completed',
   kind: 'closeout', launch: { repo: 'owner/repo', branch: goodTask.branchName } };
 const closeoutWorktree = { ...matchingWorktree, path: '/worktrees/abc-123' };
-const closing = 'Closing out in Orca on Example Mac; its completion comment lists anything still open.';
+const closing = '🧹 Closing out in Orca on Example Mac; its completion comment lists anything still open.';
 const byHand = "Run do-closeout by hand if it's still needed.";
 const lostLaunch = () => Object.assign(new Error('exit 1'), { stdout: JSON.stringify({ ok: false,
   error: { code: 'agent_session_operation_unknown', data: { retrySafe: true, operationId: '1800000000000-0123456789abcdef0123456789abcdef' } } }) });
@@ -1522,10 +1576,11 @@ test('a closeout with its worktree launches do-closeout there with the standard 
   const f = closeoutFakes();
   assert.equal(await handleJob(config, f.deps, claim), 'closeout-launched');
   assert.deepEqual(agentLaunches(f.argv), [closeoutArgv('claude', 'claude-opus-5-5', 'high', '/')]);
-  assert.deepEqual(f.updates, [['thought', 'Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing` for closeout.'], ['response', closing]]);
+  assert.deepEqual(f.updates, [['thought', '🧹 Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing` for closeout.'], ['response', closing]]);
   assert.deepEqual(f.requests, ['GET /jobs/session-1/task', 'POST /jobs/session-1/updates',
     'POST /jobs/session-1/launched', 'POST /jobs/session-1/updates']);
   assert.ok(!f.argv.some((args) => args[0] === 'worktree' && args[1] === 'create'));
+  assert.deepEqual(f.argv.at(-1), renamed('/worktrees/abc-123', '🧹 abc-123-do-the-thing'));
   assert.deepEqual(readWatches(f.deps), {});
   assert.equal(readFileSync(f.deps.launches, 'utf8'), '{}');
   assert.equal(JSON.parse(readFileSync(f.deps.status, 'utf8')).lastError, null);
@@ -1600,7 +1655,7 @@ test('a closeout whose launched report was lost is reported on reclaim without r
     return fetch(input, init);
   };
   await handleJob(config, f.deps, claim);
-  assert.deepEqual(f.updates, [['thought', 'Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing` for closeout.']]);
+  assert.deepEqual(f.updates, [['thought', '🧹 Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing` for closeout.']]);
   assert.equal(await handleJob(config, f.deps, claim), 'closeout-launched');
   assert.equal(agentLaunches(f.argv).length, 1);
   assert.deepEqual(f.updates.at(-1), ['response', closing]);
