@@ -118,4 +118,4 @@ The first `toml` code block under an exact `## Adding a repo` heading on a servi
 _Avoid_: setup script, onboarding steps
 
 **Work view**:
-One shared Linear issue view per active product (an initiative with status `Active`), named `Work: <Product>`. It shows issues with that Product label in `Todo` and not blocked, `In Progress` or `In Review`, grouped by status with Project and Labels as row properties.
+One shared Linear issue view per active product (an initiative with status `Active`), named `Work: <Product>`. It shows issues with that Product label in `Todo` and not blocked, `In Progress`, `In Review` or `🧹 Closing out`, grouped by status with Project and Labels as row properties.

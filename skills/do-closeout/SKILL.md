@@ -39,13 +39,13 @@ Fetch the issue, its comments, and the PR linked to it or opened from its branch
 
 **Merged PR.** Check each item and fix what's missing yourself:
 
-1. The issue is in the done status per **Issue statuses** (the tracker's automation may already have set it).
+1. **Status.** If **Issue statuses** has a closing-out status (merged, closeout not finished), the done status waits for a **Good to close** verdict; [the verdict](#6-verdict) sets it. Otherwise, the issue is in the done status (the tracker's automation may already have set it).
 2. The merged PR is linked on the issue.
 3. The acceptance criteria that the merged change meets are checked off. Read the diff to decide; don't tick a criterion you can't confirm.
-4. A completion comment with a dateline per **Comment shape**: what landed, and any follow-ups. Post it even when automation already set the issue done; it's the record that closeout ran. Skip it only if one is already there.
-5. If the issue sits on a map, update the map per [maps.md](../do-refine/maps.md). Set the map to its finished status only when its Destination is reached and no open issues remain.
+4. A completion comment with a dateline per **Comment shape**: what landed, and any follow-ups. Post it even when automation already moved the issue on; it's the record that closeout ran. Skip it only if one is already there.
+5. If the issue sits on a map, update the map per [maps.md](../do-refine/maps.md). Set the map to its finished status only when its Destination is reached and no open issues remain; with a closing-out status, that waits for [the verdict](#6-verdict), since this issue is still open until then.
 
-**Partial landing.** If only some criteria landed, don't set the done status. The issue stays in progress, with a comment saying what landed and what remains.
+**Partial landing.** If only some criteria landed, never set the done status, whatever the verdict. The issue stays in, or goes back to, the in-progress status, with a comment saying what landed and what remains.
 
 ## 3. Local git state
 
@@ -86,7 +86,7 @@ A failed, unrun (including declined), non-runnable or unrecorded step stays unde
 
 ## What you may change
 
-- **Fix by yourself:** tracker closeout items only, from [step 2](#2-tracker-closeout).
+- **Fix by yourself:** tracker closeout items only, from [step 2](#2-tracker-closeout) and the verdict's **Status**.
 - **Ask first:** list the loose ends, doc closeout items and unticked PR after-merge steps, ask about each item with AskUserQuestion where the client has it, otherwise in chat, and do each one only after the user says yes to it. For PR steps, run, verify and record completion per the checklist procedure above. File a follow-up as a new issue in the triage status per **Issue statuses**, linked to this issue as related.
 - **Never:** touch git, branches or worktrees. No commits, pushes, stash drops, branch deletes or worktree removal; report them and let the user act.
 - **Delegated runs:** nobody is asked. Do what [Delegated runs](#delegated-runs) allows and leave the rest open. Its guarded `git pull --ff-only` on the main checkout is the only exception to **Never**.
@@ -108,6 +108,11 @@ End with a bold verdict line, then two short bullet lists, as plain Markdown. It
 - <what's left, and who acts on it>
 
 The verdict is **Good to close** only when nothing is left under **Still open**. Anything open (an unmerged PR, uncommitted or unpushed work, a loose end the user wants kept) makes it **Not yet**. A loose end the user dismisses isn't open.
+
+**Status.** For a merged PR, when **Issue statuses** has a closing-out status and the landing wasn't [partial](#2-tracker-closeout), set the status before printing the verdict, and list the change under **Fixed**:
+
+- **Good to close:** set the done status, then finish the issue's map per item 5 of [step 2](#2-tracker-closeout) if this issue was its last open one.
+- **Not yet:** leave the issue in the closing-out status. If it's in another status that isn't canceled or duplicate, move it there.
 
 ## 7. Suggested next ticket
 

@@ -26,7 +26,8 @@ The skills hold the procedure. This file holds only the values they look up, und
 | `Todo`        | Ready. Blockers still decide whether work can start.                                                                         |
 | `In Progress` | Claimed, including draft PRs.                                                                                                |
 | `In Review`   | PR out of draft and ready to merge. A draft PR stays `In Progress`. Set only by Linear's GitHub automation, never by agents. |
-| `Done`        | Decision resolved, or PR merged.                                                                                             |
+| `🧹 Closing out` | PR merged, closeout not finished. Set by Linear's GitHub automation on merge; `do-closeout` sets `Done`.                  |
+| `Done`        | Decision resolved, or closeout finished.                                                                                     |
 | `Canceled`    | Declined or won't do.                                                                                                        |
 | `Duplicate`   | Duplicate of another issue.                                                                                                  |
 
@@ -93,10 +94,10 @@ The factory expects the shared Factory views below and one work view per active 
 | `Factory: Uncharted`  | Projects | Project status `Uncharted`; grouped by initiative                                                                                             |
 | `Factory: Decisions`  | Issues   | Status `Todo`, no assignee, not blocked, a `wayfinder:` label, in a project                                                                   |
 | `Factory: Ready`      | Issues   | Status `Todo`, no assignee, not blocked, no `wayfinder:` label; grouped by Product, then project                                              |
-| `Factory: Agent Work` | Issues   | Status `In Progress` or `In Review`, and either delegated to an agent or carrying a `Dispatch target` label; grouped by Product, then project |
-| `Factory: All Work`   | Issues   | Status `In Progress` or `In Review`, or `Todo` with an assignee or a delegate                                                                 |
+| `Factory: Agent Work` | Issues   | Status `In Progress`, `In Review` or `🧹 Closing out`, and either delegated to an agent or carrying a `Dispatch target` label; grouped by Product, then project |
+| `Factory: All Work`   | Issues   | Status `In Progress`, `In Review` or `🧹 Closing out`, or `Todo` with an assignee or a delegate                                                                 |
 
-Each active product (an initiative with status `Active`) has one shared work view named `Work: <Product>` on the same team. It includes issues with that Product label and either (`Todo` and not blocked), `In Progress` or `In Review`, including decision tickets. Group it by status, with Project and Labels as row properties.
+Each active product (an initiative with status `Active`) has one shared work view named `Work: <Product>` on the same team. It includes issues with that Product label and either (`Todo` and not blocked), `In Progress`, `In Review` or `🧹 Closing out`, including decision tickets. Group it by status, with Project and Labels as row properties.
 
 ## Triage
 
