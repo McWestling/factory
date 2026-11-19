@@ -39,12 +39,12 @@ Skill or template text that agents follow counts as a runtime change: agents run
 
 ## Full form
 
-Every full-form body includes one visual right after the Summary's opening sentences:
+Add one visual right after the Summary's opening sentences only when it shows something the prose can't: a flow with several steps, a before and after, or who sees what. Otherwise the body has none. When there is one, it follows these rules:
 
 - **Small:** 3–5 lines.
 - **Plain words:** use the same language as the surrounding prose, with no code expressions, function signatures or SQL.
 - **Shape:** use **Steps** for a flow (`request → check → result`), **Before and after** for a behavior change, or **Who sees what** for permissions or routing.
-- **Format:** default to a `text` block so it also reads well in `gh pr view` and Linear's linkback. Use Mermaid only for real branching, such as a state machine.
+- **Format:** default to a `text` block so it also reads well in `gh pr view` and Linear's linkback, with one plain line per step. Use Mermaid only for real branching, such as a state machine.
 - **Prose:** put a one-sentence plain summary immediately above the visual, so it confirms what the prose already explains.
 
 For example, **Who sees what**:
@@ -63,7 +63,7 @@ No orchestra set         ──▶  sees nothing
 <What the user or system can now do, in plain words.> <A sentence or two placing the change in the overall system.>
 
 ```text
-<One visual following the standard above.>
+<One visual following the rules above, when it shows something the prose can't.>
 ```
 
 <What the change does, in up to five one-sentence bullets. One clause on what's deliberately left out of this change.>
