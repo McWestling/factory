@@ -103,6 +103,19 @@ the in-progress status, `Orca` label and session creator as assignee. A failed
 job clears the delegate only if it is still this app. Field writes retry through
 Cloud Inbox's outbox.
 
+### Automated closeout
+
+When a PR the Runner launched merges, the Runner starts a fresh agent in the
+issue's worktree to run `do-closeout`, so the after-merge steps run without you.
+Cloud Inbox queues the [closeout job](cloud-inbox/README.md#closeout-jobs) for the
+machine that launched the PR. The Runner starts the standard level's model with
+`orca agent launch` in that worktree, posts a thought and a response, and doesn't
+watch it; `do-closeout`'s completion comment lists anything still open.
+
+Nothing launches when the issue was canceled, the merged PR can't be verified as
+the launch's, or the worktree is gone from this machine. The response says which;
+run `do-closeout` by hand if it's still needed. A failed launch isn't requeued.
+
 ### Install and control the Runner
 
 From the repo root, with the config ready and `node`, `orca` and `swiftc` on PATH:
