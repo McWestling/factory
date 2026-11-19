@@ -70,6 +70,24 @@ _Avoid_: step, job, gate
 The globs, relative to the repo root, whose change selects a check. They may point into any app in the repo.
 _Avoid_: path filters, watch paths
 
+## Review
+
+**Reviewer**:
+The independent, read-only agent `do-review` starts to check a draft PR: an Orca orchestration worker in Orca, otherwise the host's subagent. It may run checks but never edits, commits, pushes or comments.
+_Avoid_: review agent, auditor
+
+**Fixer**:
+The session running `do-review`, usually the one that built the PR. It starts the reviewer, fixes the findings it agrees with on the same draft PR, and posts the report.
+_Avoid_: implementer, author
+
+**Finding**:
+One numbered problem the reviewer reports: a `file:line`, a severity (`blocker`, `should-fix` or `nit`), the concrete failure scenario and the fix wanted.
+_Avoid_: issue, which is a tracker ticket; comment
+
+**Verdict**:
+The reviewer's last line each round: `happy`, or `not happy until N, M are fixed`. `happy` also means the repo's full check passed on the reviewed commit.
+_Avoid_: approval, which GitHub uses for something else
+
 ## Setup
 
 **Home repo**:
