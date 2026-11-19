@@ -441,6 +441,33 @@ test('a failed rename is logged but leaves the outcome, lastError and messages a
   assert.deepEqual(f.updates, [['thought', '🛠️ Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing`.']]);
 });
 
+test('a rename gets a short timeout, so a hung Orca holds the job for 30 seconds at most', async () => {
+  const f = fakes(goodTask, [ok, created('/worktrees/abc-123')]);
+  const timeouts: number[] = [];
+  const exec = f.deps.exec;
+  f.deps.exec = async (file, args, timeout) => { if (args[1] === 'set') timeouts.push(timeout); return exec(file, args, timeout); };
+  await handleJob(config, f.deps, claim);
+  assert.deepEqual(timeouts, [30_000]);
+});
+
+test('a create reply without the worktree renames it by the launch\'s worktree id instead', async () => {
+  const reply = JSON.stringify({ ok: true, result: { lineage: null, launch: { worktreeId: 'repo-1::/worktrees/abc-123' } } });
+  const f = fakes(goodTask, [ok, reply]);
+  assert.equal(await handleJob(config, f.deps, claim), 'launched');
+  assert.deepEqual(f.argv.at(-1), ['worktree', 'set', '--worktree', 'id:repo-1::/worktrees/abc-123',
+    '--display-name', '🛠️ abc-123-do-the-thing', '--json']);
+});
+
+test('a create reply naming no worktree runs no rename and logs it as failed', async () => {
+  const outcomes: unknown[] = [];
+  const f = fakes(goodTask, [ok, ok]);
+  f.deps.log = (fields) => outcomes.push(fields.outcome);
+  assert.equal(await handleJob(config, f.deps, claim), 'launched');
+  assert.ok(!f.argv.some((args) => args[1] === 'set'));
+  assert.ok(outcomes.includes('rename-failed'));
+  assert.equal(JSON.parse(readFileSync(f.deps.status, 'utf8')).lastError, null);
+});
+
 test('a wayfinder issue without tags launches do-refine in refineRepo with the deep model, attended, without setup', async () => {
   const f = fakes(refineTask);
   assert.equal(await handleJob(refineConfig, f.deps, claim), 'launched');
