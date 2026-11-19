@@ -58,11 +58,14 @@ Verdict: not happy until 1, 3 are fixed
 
 List only the findings you still need fixed. `happy` means none are left and the full check passed. Nits never hold up `happy`.
 
+When you run as an Orca worker, put the whole report, every finding and the verdict line, in the `worker_done` body, not a summary.
+
 ## Re-reviews
 
 When the fixer asks you to look again, it names the last commit you reviewed and the new head. Review only the changes between them (`git diff <last>..<head>`), then:
 
 - confirm each earlier finding is fixed, or say why it isn't;
 - weigh each pushback's reason, and either drop the finding or keep it in your verdict;
+- leave out of your verdict a finding the fixer reports as filed or left to the person;
 - rerun the full check on the new head;
 - report only what is still open or newly broken, keeping the old numbers and numbering new findings after them.

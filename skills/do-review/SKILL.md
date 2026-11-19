@@ -24,7 +24,7 @@ This is the one place that names it; a fork changes it here.
 - **Model:** `claude-fable-5-2` (Fable)
 - **Effort:** `medium`
 
-A reviewer in the arguments overrides it: an agent, a model, an effort, or any of them together, such as `codex gpt-6.1-sol high`. A part it leaves out keeps the default when the agent is the same, and otherwise uses that agent's own default.
+A reviewer in the arguments overrides it: an agent, a model, an effort, or any of them together, such as `codex gpt-6.1-sol high`. A part it leaves out keeps the default when the agent is the same, and otherwise uses that agent's own default. Orca takes an effort only with a model, so an effort named without a model for another agent is dropped, and the report says so.
 
 ## Who is in the session
 
@@ -60,7 +60,7 @@ orca orchestration worker-start --spec-file <brief> --worktree current \
   --agent <agent> --model <model> --effort <effort> --task-title "Review PR #<n>"
 ```
 
-Keep the dispatch id from the receipt, end your turn, and let Orca wake you with the worker's result. Don't poll.
+Leave out `--model` or `--effort` when the reviewer has no value for it. Keep the dispatch id from the receipt, end your turn, and let Orca wake you. Don't poll. The findings and verdict arrive in the worker's `worker_done` body; if it is cut short, read the rest with `orca orchestration worker-read --dispatch <id>`.
 
 **Outside Orca**, the reviewer is the host's own subagent, given the brief file's text as its prompt, with the reviewer's model and effort where the host lets you choose. If the host can't run that model, use its default and say so in the report.
 
@@ -68,16 +68,18 @@ Keep the dispatch id from the receipt, end your turn, and let Orca wake you with
 
 A **round** is one review by the reviewer. The first review is round 1. The loop stops when the reviewer's verdict is `happy`, or after round 3's verdict.
 
-After each round that isn't `happy`:
+After round 1 or 2, when the verdict isn't `happy`:
 
 1. **Triage first.** Before changing any code, say which findings you agree with, one line per finding.
 2. **Fix** each finding you agree with by the smallest complete change, on the same branch and PR. Add a regression test for each fixed finding where there is a testable seam. Keep the PR a draft. If the fixes make the PR's Summary or Evidence wrong, update them.
-3. **Push back** on a `should-fix` or `nit` you won't fix, with a reason. A `blocker` you won't fix goes to the person: ask now if someone is in the session, otherwise it goes under **Needs you**. Keep fixing the rest either way.
+3. **Push back** on a `should-fix` or `nit` you won't fix, with a reason. A `blocker` you won't fix, and a finding about the PR's merge-risk rating, are **left to the person**: ask now if someone is in the session, otherwise they go under **Needs you**. Keep fixing the rest either way.
 4. **File** work a finding surfaces that is outside the PR's scope as a new issue in the triage status per **Issue statuses**, as `do-implement`'s Build step files out-of-scope finds. Tell the reviewer it was filed, not fixed.
 5. **Verify and push** as `do-implement`'s step 7 says: merge the latest default branch, commit, run the repo's full check or preflight, and push only the commit that passed.
-6. **Ask for a re-review.** Send the reviewer the last reviewed commit, the new head commit, and what happened to each open finding: fixed (with the commit and test), pushed back (with the reason) or filed (with the issue). In Orca, use `orca orchestration send --to dispatch:<id>` and end your turn; it reopens a worker that has closed. Outside Orca, continue the same subagent if the host can; otherwise start a new one with the brief and the earlier findings.
+6. **Ask for a re-review.** Send the reviewer the last reviewed commit, the new head commit, and what happened to each open finding: fixed (with the commit and test), pushed back (with the reason), filed (with the issue) or left to the person. In Orca, run `orca orchestration send --to dispatch:<id> --subject "Re-review PR #<n>" --body "$(cat <path>)"` and end your turn; it reopens a worker that has closed. Outside Orca, continue the same subagent if the host can; otherwise start a new one with the brief and the earlier findings.
 
-The reviewer reports in the shape [reviewer-brief.md](reviewer-brief.md) sets: numbered findings, each with `file:line`, a severity, the failure scenario and the fix wanted, then a verdict line. If a reply doesn't fit that shape or has no verdict line, ask it once to restate; a second miss counts as `not happy` for that round.
+After round 3, change nothing more and go to the report.
+
+If a reply doesn't fit [reviewer-brief.md](reviewer-brief.md)'s findings shape or has no verdict line, ask it once to restate; a second miss counts as `not happy` for that round.
 
 ## 5. Report
 
@@ -98,10 +100,10 @@ YYYY-MM-DD — Review: <the last verdict, such as happy, or not happy until 2 ar
 
 **Needs you:**
 
-- <each unresolved blocker, or each finding still in the verdict after round 3, with what is left to decide>
+- <each finding left to the person, and each finding still in the verdict after round 3, with what is left to decide>
 ```
 
-Leave out **Needs you** when the verdict is `happy` and no blocker went unresolved. A `happy` review has no findings list when the first round found nothing; say "None" there.
+Leave out **Needs you** when nothing is listed under it. A `happy` review has no findings list when the first round found nothing; say "None" there.
 
 When there is a **Needs you** heading:
 
@@ -113,6 +115,6 @@ End the session with the verdict and the report's links.
 ## Boundaries
 
 - Never mark the PR ready, merge it, or change the issue's status or assignee.
-- Never write or change the PR's merge-risk rating (its **Merge Danger** section). The reviewer may raise a wrong one as an ordinary finding; leave the rating to the person and list that finding under **Needs you**.
+- Never write or change the PR's merge-risk rating (its **Merge Danger** section). The reviewer may raise a wrong one as an ordinary finding; it is left to the person, per [the loop](#4-the-loop).
 - One PR, its own branch, and this checkout only.
 - The reviewer stays read-only. If it edits, commits, pushes or comments anyway, stop the loop and put what it did under **Needs you**.
