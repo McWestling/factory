@@ -1,5 +1,6 @@
 // Factory Runner: claims one Cloud Inbox job at a time, checks it, starts the issue's
-// agent in a new Orca worktree, and reports the outcome back through Cloud Inbox.
+// agent in a new Orca worktree (or, for a closeout, do-closeout in the launch's existing one),
+// and reports the outcome back through Cloud Inbox.
 // It holds no Linear credential. Everything Cloud Inbox sends is untrusted input.
 
 import { execFile } from 'node:child_process';
@@ -17,6 +18,10 @@ const POLL_MS = 15_000;
 /** Cloud Inbox's history window: a session not reclaimed by then never will be. */
 const LAUNCH_KEEP_MS = 30 * 24 * 60 * 60_000;
 const RETRY = 'Fix it and delegate again to retry.';
+const BY_HAND = "Run do-closeout by hand if it's still needed.";
+const DELEGATED = 'Delegated run: nobody is watching this session.';
+/** Orca's id for a launch whose reply was lost, replayed with `--retry-launch`. */
+const OPERATION = /^\d{13}-[0-9a-f]{32}$/;
 const REPO = /^[\w.-]+\/[\w.-]+$/;
 const ATTENDED = 'Attended run: a person will join this session in Orca. Ask every question with your question tool (AskUserQuestion) and wait for the answer.';
 export const NOT_ALLOWED = "This machine doesn't accept dispatches from you.";
@@ -44,6 +49,10 @@ export type Task = {
   branchName: string;
   statusType: string;
   labels?: string[];
+  /** Set by Cloud Inbox for a closeout job, with the launch it closes out and, when there's nothing to close, why. */
+  kind?: 'closeout';
+  launch?: LaunchEvidence;
+  skip?: 'canceled' | 'unverified';
 };
 
 export type Exec = (file: string, args: string[], timeoutMs: number) => Promise<{ stdout: string }>;
@@ -259,7 +268,7 @@ function inbox(config: RunnerConfig, deps: Deps) {
     `/jobs/${encodeURIComponent(claim.sessionId)}/${op}?claimId=${encodeURIComponent(claim.claimId)}`;
   return {
     async claim(): Promise<Claim | null> {
-      const response = await call('POST', '/jobs/claim');
+      const response = await call('POST', '/jobs/claim?kinds=delegation,closeout');
       if (response.status === 204) return null;
       const claim = await response.json() as Partial<Claim>;
       if (!isText(claim.issueId) || !isText(claim.sessionId) || !isText(claim.claimId)) throw new Error('cloud-inbox-claim');
@@ -299,11 +308,17 @@ function inbox(config: RunnerConfig, deps: Deps) {
   };
 }
 
-/** The exact argv for `orca worktree create`, per docs/issue-format.md. */
-export function launchArgs(config: RunnerConfig, repoPath: string, model: string, task: Pick<Task, 'identifier' | 'branchName'>, refine = false) {
+/** How Orca starts a configured model; Luna runs at high effort or more. */
+function settings(config: RunnerConfig, model: string) {
   const { agent, model: id, effort: configuredEffort } = config.models[model]!;
   const effort = agent === 'codex' && /(?:^|-)luna(?:-|$)/i.test(id)
     && !['high', 'xhigh', 'max'].includes(configuredEffort ?? '') ? 'high' : configuredEffort;
+  return { agent, id, effort };
+}
+
+/** The exact argv for `orca worktree create`, per docs/issue-format.md. */
+export function launchArgs(config: RunnerConfig, repoPath: string, model: string, task: Pick<Task, 'identifier' | 'branchName'>, refine = false) {
+  const { agent, id, effort } = settings(config, model);
   const skill = refine ? 'do-refine' : config.skill;
   return [
     'worktree', 'create',
@@ -313,17 +328,25 @@ export function launchArgs(config: RunnerConfig, repoPath: string, model: string
     '--agent', agent,
     '--model', id,
     ...(effort ? ['--effort', effort] : []),
-    `--prompt=${agent === 'codex' ? '$' : '/'}${skill} ${task.identifier}\n${refine ? ATTENDED : 'Delegated run: nobody is watching this session.'}`,
+    `--prompt=${agent === 'codex' ? '$' : '/'}${skill} ${task.identifier}\n${refine ? ATTENDED : DELEGATED}`,
     '--setup', skill === 'do-implement' ? 'run' : 'skip',
     '--linear-issue', task.identifier,
     '--json',
   ];
 }
 
-/** Runs `orca`, returning null on success or Orca's error code. */
+/** The exact argv for a closeout's `orca agent launch` in the launch's existing worktree. */
+function closeoutArgs(config: RunnerConfig, worktree: string, model: string, identifier: string) {
+  const { agent, id, effort } = settings(config, model);
+  return ['agent', 'launch', '--agent', agent, '--worktree', `path:${worktree}`, '--model', id,
+    ...(effort ? ['--effort', effort] : []),
+    '--prompt', `${agent === 'codex' ? '$' : '/'}do-closeout ${identifier}\n${DELEGATED}`, '--json'];
+}
+
+/** Runs `orca`, returning null on success or Orca's error code; a lost launch reply's id goes in `lost`. */
 // Open, create and its retry stay well inside Cloud Inbox's 10-minute lease.
 // ponytail: a create killed at its timeout may leave a worktree behind; the job still fails.
-async function orca(exec: Exec, args: string[]): Promise<string | null> {
+async function orca(exec: Exec, args: string[], lost?: { operationId?: string }): Promise<string | null> {
   let stdout: string;
   try {
     ({ stdout } = await exec('orca', args, args[0] === 'open' ? 60_000 : 120_000));
@@ -336,6 +359,8 @@ async function orca(exec: Exec, args: string[]): Promise<string | null> {
     const result = JSON.parse(stdout);
     if (result?.ok === true) return null;
     const code = result?.error?.code;
+    const operationId = result?.error?.data?.operationId;
+    if (lost && typeof operationId === 'string' && OPERATION.test(operationId)) lost.operationId = operationId;
     return typeof code === 'string' && /^[a-z0-9_]{1,64}$/.test(code) ? code : 'orca_failed';
   } catch {
     return 'orca_bad_output';
@@ -352,6 +377,8 @@ type Launch = {
   githubRepo?: string;
   /** A refine launch: it responds at launch and is never watched for a PR. */
   refine?: boolean;
+  /** A closeout launch: like refine, it responds at launch and is never watched. */
+  closeout?: boolean;
 };
 type Launches = Record<string, Launch>;
 
@@ -366,6 +393,7 @@ function readLaunches(deps: Deps): Launches {
         && (entry.githubRepo === undefined || isLaunchEvidence({ repo: entry.githubRepo, branch: entry.branch }))
         && isText(entry.model) && typeof entry.launched === 'boolean' && typeof entry.thoughtPosted === 'boolean'
         && (entry.refine === undefined || typeof entry.refine === 'boolean')
+        && (entry.closeout === undefined || typeof entry.closeout === 'boolean')
     )) throw new Error('invalid launch record');
     return launches as Launches;
   } catch (error) {
@@ -395,17 +423,21 @@ function record(deps: Deps, log: (outcome: string) => void, change: (launches: L
 
 /** Read-only evidence for an interrupted create; a conflict alone proves nothing. */
 // shortcut: a worktree does not prove agent startup; use a durable caller-supplied launch id when Orca supports one.
-async function hasWorktree(deps: Deps, launch: Launch): Promise<boolean> {
+const hasWorktree = async (deps: Deps, launch: Launch) => Boolean(await findWorktree(deps, launch.repo, launch.branch));
+
+/** The checkout's one local Orca worktree at `branch`, or undefined when Orca can't show one. */
+async function findWorktree(deps: Deps, repoPath: string, branch: string): Promise<Record<string, unknown> | undefined> {
   try {
-    const selector = `path:${launch.repo}`;
+    const selector = `path:${repoPath}`;
     const repo = JSON.parse((await deps.exec('orca', ['repo', 'show', '--repo', selector, '--json'], 30_000)).stdout);
-    if (repo?.ok !== true || !isText(repo.result?.repo?.id) || repo.result.repo.path !== launch.repo) return false;
+    if (repo?.ok !== true || !isText(repo.result?.repo?.id) || repo.result.repo.path !== repoPath) return undefined;
     const list = JSON.parse((await deps.exec('orca', ['worktree', 'list', '--repo', selector, '--limit', '10000', '--json'], 30_000)).stdout);
-    return list?.ok === true && Array.isArray(list.result?.worktrees) && list.result.worktrees.some((row: unknown) =>
+    if (list?.ok !== true || !Array.isArray(list.result?.worktrees)) return undefined;
+    return list.result.worktrees.find((row: unknown): row is Record<string, unknown> =>
       isObject(row) && row.repoId === repo.result.repo.id && row.hostId === 'local'
-      && row.branch === `refs/heads/${launch.branch}`);
+      && row.branch === `refs/heads/${branch}`);
   } catch {
-    return false;
+    return undefined;
   }
 }
 
@@ -522,9 +554,10 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
       if (current[job.sessionId]?.claimId === job.claimId) edit(current);
     });
     try {
-      if (launches[job.sessionId]?.refine) {
+      const saved = launches[job.sessionId];
+      if (saved?.refine || saved?.closeout) {
         // Its launched report landed but the response didn't: post that instead of watching.
-        await api.update(job, 'response', refining(config));
+        await api.update(job, 'response', saved.closeout ? closing(config) : refining(config));
         change((current) => delete current[job.sessionId]);
         record(deps, log, (current) => delete current[job.sessionId]);
         log('finished');
@@ -591,27 +624,29 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
 }
 
 const refining = (config: RunnerConfig) => `Refining in Orca on ${config.machine}; continue there.`;
+const closing = (config: RunnerConfig) => `Closing out in Orca on ${config.machine}; its completion comment lists anything still open.`;
 
-/** Reports a recorded launch, retaining its claim for completion watching unless it's a refine launch. */
+/** Reports a recorded launch, retaining its claim for completion watching unless it's a refine or closeout launch. */
 async function reportLaunch(config: RunnerConfig, api: ReturnType<typeof inbox>, deps: Deps, claim: Claim, log: (outcome: string) => void, launch: Launch) {
+  const launched = launch.closeout ? 'closeout-launched' : 'launched';
   if (!launch.thoughtPosted) {
-    const posted = await api.update(claim, 'thought', `Started ${launch.model} in Orca on \`${launch.branch}\`.`)
+    const posted = await api.update(claim, 'thought', `Started ${launch.model} in Orca on \`${launch.branch}\`${launch.closeout ? ' for closeout' : ''}.`)
       .then(() => true, () => false);
     if (!posted) {
       // Keep the claim recoverable until its thought can be queued too.
       log('thought-failed');
-      return 'launched';
+      return launched;
     }
     launch.thoughtPosted = true;
     record(deps, log, (launches) => { launches[claim.sessionId] = launch; });
   }
   const evidence = launch.githubRepo ? { repo: launch.githubRepo, branch: launch.branch } : undefined;
-  if (launch.refine) {
+  if (launch.refine || launch.closeout) {
     // A lost report leaves the launch record: a reclaim, or watch recovery once launched, finishes it.
     if (!await api.finish(claim, 'launched', evidence).then(() => true, () => false)) log('launched-report-failed');
-    else if (!await api.update(claim, 'response', refining(config)).then(() => true, () => false)) log('response-failed');
+    else if (!await api.update(claim, 'response', launch.closeout ? closing(config) : refining(config)).then(() => true, () => false)) log('response-failed');
     else record(deps, log, (launches) => delete launches[claim.sessionId]);
-    return 'launched';
+    return launched;
   }
   try {
     changeWatches(deps, (watches) => {
@@ -675,7 +710,7 @@ export async function handleJob(config: RunnerConfig, deps: Deps, claim: Claim):
   finally {
     const entry = { identifier: value.current.identifier, outcome, time: time(deps) };
     value.recent = [...value.recent, entry].slice(-10);
-    if (outcome !== 'launched' && outcome !== 'undelegated') value.lastError = entry;
+    if (!['launched', 'undelegated', 'closeout-launched', 'closeout-canceled'].includes(outcome)) value.lastError = entry;
     value.current = null;
     writeStatus(deps);
   }
@@ -684,10 +719,12 @@ export async function handleJob(config: RunnerConfig, deps: Deps, claim: Claim):
 async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<string> {
   const api = inbox(config, deps);
   const log = (outcome: string) => deps.log({ event: 'job', session: claim.sessionId, outcome });
-  const refuse = async (outcome: string, message: string) => {
+  let closeout = false;
+  const refuse = async (outcome: string, message: string, type: 'error' | 'response' = 'error') => {
+    if (closeout) outcome = `closeout-${outcome.replace(/^orca-/, '')}`;
     log(outcome);
     // Each report is tried even if the one before it failed; a lost report leaves the lease to expire.
-    await api.update(claim, 'error', message).catch(() => log('error-update-failed'));
+    await api.update(claim, type, message).catch(() => log(`${type}-update-failed`));
     await api.finish(claim, 'failed').catch(() => log('failed-report-failed'));
     return outcome;
   };
@@ -710,19 +747,28 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
     return refuse('task-unreadable', `Couldn't read the issue from Cloud Inbox. Check that Cloud Inbox is connected. ${RETRY}`);
   }
   report(config, deps);
-  if (task.delegated !== true) {
+  closeout = task.kind === 'closeout';
+  const retry = closeout ? BY_HAND : RETRY;
+  const description = typeof task.description === 'string' ? task.description : '';
+  const refine = !closeout && Array.isArray(task.labels) && task.labels.some((label) => typeof label === 'string' && label.startsWith('wayfinder:'));
+  let issue: DelegatorIssue;
+  let branchName = task.branchName;
+  if (closeout) {
+    // Cloud Inbox made this session itself and verified the launch, so the delegate and creator don't apply.
+    if (task.skip === 'canceled') return refuse('canceled', 'Issue canceled; no closeout launched.', 'response');
+    if (task.skip !== undefined || !isLaunchEvidence(task.launch)) {
+      return refuse('unverified', `Couldn't verify the merged PR came from this launch; nothing launched. ${BY_HAND}`, 'response');
+    }
+    issue = { repo: task.launch.repo, level: 'standard' };
+    branchName = task.launch.branch;
+  } else if (task.delegated !== true) {
     // Reporting ends the claim; Cloud Inbox clears the delegate only while it's still this app.
     log('undelegated');
     await api.finish(claim, 'failed').catch(() => log('failed-report-failed'));
     return 'undelegated';
-  }
-  if (!isText(task.creatorId) || !config.allowedCreatorIds.includes(task.creatorId)) {
+  } else if (!isText(task.creatorId) || !config.allowedCreatorIds.includes(task.creatorId)) {
     return refuse('creator-refused', NOT_ALLOWED);
-  }
-  const description = typeof task.description === 'string' ? task.description : '';
-  const refine = Array.isArray(task.labels) && task.labels.some((label) => typeof label === 'string' && label.startsWith('wayfinder:'));
-  let issue: DelegatorIssue;
-  if (refine) {
+  } else if (refine) {
     // Decision tickets carry no level or repo tag: they run in the planning repo with the deep model.
     if (!config.refineRepo) {
       return refuse('refused-refineRepo', `Decision tickets need the Runner config key \`refineRepo\` set to the planning repo (owner/name) on ${config.machine}. Set it and delegate again to retry.`);
@@ -735,12 +781,12 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
     }
     issue = parsed;
   }
-  const { identifier, branchName } = task;
+  const { identifier } = task;
   if (typeof identifier !== 'string' || !IDENTIFIER.test(identifier)) {
-    return refuse('bad-identifier', `The issue id isn't a plain Linear id like ABC-123. ${RETRY}`);
+    return refuse('bad-identifier', `The issue id isn't a plain Linear id like ABC-123. ${retry}`);
   }
   if (typeof branchName !== 'string' || branchName.length > 200 || !BRANCH.test(branchName) || branchName.includes('..')) {
-    return refuse('bad-branch', `The issue's Linear branch name isn't a plain git branch name. ${RETRY}`);
+    return refuse('bad-branch', `The issue's Linear branch name isn't a plain git branch name. ${retry}`);
   }
 
   const matched = issue.model === undefined ? undefined : matchModel(issue.model, Object.keys(config.models));
@@ -750,7 +796,7 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
   }
   const opened = await orca(deps.exec, ['open', '--json']);
   if (opened === 'orca_not_found') {
-    return refuse('orca-not-found', `The Runner can't find the \`orca\` command on ${config.machine}. Put Orca's CLI on its PATH. ${RETRY}`);
+    return refuse('orca-not-found', `The Runner can't find the \`orca\` command on ${config.machine}. Put Orca's CLI on its PATH. ${retry}`);
   }
   let paths: string[];
   try {
@@ -764,16 +810,18 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
       paths.push(row.path);
     }
   } catch {
-    return refuse('orca-repos-unreadable', `Couldn't read registered repos from Orca on ${config.machine}. Check \`orca repo list --json\`. ${RETRY}`);
+    return refuse('orca-repos-unreadable', `Couldn't read registered repos from Orca on ${config.machine}. Check \`orca repo list --json\`. ${retry}`);
   }
   if (paths.length !== 1) {
     return refuse('refused-repo', paths.length === 0
-      ? `Orca has no registered GitHub checkout for \`${issue.repo}\` on ${config.machine}. Add its checkout in Orca. ${RETRY}`
-      : `Orca has multiple registered checkouts for \`${issue.repo}\` on ${config.machine}. Keep one registration for that GitHub repo. ${RETRY}`);
+      ? `Orca has no registered GitHub checkout for \`${issue.repo}\` on ${config.machine}. Add its checkout in Orca. ${retry}`
+      : `Orca has multiple registered checkouts for \`${issue.repo}\` on ${config.machine}. Keep one registration for that GitHub repo. ${retry}`);
   }
   const repoPath = paths[0]!;
 
-  if (saved && saved.repo === repoPath
+  // A closeout's worktree exists before it launches, so it can't show an interrupted launch.
+  // ponytail: a Runner killed mid-launch relaunches closeout on reclaim; save Orca's operation id before launching if Orca ever takes one.
+  if (!closeout && saved && saved.repo === repoPath
     && saved.branch === branchName && Object.hasOwn(config.models, saved.model) && await hasWorktree(deps, saved)) {
     saved.launched = true;
     record(deps, log, (launches) => { launches[claim.sessionId] = saved; });
@@ -781,24 +829,38 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
     return reportLaunch(config, api, deps, claim, log, saved);
   }
 
-  const launch: Launch = { at: (deps.now ?? Date.now)(), repo: repoPath, branch: branchName,
-    model, githubRepo: issue.repo, launched: false, thoughtPosted: false, ...(refine ? { refine } : {}) };
-  if (!record(deps, log, (launches) => { launches[claim.sessionId] = launch; })) {
-    return refuse('launch-record-failed', `Couldn't save the launch intent. Check the Runner config directory is writable. ${RETRY}`);
+  let worktree: unknown;
+  if (closeout) {
+    worktree = (await findWorktree(deps, repoPath, branchName))?.path;
+    if (!isText(worktree) || !isAbsolute(worktree) || worktree.includes('\0')) {
+      return refuse('no-worktree', `The worktree for ${branchName} is gone on ${config.machine}; nothing launched. ${BY_HAND}`, 'response');
+    }
   }
-  const args = launchArgs(config, repoPath, model, { identifier, branchName }, refine);
-  let code = await orca(deps.exec, args);
-  if (code === 'runtime_unavailable') code = await orca(deps.exec, args);
+
+  const launch: Launch = { at: (deps.now ?? Date.now)(), repo: repoPath, branch: branchName, model, launched: false, thoughtPosted: false,
+    ...(closeout ? { closeout } : { githubRepo: issue.repo }), ...(refine ? { refine } : {}) };
+  if (!record(deps, log, (launches) => { launches[claim.sessionId] = launch; })) {
+    return refuse('launch-record-failed', `Couldn't save the launch intent. Check the Runner config directory is writable. ${retry}`);
+  }
+  const args = closeout ? closeoutArgs(config, worktree as string, model, identifier)
+    : launchArgs(config, repoPath, model, { identifier, branchName }, refine);
+  const lost: { operationId?: string } = {};
+  let code = await orca(deps.exec, args, lost);
+  if (code === 'runtime_unavailable') code = await orca(deps.exec, args, lost);
+  // A lost reply may have started the agent: replay it once by its id, never as a fresh launch.
+  if (closeout && code === 'agent_session_operation_unknown' && lost.operationId) {
+    code = await orca(deps.exec, [...args, '--retry-launch', lost.operationId]);
+  }
   if (code === 'runtime_unavailable') {
-    return refuse('orca-unavailable', `Orca isn't running on ${config.machine}. Open Orca and delegate again to retry.`);
+    return refuse('orca-unavailable', `Orca isn't running on ${config.machine}. ${closeout ? `Open Orca. ${BY_HAND}` : 'Open Orca and delegate again to retry.'}`);
   }
   if (code === 'orca_not_found') {
-    return refuse('orca-not-found', `The Runner can't find the \`orca\` command on ${config.machine}. Put Orca's CLI on its PATH. ${RETRY}`);
+    return refuse('orca-not-found', `The Runner can't find the \`orca\` command on ${config.machine}. Put Orca's CLI on its PATH. ${retry}`);
   }
   if (code === 'repo_not_found') {
-    return refuse('orca-repo_not_found', `Orca doesn't know ${issue.repo}'s checkout on ${config.machine}. Check its registration in Orca. ${RETRY}`);
+    return refuse('orca-repo_not_found', `Orca doesn't know ${issue.repo}'s checkout on ${config.machine}. Check its registration in Orca. ${retry}`);
   }
-  if (code) return refuse(`orca-${code}`, `Orca couldn't start the agent (\`${code}\`). Check Orca on ${config.machine}. ${RETRY}`);
+  if (code) return refuse(`orca-${code}`, `Orca couldn't start the agent (\`${code}\`). Check Orca on ${config.machine}. ${retry}`);
 
   launch.launched = true;
   record(deps, log, (launches) => { launches[claim.sessionId] = launch; });

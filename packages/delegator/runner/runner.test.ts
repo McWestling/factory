@@ -1477,3 +1477,135 @@ for (const [label, repos, rows] of [
     assert.deepEqual(f.updates, [['response', 'No PR after 24 h; check the Orca worktree.']]);
   });
 }
+
+const closeoutTask: Partial<Task> = { ...goodTask, delegated: false, creatorId: null, statusType: 'completed',
+  kind: 'closeout', launch: { repo: 'owner/repo', branch: goodTask.branchName } };
+const closeoutWorktree = { ...matchingWorktree, path: '/worktrees/abc-123' };
+const closing = 'Closing out in Orca on Example Mac; its completion comment lists anything still open.';
+const byHand = "Run do-closeout by hand if it's still needed.";
+const lostLaunch = () => Object.assign(new Error('exit 1'), { stdout: JSON.stringify({ ok: false,
+  error: { code: 'agent_session_operation_unknown', data: { retrySafe: true, operationId: '1800000000000-0123456789abcdef0123456789abcdef' } } }) });
+
+/** Fakes for a closeout: Orca knows the launch's checkout and lists `worktrees`; `launches` answer each agent launch. */
+function closeoutFakes(task: Partial<Task> = closeoutTask, launches: (string | Error)[] = [ok], worktrees: unknown[] = [closeoutWorktree]) {
+  const f = fakes(task);
+  f.deps.exec = async (_file, args) => {
+    f.argv.push(args);
+    if (args[0] === 'repo' && args[1] === 'list') return { stdout: repoList() };
+    if (args[0] === 'repo' && args[1] === 'show') return { stdout: repoInfo };
+    if (args[0] === 'worktree' && args[1] === 'list') return { stdout: listed(worktrees) };
+    if (args[0] === 'agent') {
+      const next = launches.shift() ?? ok;
+      if (next instanceof Error) throw next;
+      return { stdout: next };
+    }
+    return { stdout: ok };
+  };
+  return f;
+}
+const agentLaunches = (argv: string[][]) => argv.filter((args) => args[0] === 'agent');
+const closeoutArgv = (agent: string, model: string, effort: string, prefix: string) => ['agent', 'launch', '--agent', agent,
+  '--worktree', 'path:/worktrees/abc-123', '--model', model, '--effort', effort,
+  '--prompt', `${prefix}do-closeout ABC-123\nDelegated run: nobody is watching this session.`, '--json'];
+
+test('the Runner claims closeout jobs as well as delegations', async () => {
+  const f = fakes();
+  const urls: string[] = [];
+  const fetch = f.deps.fetch;
+  f.deps.fetch = async (input, init) => { urls.push(String(input)); return fetch(input, init); };
+  await poll(config, f.deps);
+  const claimUrl = new URL(urls.find((url) => url.includes('/jobs/claim'))!);
+  assert.equal(claimUrl.searchParams.get('kinds'), 'delegation,closeout');
+});
+
+test('a closeout with its worktree launches do-closeout there with the standard model, responds and is never watched', async () => {
+  const f = closeoutFakes();
+  assert.equal(await handleJob(config, f.deps, claim), 'closeout-launched');
+  assert.deepEqual(agentLaunches(f.argv), [closeoutArgv('claude', 'claude-opus-5-5', 'high', '/')]);
+  assert.deepEqual(f.updates, [['thought', 'Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing` for closeout.'], ['response', closing]]);
+  assert.deepEqual(f.requests, ['GET /jobs/session-1/task', 'POST /jobs/session-1/updates',
+    'POST /jobs/session-1/launched', 'POST /jobs/session-1/updates']);
+  assert.ok(!f.argv.some((args) => args[0] === 'worktree' && args[1] === 'create'));
+  assert.deepEqual(readWatches(f.deps), {});
+  assert.equal(readFileSync(f.deps.launches, 'utf8'), '{}');
+  assert.equal(JSON.parse(readFileSync(f.deps.status, 'utf8')).lastError, null);
+});
+
+test('a Codex closeout gets a dollar prefix and the standard model settings', async () => {
+  const f = closeoutFakes();
+  await handleJob({ ...config, levels: { ...config.levels, standard: 'GPT-6 Luna' } }, f.deps, claim);
+  assert.deepEqual(agentLaunches(f.argv), [closeoutArgv('codex', 'gpt-6-luna', 'high', '$')]);
+});
+
+for (const [label, task, worktrees, outcome, response, error] of [
+  ['a canceled issue', { ...closeoutTask, skip: 'canceled' }, [closeoutWorktree], 'closeout-canceled', 'Issue canceled; no closeout launched.', false],
+  ['an unverified PR', { ...closeoutTask, skip: 'unverified' }, [closeoutWorktree], 'closeout-unverified',
+    `Couldn't verify the merged PR came from this launch; nothing launched. ${byHand}`, true],
+  ['a gone worktree', closeoutTask, [{ ...closeoutWorktree, hostId: 'remote' }], 'closeout-no-worktree',
+    `The worktree for someone/abc-123-do-the-thing is gone on Example Mac; nothing launched. ${byHand}`, true],
+] as const) {
+  test(`a closeout with ${label} launches nothing, responds and finishes failed`, async () => {
+    const f = closeoutFakes(task, [ok], [...worktrees]);
+    assert.equal(await handleJob(config, f.deps, claim), outcome);
+    assert.deepEqual(agentLaunches(f.argv), []);
+    assert.deepEqual(f.updates, [['response', response]]);
+    assert.equal(f.requests.at(-1), 'POST /jobs/session-1/failed');
+    assert.equal(JSON.parse(readFileSync(f.deps.status, 'utf8')).lastError?.outcome, error ? outcome : undefined);
+  });
+}
+
+test('a lost closeout launch reply is retried once with its operation id, never as a fresh launch', async () => {
+  const f = closeoutFakes(closeoutTask, [lostLaunch(), ok]);
+  assert.equal(await handleJob(config, f.deps, claim), 'closeout-launched');
+  const first = closeoutArgv('claude', 'claude-opus-5-5', 'high', '/');
+  assert.deepEqual(agentLaunches(f.argv), [first, [...first, '--retry-launch', '1800000000000-0123456789abcdef0123456789abcdef']]);
+});
+
+test('a closeout launch failure ends with the by-hand advice and is not requeued', async () => {
+  const f = closeoutFakes(closeoutTask, [lostLaunch(), lostLaunch()]);
+  assert.equal(await handleJob(config, f.deps, claim), 'closeout-agent_session_operation_unknown');
+  assert.equal(agentLaunches(f.argv).length, 2);
+  assert.deepEqual(f.updates, [['error', `Orca couldn't start the agent (\`agent_session_operation_unknown\`). Check Orca on Example Mac. ${byHand}`]]);
+  assert.equal(f.requests.at(-1), 'POST /jobs/session-1/failed');
+  assert.equal(JSON.parse(readFileSync(f.deps.status, 'utf8')).lastError?.outcome, 'closeout-agent_session_operation_unknown');
+});
+
+test('Orca down for a closeout keeps the single retry and the by-hand advice', async () => {
+  const f = closeoutFakes(closeoutTask, [orcaError('runtime_unavailable'), orcaError('runtime_unavailable')]);
+  assert.equal(await handleJob(config, f.deps, claim), 'closeout-unavailable');
+  assert.equal(agentLaunches(f.argv).length, 2);
+  assert.deepEqual(f.updates, [['error', `Orca isn't running on Example Mac. Open Orca. ${byHand}`]]);
+});
+
+test('a closeout whose launched report was lost is reported on reclaim without relaunching', async () => {
+  const f = closeoutFakes();
+  const fetch = f.deps.fetch;
+  let lost = false;
+  f.deps.fetch = async (input, init) => {
+    if (!lost && String(input).includes('/launched')) { lost = true; throw new TypeError('lost'); }
+    return fetch(input, init);
+  };
+  await handleJob(config, f.deps, claim);
+  assert.deepEqual(f.updates, [['thought', 'Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing` for closeout.']]);
+  assert.equal(await handleJob(config, f.deps, claim), 'closeout-launched');
+  assert.equal(agentLaunches(f.argv).length, 1);
+  assert.deepEqual(f.updates.at(-1), ['response', closing]);
+  assert.equal(f.updates.length, 2);
+  assert.equal(readFileSync(f.deps.launches, 'utf8'), '{}');
+});
+
+test('a closeout whose response was lost after launched is answered by watch recovery, not watched', async () => {
+  const f = closeoutFakes();
+  const fetch = f.deps.fetch;
+  let lost = false;
+  f.deps.fetch = async (input, init) => {
+    if (!lost && String(input).includes('/updates') && JSON.parse(String(init?.body)).type === 'response') { lost = true; throw new TypeError('lost'); }
+    if (String(input).endsWith('/jobs/watching')) return Response.json([{ ...claim, at: 1 }]);
+    return fetch(input, init);
+  };
+  await handleJob(config, f.deps, claim);
+  await checkWatches(config, f.deps);
+  assert.deepEqual(f.updates.map(([type]) => type), ['thought', 'response']);
+  assert.deepEqual(f.updates.at(-1), ['response', closing]);
+  assert.deepEqual(readWatches(f.deps), {});
+});
