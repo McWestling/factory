@@ -38,6 +38,7 @@ const ACTIVITY = 'mutation ($input: AgentActivityCreateInput!) { agentActivityCr
 const TASK = `query ($issue: String!, $session: String!) {
   issue(id: $issue) { identifier description branchName state { type } delegate { id } labels { nodes { name } } }
   agentSession(id: $session) { creator { id } } }`;
+const CLOSEOUT_TASK = TASK.replace('labels { nodes { name } }', 'labels { nodes { name } } attachments { nodes { url } }');
 const WATCH = `query ($issue: String!, $session: String!) {
   issue(id: $issue) { state { type } attachments { nodes { url } } } agentSession(id: $session) { status } }`;
 const LINK = `mutation ($session: String!, $url: String!) {
@@ -92,6 +93,11 @@ type RowType = UpdateType | 'launch' | 'release' | 'closeout';
 export type Refusal = 'not-claimed' | 'ended' | 'no-pr' | 'linear';
 /** What the Runner checks before launch. */
 export type Task = {
+  /** Set only for a closeout job, with the launch it closes out and, when it has nothing to close, why. */
+  kind?: 'closeout';
+  launch?: LaunchEvidence;
+  /** `canceled`: the issue was canceled. `unverified`: no attached PR is the launch's, merged. */
+  skip?: 'canceled' | 'unverified';
   delegated: boolean;
   creatorId: string | null;
   identifier: string;
@@ -112,9 +118,10 @@ export type Pool = {
 type Id = { id?: string } | null | undefined;
 type TaskData = {
   issue?: { identifier?: string; description?: string | null; branchName?: string; state?: { type?: string }; delegate?: Id;
-    labels?: { nodes?: { name?: string }[] } };
+    labels?: { nodes?: { name?: string }[] }; attachments?: { nodes?: { url?: string }[] } };
   agentSession?: { creator?: Id };
 };
+type PullRequest = { merged?: boolean; base?: { repo?: { full_name?: string } }; head?: { ref?: string; repo?: { full_name?: string } } };
 type WatchData = { issue?: { state?: { type?: string }; attachments?: { nodes?: { url?: string }[] } }; agentSession?: { status?: string } };
 type LaunchData = {
   issue?: {
@@ -383,11 +390,15 @@ export class JobQueue {
   async task(machine: string, id: string, claimId: string): Promise<Task | Refusal> {
     const issueId = this.#held(machine, id, claimId);
     if (!issueId) return 'not-claimed';
-    const data = await this.#read<TaskData>(TASK, { issue: issueId, session: id });
+    // A closeout's launch is the job it closes, kept as long as the closeout.
+    const [job] = this.#sql.exec(`SELECT c.kind, l.launch_repo, l.launch_branch FROM jobs c
+      LEFT JOIN jobs l ON l.id = c.closes WHERE c.id = ?`, id).toArray();
+    const closeout = job?.kind === 'closeout';
+    const data = await this.#read<TaskData>(closeout ? CLOSEOUT_TASK : TASK, { issue: issueId, session: id });
     const issue = data?.issue;
     if (!issue?.identifier || !issue.branchName || !issue.state?.type) return 'linear';
     const app = await this.#auth.installation();
-    return {
+    const task: Task = {
       delegated: Boolean(app && issue.delegate?.id === app.appUserId),
       creatorId: data?.agentSession?.creator?.id ?? null,
       identifier: issue.identifier,
@@ -396,6 +407,13 @@ export class JobQueue {
       statusType: issue.state.type,
       labels: (issue.labels?.nodes ?? []).flatMap((label) => typeof label.name === 'string' ? [label.name] : []),
     };
+    if (!closeout) return task;
+    const launch = job.launch_repo && job.launch_branch
+      ? { repo: String(job.launch_repo), branch: String(job.launch_branch) } : undefined;
+    if (issue.state.type === 'canceled') return { ...task, kind: 'closeout', launch, skip: 'canceled' };
+    const urls = (issue.attachments?.nodes ?? []).map((a) => a.url ?? '');
+    const merged = launch && (await this.#launchPullRequests('task', id, urls, launch)).found.some(({ pr }) => pr.merged === true);
+    return { ...task, kind: 'closeout', launch, ...(!merged && { skip: 'unverified' as const }) };
   }
 
   /**
@@ -434,43 +452,11 @@ export class JobQueue {
     }
     if (!data?.issue) return 'linear';
     const urls = (data.issue.attachments?.nodes ?? []).map((a) => a.url ?? '');
-    const [launch] = this.#sql.exec('SELECT launch_repo, launch_branch FROM jobs WHERE id = ? AND claim_id = ?', id, claimId).toArray();
-    const pullRequests: string[] = [];
-    let unreadable = false;
-    if (launch?.launch_repo && launch.launch_branch) {
-      const metadataSignal = AbortSignal.timeout(METADATA_TIMEOUT_MS);
-      for (const url of urls.filter((url) => PULL_REQUEST.test(url))) {
-        if (metadataSignal.aborted) break;
-        const path = new URL(url).pathname.split('/');
-        if (`${path[1]}/${path[2]}`.toLowerCase() !== String(launch.launch_repo).toLowerCase()) continue;
-        try {
-          // Without a token, only public repos' PRs can be read.
-          const response = await this.#fetch(`https://api.github.com/repos/${path[1]}/${path[2]}/pulls/${path[4]}`, {
-            headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'factory-delegator',
-              ...(this.#githubToken ? { Authorization: `Bearer ${this.#githubToken}` } : {}) },
-            // Workers' fetch throws on `redirect: 'error'`; a redirect stays unverified as a non-2xx.
-            signal: metadataSignal, redirect: 'manual',
-          });
-          if (!response.ok) {
-            log({ event: 'watch', session: id, outcome: `pr-metadata-${response.status}` });
-            // A missing, expired or unapproved token, or a repo it doesn't cover; a rate limit
-            // (primary or secondary, as GitHub marks them) is transient, not a token problem.
-            const limited = response.status === 403 && (response.headers.get('x-ratelimit-remaining') === '0'
-              || response.headers.has('retry-after') || /rate limit/i.test(await response.text()));
-            if ([401, 403, 404].includes(response.status) && !limited) unreadable = true;
-            continue;
-          }
-          const pr = await response.json() as { base?: { repo?: { full_name?: string } }; head?: { ref?: string; repo?: { full_name?: string } } };
-          metadataSignal.throwIfAborted();
-          const repo = String(launch.launch_repo).toLowerCase();
-          if (pr.base?.repo?.full_name?.toLowerCase() === repo && pr.head?.repo?.full_name?.toLowerCase() === repo
-            && pr.head?.ref === launch.launch_branch) pullRequests.push(url);
-        } catch {
-          // Unverifiable ownership stays watched.
-          log({ event: 'watch', session: id, outcome: 'pr-metadata-failed' });
-        }
-      }
-    }
+    const [row] = this.#sql.exec('SELECT launch_repo, launch_branch FROM jobs WHERE id = ? AND claim_id = ?', id, claimId).toArray();
+    const { found, unreadable } = row?.launch_repo && row.launch_branch
+      ? await this.#launchPullRequests('watch', id, urls, { repo: String(row.launch_repo), branch: String(row.launch_branch) })
+      : { found: [], unreadable: false };
+    const pullRequests = found.map(({ url }) => url);
     // A stop, replacement or reclaim may have landed during metadata reads.
     if (this.#held(machine, id, claimId) !== issueId) return 'not-claimed';
     if (this.#sql.exec('SELECT 1 FROM superseded WHERE session_id = ?', id).toArray().length) return 'not-claimed';
@@ -484,6 +470,49 @@ export class JobQueue {
       this.#wake();
     }
     return { sessionStatus: status, issueState: data.issue.state?.type, pullRequests };
+  }
+
+  /**
+   * The GitHub PRs among `urls` whose base and head repo are the launch's repo and whose head is
+   * its branch, read from GitHub under one deadline. `unreadable` when GitHub refused one for a
+   * token problem, not a rate limit. `event` and `session` only label the log lines.
+   */
+  async #launchPullRequests(event: string, session: string, urls: string[], launch: LaunchEvidence) {
+    const found: { url: string; pr: PullRequest }[] = [];
+    let unreadable = false;
+    const repo = launch.repo.toLowerCase();
+    const metadataSignal = AbortSignal.timeout(METADATA_TIMEOUT_MS);
+    for (const url of urls.filter((url) => PULL_REQUEST.test(url))) {
+      if (metadataSignal.aborted) break;
+      const path = new URL(url).pathname.split('/');
+      if (`${path[1]}/${path[2]}`.toLowerCase() !== repo) continue;
+      try {
+        // Without a token, only public repos' PRs can be read.
+        const response = await this.#fetch(`https://api.github.com/repos/${path[1]}/${path[2]}/pulls/${path[4]}`, {
+          headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'factory-delegator',
+            ...(this.#githubToken ? { Authorization: `Bearer ${this.#githubToken}` } : {}) },
+          // Workers' fetch throws on `redirect: 'error'`; a redirect stays unverified as a non-2xx.
+          signal: metadataSignal, redirect: 'manual',
+        });
+        if (!response.ok) {
+          log({ event, session, outcome: `pr-metadata-${response.status}` });
+          // A missing, expired or unapproved token, or a repo it doesn't cover; a rate limit
+          // (primary or secondary, as GitHub marks them) is transient, not a token problem.
+          const limited = response.status === 403 && (response.headers.get('x-ratelimit-remaining') === '0'
+            || response.headers.has('retry-after') || /rate limit/i.test(await response.text()));
+          if ([401, 403, 404].includes(response.status) && !limited) unreadable = true;
+          continue;
+        }
+        const pr = await response.json() as PullRequest;
+        metadataSignal.throwIfAborted();
+        if (pr.base?.repo?.full_name?.toLowerCase() === repo && pr.head?.repo?.full_name?.toLowerCase() === repo
+          && pr.head?.ref === launch.branch) found.push({ url, pr });
+      } catch {
+        // Unverifiable ownership stays unverified.
+        log({ event, session, outcome: 'pr-metadata-failed' });
+      }
+    }
+    return { found, unreadable };
   }
 
   /** Links the first verified launch pull request on the session as "Pull request". */
@@ -559,7 +588,9 @@ export class JobQueue {
     // Remove stopped claims before pruning the markers that prevent requeueing.
     this.#sql.exec(`DELETE FROM jobs WHERE state = 'claimed' AND lease_until <= ?
       AND id IN (SELECT session_id FROM ended)`, now);
-    this.#sql.exec("DELETE FROM jobs WHERE state IN ('launched', 'failed') AND updated_at <= ?", now - HISTORY_MS);
+    // A launch stays while a closeout of it is in the window, so its task can still name the launch.
+    this.#sql.exec(`DELETE FROM jobs WHERE state IN ('launched', 'failed') AND updated_at <= ?
+      AND id NOT IN (SELECT closes FROM jobs WHERE closes IS NOT NULL AND updated_at > ?)`, now - HISTORY_MS, now - HISTORY_MS);
     const unclaimed = this.#sql.exec("DELETE FROM jobs WHERE kind = 'closeout' AND state = 'queued' AND updated_at <= ? RETURNING id",
       now - HISTORY_MS).toArray();
     for (const { id } of unclaimed) this.#end(String(id), MESSAGES.expired, now);
@@ -567,8 +598,8 @@ export class JobQueue {
     this.#sql.exec('DELETE FROM seen_activities WHERE at <= ?', now - HISTORY_MS);
     this.#sql.exec('DELETE FROM ended WHERE at <= ?', now - HISTORY_MS);
     this.#sql.exec('DELETE FROM unreadable WHERE at <= ?', now - HISTORY_MS);
-    // A launch row is pruned before its closeout marker, which is never older.
-    this.#sql.exec('DELETE FROM closeouts WHERE at <= ?', now - HISTORY_MS);
+    // Kept while its launch row is, so a launch never queues a second closeout.
+    this.#sql.exec('DELETE FROM closeouts WHERE at <= ? AND launch_id NOT IN (SELECT id FROM jobs)', now - HISTORY_MS);
     // Kept while a write-back of the session is still pending, however old.
     this.#sql.exec('DELETE FROM superseded WHERE at <= ? AND session_id NOT IN (SELECT session_id FROM outbox)',
       now - HISTORY_MS);
