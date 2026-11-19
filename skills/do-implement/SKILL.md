@@ -90,9 +90,10 @@ Make a careful pass by hand over the diff against the default branch. Fix what i
 
 - **Title** per **Pull requests**: a plain imperative subject ending with the issue id in parentheses, like `Fix the login redirect bug (ABC-123)`.
 - **Body:** follow [pr-template.md](pr-template.md), unless the repo has its own PR template; then the repo's wins. Add any doc closeout line `AGENTS.md` asks for. Write the body to a file and send it with `gh pr create --body-file <path>` (or `gh pr edit --body-file <path>`), never inline with shell escapes: escaped backticks reach GitHub as literal backslashes.
-- **Questions along the way:** when you made calls under [step 3](#3-ask-before-guessing), add a `## Questions along the way` section after the Summary, one bullet per call: the question, what you chose, and why. Leave it out when there were none.
+- **Questions along the way:** when you made calls under [step 3](#3-ask-before-guessing), add a `## Questions along the way` section after the Summary, one bullet per call: the question in bold, then what you chose and why in a sentence. Leave it out when there were none.
+- **Length:** check the body against the template's **Length** limit before sending it, and cut in its order.
 - Open it as a **draft**. Never mark it ready by hand.
-- Post the **PR opened** comment per **Comment shape** on the issue, followed by the same **Questions along the way** list when there is one. The issue stays in progress; only the automation named under **Issue statuses** moves it to review. If a host tool offers to change the status when the PR opens, skip that.
+- Post the **PR opened** comment per **Comment shape** on the issue, followed by the same **Questions along the way** list when there is one, with any reasoning cut from it, then the detail cut from the body. The issue stays in progress; only the automation named under **Issue statuses** moves it to review. If a host tool offers to change the status when the PR opens, skip that.
 
 ## 9. Work the hosted checks
 
