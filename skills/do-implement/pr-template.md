@@ -7,15 +7,17 @@ Every PR body a factory skill writes follows this template, unless the repo has 
 - **Reader:** a developer who isn't on the project. They should understand the PR from the PR alone.
 - **Place it:** say in a sentence or two where the change sits in the overall system.
 - **Explain project names, not dev terms:** explain a project-specific name the first time it appears, using the repo's glossary where it covers it. Leave common, googleable dev terms (worktree, webhook, OAuth, pull request) unexplained.
-- **Headline first:** open each section with its main point in one sentence. Detail follows it.
-- **No walls of text:** keep paragraphs to three sentences. Use bullets for parts, cases and steps, one sentence each.
+- **Headline first:** open each section with its main point in one sentence. Detail follows it. The skeleton's openers (Summary's first sentence, **Before** and **After**, **Door**) already do this.
+- **No walls of text:** keep paragraphs to three sentences. Use bullets for parts and cases, one sentence each. **What you need to do** steps follow their own rules below.
 - **Behavior, not mechanism:** say what changes for the user or the system. Leave function names, columns, flags and retry logic to the code, unless a reviewer needs one to judge the change.
-- **Length:** a full-form body is at most 500 words, **Questions along the way** included. Before opening or editing the PR, run `wc -w` on the body file. Over the limit, cut in this order until it fits:
-  1. **Evidence:** case tables past five rows, mutation checks, and each check command's result. Keep the headline result.
+- **Length:** a full-form body is at most 500 words above `## What you need to do`, **Questions along the way** included. In a repo's own template, count only the words you write. Check it before opening the PR, and after any body rewrite you make: `sed '/^## What you need to do/,$d' <body file> | wc -w`. Over the limit, cut in this order until it fits:
+  1. **Evidence:** case tables past five rows, mutation checks, and each check command's result.
   2. **Summary:** mechanism and edge cases a reviewer doesn't need to judge the change.
   3. **Questions along the way:** the reasoning, down to the question and the choice.
   4. **Merge Danger:** failure modes past the main one.
-- **Detail goes on the issue:** whatever you cut, and anything a first-time reader doesn't need (long evidence, case-by-case results, review history), goes in the **PR opened** comment on the tracker issue. The body links to it in one line, such as "Full results are on ABC-123."
+
+  Never cut the **Place it** sentence, **Before** and **After** with their test names, the line on what wasn't verified, the `For` and `Related to` lines, or any **What you need to do** step. A body still over after these cuts goes out as it is.
+- **Detail goes on the issue:** whatever you cut, and anything a first-time reader doesn't need (long evidence, case-by-case results, review history), goes in a comment on the tracker issue: the **PR opened** comment, or a new one for a later rewrite. The body points to it in one line naming the issue id, such as "Full results are on ABC-123."
 - **Leave out:** preamble, file lists, review history, follow-up lists, post-merge closeout steps, and private details (people's names, machine names, workspace ids).
 
 ## Pick a form

@@ -93,7 +93,7 @@ Make a careful pass by hand over the diff against the default branch. Fix what i
 - **Questions along the way:** when you made calls under [step 3](#3-ask-before-guessing), add a `## Questions along the way` section after the Summary, one bullet per call: the question in bold, then what you chose and why in a sentence. Leave it out when there were none.
 - **Length:** check the body against the template's **Length** limit before sending it, and cut in its order.
 - Open it as a **draft**. Never mark it ready by hand.
-- Post the **PR opened** comment per **Comment shape** on the issue, followed by the same **Questions along the way** list when there is one, with any reasoning cut from it, then the detail cut from the body. The issue stays in progress; only the automation named under **Issue statuses** moves it to review. If a host tool offers to change the status when the PR opens, skip that.
+- Post the **PR opened** comment per **Comment shape** on the issue, followed by the **Questions along the way** list in full when there is one, including any reasoning the body dropped, then any other detail cut from the body. The issue stays in progress; only the automation named under **Issue statuses** moves it to review. If a host tool offers to change the status when the PR opens, skip that.
 
 ## 9. Work the hosted checks
 
