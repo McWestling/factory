@@ -14,14 +14,14 @@ This skill is one of the factory's `do-` skills and expects its siblings to be i
 
 Workspace values (statuses, comment shape, PR rules) live in the **tracker doc**: the file `AGENTS.md` names, or `docs/issue-tracker.md`. A doc in another repo is read from that repo's checkout, found through `orca repo list --json`. Read it once, before you touch the tracker; "per X" cites a heading in it. Repo commands (typecheck, tests, the full check or preflight) live in the repo's `AGENTS.md` and the docs it links.
 
-Reach the tracker only through the doc's **Tracker** access, and probe it once with `whoami` or its equivalent before the first tracker call. If the probe fails, carry on without the tracker: the report goes on the PR and in the session, and says the issue comment wasn't posted.
+Reach the tracker only through the doc's **Tracker** access, and probe it once with `whoami` or its equivalent before the first tracker call. If the probe fails, carry on without the tracker: the brief comes from the PR body, work that would have been filed is listed under **Follow-ups** as not filed, and the report goes on the PR and in the session and says the issue comment wasn't posted.
 
 ## Default reviewer
 
 This is the one place that names it; a fork changes it here.
 
 - **Agent:** `claude`
-- **Model:** `claude-fable-5-2` (Fable)
+- **Model:** `fable`
 - **Effort:** `medium`
 
 A reviewer in the arguments overrides it: an agent, a model, an effort, or any of them together, such as `codex gpt-6.1-sol high`. A part it leaves out keeps the default when the agent is the same, and otherwise uses that agent's own default. Orca takes an effort only with a model, so an effort named without a model for another agent is dropped, and the report says so.
@@ -60,7 +60,7 @@ orca orchestration worker-start --spec-file <brief> --worktree current \
   --agent <agent> --model <model> --effort <effort> --task-title "Review PR #<n>"
 ```
 
-Leave out `--model` or `--effort` when the reviewer has no value for it. Keep the dispatch id from the receipt, end your turn, and let Orca wake you. Don't poll. The findings and verdict arrive in the worker's `worker_done` body; if it is cut short, read the rest with `orca orchestration worker-read --dispatch <id>`.
+Leave out `--model` or `--effort` when the reviewer has no value for it. Keep the dispatch id from the receipt (each later receipt's id replaces it), end your turn, and let Orca wake you. Don't poll. The findings and verdict arrive in the worker's `worker_done` body; if it is cut short, read the rest with `orca orchestration worker-read --dispatch <id>`.
 
 **Outside Orca**, the reviewer is the host's own subagent, given the brief file's text as its prompt, with the reviewer's model and effort where the host lets you choose. If the host can't run that model, use its default and say so in the report.
 
@@ -70,7 +70,7 @@ A **round** is one review by the reviewer. The first review is round 1. The loop
 
 After round 1 or 2, when the verdict isn't `happy`:
 
-1. **Triage first.** Before changing any code, say which findings you agree with, one line per finding.
+1. **Triage first.** Check that the reviewer stayed read-only: `git status --porcelain` is empty and `git rev-parse HEAD` is still the reviewed commit. Then, before changing any code, say which findings you agree with, one line per finding.
 2. **Fix** each finding you agree with by the smallest complete change, on the same branch and PR. Add a regression test for each fixed finding where there is a testable seam. Keep the PR a draft. If the fixes make the PR's Summary or Evidence wrong, update them.
 3. **Push back** on a `should-fix` or `nit` you won't fix, with a reason. A `blocker` you won't fix, and a finding about the PR's merge-risk rating, are **left to the person**: ask now if someone is in the session, otherwise they go under **Needs you**. Keep fixing the rest either way.
 4. **File** work a finding surfaces that is outside the PR's scope as a new issue in the triage status per **Issue statuses**, as `do-implement`'s Build step files out-of-scope finds. Tell the reviewer it was filed, not fixed.
@@ -86,15 +86,15 @@ If a reply doesn't fit [reviewer-brief.md](reviewer-brief.md)'s findings shape o
 When the loop ends, write one report. It goes in two places: a comment on the issue per **Comment shape**, and a comment on the PR (`gh pr comment <n> --body-file <path>`). With no ticket, it goes on the PR and in the session. Write it to a file, never inline with shell escapes.
 
 ```markdown
-YYYY-MM-DD — Review: <the last verdict, such as happy, or not happy until 2 are fixed>
+YYYY-MM-DD — Review: <the last verdict, such as happy, or not happy until 2 are fixed><, N left to you, when there is a Needs you heading>
 
 **Reviewer:** <agent, model, effort, and Orca worker or host subagent>. <N> rounds, last reviewed `<sha>`.
 
 **Findings:**
 
-1. `<severity>` `<file:line>` <the finding in a few words>. <Fixed in `<sha>`, test `<name>` / Pushed back: <reason>; the reviewer <dropped it / kept it> / Filed as <ID> / Still open>.
+1. `<severity>` `<file:line>` <the finding in a few words>. <Fixed in `<sha>`, test `<name>` / Fixed in `<sha>`, not re-reviewed / Pushed back: <reason>; the reviewer <dropped it / kept it> / Filed as <ID> / Left to you / Still open>.
 
-**Checks:** <the full check the reviewer ran on the last reviewed commit, and its result>.
+**Checks:** <the full check the reviewer ran on the last reviewed commit, and its result; when the head is past that commit, also your own full check on the head>.
 
 **Follow-ups:** <each filed issue on its own line, or None>.
 

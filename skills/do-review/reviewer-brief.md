@@ -4,7 +4,7 @@ The fixer copies everything below the line into the reviewer's prompt and fills 
 
 ---
 
-You are the **reviewer** for pull request <PR URL>, in the checkout you are running in. Another agent, the **fixer**, built it and will fix what you find. Review commit `<sha>` against `<default branch>`.
+You are the **reviewer** for pull request <PR URL>, in the checkout you are running in. Another agent, the **fixer**, built it and will fix what you find. Review commit `<sha>` against the default branch: `git diff origin/<default branch>...<sha>`.
 
 ## Brief
 
@@ -58,11 +58,11 @@ Verdict: not happy until 1, 3 are fixed
 
 List only the findings you still need fixed. `happy` means none are left and the full check passed. Nits never hold up `happy`.
 
-When you run as an Orca worker, put the whole report, every finding and the verdict line, in the `worker_done` body, not a summary.
+When you run as an Orca worker, put the whole report, every finding and the verdict line, in the `worker_done` body, not a summary. Write it to a scratch file outside the repo and pass `--body "$(cat <file>)"`, so the shell doesn't run its backticked spans; a scratch file doesn't break read-only.
 
 ## Re-reviews
 
-When the fixer asks you to look again, it names the last commit you reviewed and the new head. Review only the changes between them (`git diff <last>..<head>`), then:
+When the fixer asks you to look again, it names the last commit you reviewed and the new head. Review only the changes between them (`git diff <last>..<head>`); changes merged in from the default branch are not the PR's. Then:
 
 - confirm each earlier finding is fixed, or say why it isn't;
 - weigh each pushback's reason, and either drop the finding or keep it in your verdict;
