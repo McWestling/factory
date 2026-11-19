@@ -43,7 +43,7 @@ Fetch the issue, its comments, and the PR linked to it or opened from its branch
 2. The merged PR is linked on the issue.
 3. The acceptance criteria that the merged change meets are checked off. Read the diff to decide; don't tick a criterion you can't confirm.
 4. A completion comment with a dateline per **Comment shape**: what landed, and any follow-ups. Post it even when automation already moved the issue on; it's the record that closeout ran. Skip it only if one is already there.
-5. If the issue sits on a map, update the map per [maps.md](../do-refine/maps.md). Set the map to its finished status only when its Destination is reached and no open issues remain.
+5. If the issue sits on a map, update the map per [maps.md](../do-refine/maps.md). Set the map to its finished status only when its Destination is reached and no open issues remain; with a closing-out status, that waits for [the verdict](#6-verdict), since this issue is still open until then.
 
 **Partial landing.** If only some criteria landed, never set the done status, whatever the verdict. The issue stays in, or goes back to, the in-progress status, with a comment saying what landed and what remains.
 
@@ -111,8 +111,8 @@ The verdict is **Good to close** only when nothing is left under **Still open**.
 
 **Status.** For a merged PR, when **Issue statuses** has a closing-out status and the landing wasn't [partial](#2-tracker-closeout), set the status before printing the verdict, and list the change under **Fixed**:
 
-- **Good to close:** set the done status.
-- **Not yet:** leave the issue in the closing-out status. If it's in any other status, move it there.
+- **Good to close:** set the done status, then finish the issue's map per item 5 of [step 2](#2-tracker-closeout) if this issue was its last open one.
+- **Not yet:** leave the issue in the closing-out status. If it's in another status that isn't canceled or duplicate, move it there.
 
 ## 7. Suggested next ticket
 

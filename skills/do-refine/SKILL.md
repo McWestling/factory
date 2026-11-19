@@ -159,7 +159,7 @@ End every session by listing what changed, by name: tickets resolved, created or
 
 Only commands the user pastes get a fenced block.
 
-When the destination is reached and no open issues remain, set the map to its finished status. Open implementation issues keep a map open until their PRs merge; closing those out belongs to whoever merges, not to this skill.
+When the destination is reached and no open issues remain, set the map to its finished status. Open implementation issues keep a map open until their closeout finishes; closing those out belongs to whoever merges, not to this skill.
 
 Last, after **What you can do next**, end with a bold verdict line as plain Markdown. It isn't a code block; don't fence it. When anything is open, follow it with a short bullet list:
 

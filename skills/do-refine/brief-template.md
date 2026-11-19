@@ -55,7 +55,7 @@ See the [issue format contract](../../docs/issue-format.md).
 
 - **Dispatch:** ready → in progress when the implementing agent starts.
 - **While the PR is open:** stay in progress while the PR is a draft. Only the automation named under **Issue statuses** moves it to review; agents never do. Don't set it done or post a completion comment before the merge.
-- **Closeout (after merge only):** the merge moves it to the closing-out status per **Issue statuses**. Whoever merges, or the implementing agent, links the merged PR, checks off the acceptance criteria, adds a completion comment with a dateline per **Comment shape**, and sets it done when closeout finishes.
+- **Closeout (after merge only):** the merge moves it to the closing-out status per **Issue statuses**, where the tracker has one. Whoever merges, or the implementing agent, links the merged PR, checks off the acceptance criteria, adds a completion comment with a dateline per **Comment shape**, and sets it done when closeout finishes.
 ````
 
 ## Filling it in
