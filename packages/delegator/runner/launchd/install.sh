@@ -48,6 +48,12 @@ build_app() {
 	cp "$menu_template" "$resources/menubar/menubar.plist"
 }
 
+# The LaunchAgent's `open` hands off to a copy that's already running, so quit it first.
+# pkill exits 1 when no menu bar app is running.
+quit_app() {
+	pkill -x FactoryRunnerMenuBar || [ $? -eq 1 ]
+}
+
 start_runner() {
 	[ -f "$plist" ] || { echo "Runner isn't installed" >&2; exit 1; }
 	launchctl enable "$domain/$label"
@@ -109,6 +115,7 @@ case "${1:-}" in
 		[ "${FACTORY_LAUNCHD_RENDER_ONLY:-}" = 1 ] && exit 0
 		launchctl enable "$domain/$menu_label"
 		launchctl bootout "$domain/$menu_label" 2>/dev/null || true
+		quit_app
 		launchctl bootstrap "$domain" "$menu_plist"
 		exit 0 ;;
 	"") ;;
@@ -124,4 +131,5 @@ launchctl enable "$domain/$menu_label"
 launchctl bootout "$domain/$label" 2>/dev/null || true
 launchctl bootout "$domain/$menu_label" 2>/dev/null || true
 launchctl bootstrap "$domain" "$plist"
+quit_app
 launchctl bootstrap "$domain" "$menu_plist"

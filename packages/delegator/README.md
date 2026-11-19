@@ -112,7 +112,8 @@ sh packages/delegator/runner/launchd/install.sh
 ```
 
 This installs the app at `~/Applications/Factory Runner.app` and separate per-user
-LaunchAgents for the Runner and menu bar app. To install only the app, add
+LaunchAgents for the Runner and menu bar app. It restarts a running menu bar app,
+so a reinstall shows the new build. To install only the app, add
 `--app-only`, then choose **Install Runner** in its menu once the config is ready.
 The installer also accepts `--install-runner` (app already installed),
 `--uninstall-runner`, or `--uninstall` to remove both.
