@@ -57,3 +57,25 @@ for file in runner/runner.ts runner/launchd/install.sh runner/launchd/runner.pli
 done
 [ -x "$staged/Contents/MacOS/FactoryRunnerMenuBar" ]
 cmp "$plist" "$tmp/before.plist"
+
+# Reinstalling quits the running menu bar app before its LaunchAgent opens it again,
+# and a missing app (pkill exit 1) isn't an error, but a failed pkill is.
+log="$tmp/calls"
+printf '#!/bin/sh\necho "launchctl $*" >> "%s"\n' "$log" > "$tmp/bin/launchctl"
+printf '#!/bin/sh\necho "pkill $*" >> "%s"\nexit "${FAKE_PKILL_EXIT:-0}"\n' "$log" > "$tmp/bin/pkill"
+chmod +x "$tmp/bin/launchctl" "$tmp/bin/pkill"
+for option in "" --app-only; do
+  for code in 0 1; do
+    : > "$log"
+    HOME="$tmp/home" PATH="$tmp/bin:$PATH" FAKE_PKILL_EXIT=$code \
+      sh "$root/packages/delegator/runner/launchd/install.sh" $option
+    quit=$(grep -n "^pkill -U $(id -u) -x FactoryRunnerMenuBar$" "$log" | cut -d: -f1)
+    boot=$(grep -n "^launchctl bootstrap .*menubar.plist$" "$log" | cut -d: -f1)
+    [ -n "$quit" ] && [ "$quit" -lt "$boot" ] || { echo "install.sh $option didn't quit the app first" >&2; cat "$log" >&2; exit 1; }
+  done
+  if HOME="$tmp/home" PATH="$tmp/bin:$PATH" FAKE_PKILL_EXIT=2 \
+    sh "$root/packages/delegator/runner/launchd/install.sh" $option; then
+    echo "install.sh $option accepted a failed pkill" >&2
+    exit 1
+  fi
+done
