@@ -344,7 +344,8 @@ function closeoutArgs(config: RunnerConfig, worktree: string, model: string, ide
 }
 
 /** Runs `orca`, returning null on success or Orca's error code; a lost launch reply's id goes in `lost`. */
-// Open, create and its retry stay well inside Cloud Inbox's 10-minute lease.
+// Open, create and its retry stay well inside Cloud Inbox's 10-minute lease. A closeout's worst case
+// (open, lookups, launch, retry and replay) comes near it; an expired lease stays on this machine and its record recovers it.
 // ponytail: a create killed at its timeout may leave a worktree behind; the job still fails.
 async function orca(exec: Exec, args: string[], lost?: { operationId?: string }): Promise<string | null> {
   let stdout: string;
@@ -425,7 +426,7 @@ function record(deps: Deps, log: (outcome: string) => void, change: (launches: L
 // shortcut: a worktree does not prove agent startup; use a durable caller-supplied launch id when Orca supports one.
 const hasWorktree = async (deps: Deps, launch: Launch) => Boolean(await findWorktree(deps, launch.repo, launch.branch));
 
-/** The checkout's one local Orca worktree at `branch`, or undefined when Orca can't show one. */
+/** The checkout's one local, linked Orca worktree at `branch`, or undefined unless Orca shows exactly one. */
 async function findWorktree(deps: Deps, repoPath: string, branch: string): Promise<Record<string, unknown> | undefined> {
   try {
     const selector = `path:${repoPath}`;
@@ -433,9 +434,11 @@ async function findWorktree(deps: Deps, repoPath: string, branch: string): Promi
     if (repo?.ok !== true || !isText(repo.result?.repo?.id) || repo.result.repo.path !== repoPath) return undefined;
     const list = JSON.parse((await deps.exec('orca', ['worktree', 'list', '--repo', selector, '--limit', '10000', '--json'], 30_000)).stdout);
     if (list?.ok !== true || !Array.isArray(list.result?.worktrees)) return undefined;
-    return list.result.worktrees.find((row: unknown): row is Record<string, unknown> =>
+    // The primary checkout and archived worktrees never count: job content mustn't steer an agent into them.
+    const rows = list.result.worktrees.filter((row: unknown): row is Record<string, unknown> =>
       isObject(row) && row.repoId === repo.result.repo.id && row.hostId === 'local'
-      && row.branch === `refs/heads/${branch}`);
+      && row.branch === `refs/heads/${branch}` && row.isMainWorktree !== true && row.isArchived !== true);
+    return rows.length === 1 ? rows[0] : undefined;
   } catch {
     return undefined;
   }
@@ -721,7 +724,7 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
   const log = (outcome: string) => deps.log({ event: 'job', session: claim.sessionId, outcome });
   let closeout = false;
   const refuse = async (outcome: string, message: string, type: 'error' | 'response' = 'error') => {
-    if (closeout) outcome = `closeout-${outcome.replace(/^orca-/, '')}`;
+    if (closeout) outcome = `closeout-${outcome}`;
     log(outcome);
     // Each report is tried even if the one before it failed; a lost report leaves the lease to expire.
     await api.update(claim, type, message).catch(() => log(`${type}-update-failed`));
@@ -860,11 +863,14 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
   if (code === 'repo_not_found') {
     return refuse('orca-repo_not_found', `Orca doesn't know ${issue.repo}'s checkout on ${config.machine}. Check its registration in Orca. ${retry}`);
   }
+  if (closeout && code === 'agent_session_operation_unknown') {
+    return refuse(`orca-${code}`, `Orca lost the launch reply, so the closeout may have started. Check the worktree for ${branchName} on ${config.machine} before you run do-closeout by hand.`);
+  }
   if (code) return refuse(`orca-${code}`, `Orca couldn't start the agent (\`${code}\`). Check Orca on ${config.machine}. ${retry}`);
 
   launch.launched = true;
   record(deps, log, (launches) => { launches[claim.sessionId] = launch; });
-  log('launched');
+  log(closeout ? 'closeout-launched' : 'launched');
   return reportLaunch(config, api, deps, claim, log, launch);
 }
 

@@ -1543,6 +1543,12 @@ for (const [label, task, worktrees, outcome, response, error] of [
     `Couldn't verify the merged PR came from this launch; nothing launched. ${byHand}`, true],
   ['a gone worktree', closeoutTask, [{ ...closeoutWorktree, hostId: 'remote' }], 'closeout-no-worktree',
     `The worktree for someone/abc-123-do-the-thing is gone on Example Mac; nothing launched. ${byHand}`, true],
+  ['only the primary checkout at the branch', closeoutTask, [{ ...closeoutWorktree, isMainWorktree: true }], 'closeout-no-worktree',
+    `The worktree for someone/abc-123-do-the-thing is gone on Example Mac; nothing launched. ${byHand}`, true],
+  ['only an archived worktree at the branch', closeoutTask, [{ ...closeoutWorktree, isArchived: true }], 'closeout-no-worktree',
+    `The worktree for someone/abc-123-do-the-thing is gone on Example Mac; nothing launched. ${byHand}`, true],
+  ['two worktrees at the branch', closeoutTask, [closeoutWorktree, { ...closeoutWorktree, path: '/worktrees/other' }], 'closeout-no-worktree',
+    `The worktree for someone/abc-123-do-the-thing is gone on Example Mac; nothing launched. ${byHand}`, true],
 ] as const) {
   test(`a closeout with ${label} launches nothing, responds and finishes failed`, async () => {
     const f = closeoutFakes(task, [ok], [...worktrees]);
@@ -1562,17 +1568,25 @@ test('a lost closeout launch reply is retried once with its operation id, never 
 });
 
 test('a closeout launch failure ends with the by-hand advice and is not requeued', async () => {
-  const f = closeoutFakes(closeoutTask, [lostLaunch(), lostLaunch()]);
-  assert.equal(await handleJob(config, f.deps, claim), 'closeout-agent_session_operation_unknown');
-  assert.equal(agentLaunches(f.argv).length, 2);
-  assert.deepEqual(f.updates, [['error', `Orca couldn't start the agent (\`agent_session_operation_unknown\`). Check Orca on Example Mac. ${byHand}`]]);
+  const f = closeoutFakes(closeoutTask, [orcaError('worktree_not_found')]);
+  assert.equal(await handleJob(config, f.deps, claim), 'closeout-orca-worktree_not_found');
+  assert.equal(agentLaunches(f.argv).length, 1);
+  assert.deepEqual(f.updates, [['error', `Orca couldn't start the agent (\`worktree_not_found\`). Check Orca on Example Mac. ${byHand}`]]);
   assert.equal(f.requests.at(-1), 'POST /jobs/session-1/failed');
-  assert.equal(JSON.parse(readFileSync(f.deps.status, 'utf8')).lastError?.outcome, 'closeout-agent_session_operation_unknown');
+  assert.equal(JSON.parse(readFileSync(f.deps.status, 'utf8')).lastError?.outcome, 'closeout-orca-worktree_not_found');
+});
+
+test('a closeout whose replayed reply is lost too says it may have started', async () => {
+  const f = closeoutFakes(closeoutTask, [lostLaunch(), lostLaunch()]);
+  assert.equal(await handleJob(config, f.deps, claim), 'closeout-orca-agent_session_operation_unknown');
+  assert.equal(agentLaunches(f.argv).length, 2);
+  assert.deepEqual(f.updates, [['error', 'Orca lost the launch reply, so the closeout may have started. '
+    + 'Check the worktree for someone/abc-123-do-the-thing on Example Mac before you run do-closeout by hand.']]);
 });
 
 test('Orca down for a closeout keeps the single retry and the by-hand advice', async () => {
   const f = closeoutFakes(closeoutTask, [orcaError('runtime_unavailable'), orcaError('runtime_unavailable')]);
-  assert.equal(await handleJob(config, f.deps, claim), 'closeout-unavailable');
+  assert.equal(await handleJob(config, f.deps, claim), 'closeout-orca-unavailable');
   assert.equal(agentLaunches(f.argv).length, 2);
   assert.deepEqual(f.updates, [['error', `Orca isn't running on Example Mac. Open Orca. ${byHand}`]]);
 });
