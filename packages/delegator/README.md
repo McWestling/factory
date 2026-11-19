@@ -103,6 +103,11 @@ the in-progress status, `Orca` label and session creator as assignee. A failed
 job clears the delegate only if it is still this app. Field writes retry through
 Cloud Inbox's outbox.
 
+The Runner marks each workspace with its [stage](../../GLOSSARY.md): after a
+launch it renames the Orca workspace to the stage emoji and the branch's last
+segment, and its thought and response lead with the same emoji. A closeout
+swaps the workspace's 🛠️ for 🧹. A failed rename is only logged.
+
 ### Automated closeout
 
 When a PR the Runner launched merges, the Runner starts a fresh agent in the

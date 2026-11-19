@@ -40,10 +40,10 @@ People who plan their work in Linear and want coding agents to do more of the bu
 | --------------- | ------------------------------------------------------------------------------------ |
 | `do-post-its`   | Turns photos of Post-its, or dictated notes, into Triage issues                      |
 | `do-triage`     | Works the Triage queue with you and routes each item                                 |
-| `do-refine`     | Charts maps, resolves decision tickets, and slices implementation issues             |
-| `do-implement`  | Takes one implementation issue to a verified draft PR                                |
+| `do-refine`     | 🗺️ Charts maps, resolves decision tickets, and slices implementation issues          |
+| `do-implement`  | 🛠️ Takes one implementation issue to a verified draft PR                             |
 | `do-review`     | Has an independent reviewer check a draft PR and fixes what it finds until it's happy |
-| `do-closeout`   | Checks a thread is good to close and finishes the issue's closeout                   |
+| `do-closeout`   | 🧹 Checks a thread is good to close and finishes the issue's closeout                |
 | `do-repo-setup` | Points a repo at its home repo's tracker doc, writes its rules, installs dev ports   |
 
 Planning (`do-post-its`, `do-triage`, `do-refine`) runs from your home repo’s checkout and reads the other repos’ code. Build work (`do-implement`, `do-review`, `do-closeout`) runs in each product repo.
