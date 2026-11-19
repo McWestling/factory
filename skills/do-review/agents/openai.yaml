@@ -1,0 +1,5 @@
+interface:
+  display_name: "Do Review"
+  short_description: "Have an independent reviewer check a draft PR and fix its findings"
+policy:
+  allow_implicit_invocation: false

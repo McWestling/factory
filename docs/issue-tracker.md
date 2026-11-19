@@ -117,6 +117,7 @@ Datelines in use:
 
 - **Triage route:** `YYYY-MM-DD — Triage: <Route>. <reason>. <links>`
 - **PR opened:** `YYYY-MM-DD — PR opened: <link>`
+- **Review:** `YYYY-MM-DD — Review: <verdict>`
 - **Back to Triage:** `YYYY-MM-DD — Back to Triage: <reason>.`
 - **Decision resolved:** a `## Resolution (YYYY-MM-DD)` heading
 
