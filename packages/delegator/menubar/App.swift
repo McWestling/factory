@@ -358,8 +358,7 @@ private struct RunnerMenu: View {
         if let recent = runner.status.snapshot?.recent, !recent.isEmpty {
             Menu("Recent") {
                 ForEach(Array(recent.enumerated()), id: \.offset) { item in
-                    let entry = item.element
-                    Text("\(entry.identifier ?? "Unknown") · \(entry.outcome) · \(relativeTime(entry.time, now: .now))")
+                    Text(recentLine(item.element, now: .now))
                 }
             }
         }

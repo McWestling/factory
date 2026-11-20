@@ -476,6 +476,19 @@ test('a wayfinder issue without tags launches do-refine in refineRepo with the d
     `--prompt=$do-refine ABC-123\n${attended}`, '--setup', 'skip', '--linear-issue', 'ABC-123', '--json']);
 });
 
+test('each recent outcome records its stage, so the menu bar can mark refine, implement and closeout rows', async () => {
+  const stageOf = (f: { deps: { status: string } }) => JSON.parse(readFileSync(f.deps.status, 'utf8')).recent.map((entry: { stage?: string }) => entry.stage);
+  const refine = fakes(refineTask);
+  await handleJob(refineConfig, refine.deps, claim);
+  assert.deepEqual(stageOf(refine), ['refine']);
+  const implement = fakes();
+  await handleJob(config, implement.deps, claim);
+  assert.deepEqual(stageOf(implement), ['implement']);
+  const closeout = closeoutFakes();
+  await handleJob(config, closeout.deps, claim);
+  assert.deepEqual(stageOf(closeout), ['closeout']);
+});
+
 test('a refine launch still honours a model pin', async () => {
   const f = fakes({ ...refineTask, description: '[model=Claude Opus 5.5]' });
   await handleJob(refineConfig, f.deps, claim);
@@ -942,7 +955,7 @@ test('status shows the current launch, then its outcome and open watch without p
   const status = JSON.parse(text);
   assert.equal(status.current, null);
   assert.deepEqual(status.watching, [{ identifier: 'ABC-123', since: '2027-01-15T08:00:00.000Z' }]);
-  assert.deepEqual(status.recent, [{ identifier: 'ABC-123', outcome: 'launched', time: '2027-01-15T08:00:00.000Z' }]);
+  assert.deepEqual(status.recent, [{ identifier: 'ABC-123', outcome: 'launched', stage: 'implement', time: '2027-01-15T08:00:00.000Z' }]);
   assert.equal(status.lastError, null);
   for (const secret of [config.bearerSecret, config.inboxUrl, goodTask.description, goodTask.branchName, claim.claimId]) {
     assert.ok(!text.includes(secret));
@@ -953,7 +966,7 @@ test('failed jobs retain the last error and only the ten latest outcomes', async
   const f = fakes(goodTask, [ok, orcaError('worktree_conflict')]);
   f.deps.now = () => 1_800_000_000_000;
   await poll(config, f.deps);
-  const failure = { identifier: 'ABC-123', outcome: 'orca-worktree_conflict', time: '2027-01-15T08:00:00.000Z' };
+  const failure = { identifier: 'ABC-123', outcome: 'orca-worktree_conflict', stage: 'implement', time: '2027-01-15T08:00:00.000Z' };
   assert.deepEqual(JSON.parse(readFileSync(f.deps.status, 'utf8')).lastError, failure);
   for (let i = 0; i < 11; i++) await poll(config, f.deps);
   const status = JSON.parse(readFileSync(f.deps.status, 'utf8'));
