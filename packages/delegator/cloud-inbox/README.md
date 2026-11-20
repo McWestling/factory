@@ -19,8 +19,9 @@ npm run inbox -- setup
 Setup asks for the account ID, Worker name, stable machine key and Linear workspace
 UUID. It deploys to a `workers.dev` HTTPS address, generates owner and machine
 secrets, and opens a prefilled app registration page. Keep webhooks enabled, with
-Agent session events and `Attachment` events (for [closeout jobs](#closeout-jobs))
-both ticked. Enter the app credentials when asked; setup uploads the config.
+Agent session events, `Attachment` events (for [closeout jobs](#closeout-jobs)) and
+Inbox notifications (for [delegating again](#delegating-again)) all ticked. Enter the
+app credentials when asked; setup uploads the config.
 It then opens a prefilled GitHub page for an optional [token](#secrets) that lets the
 PR check read private repos.
 Custom domains require manual configuration.
@@ -103,7 +104,7 @@ accepts a viewer secret.
 | `GET /callback` | Validates state, workspace and exact scopes; stores tokens. |
 | `GET /status` | Owner verifies connection; returns `{connected: boolean}`. |
 | `POST /disconnect` | Owner blocks and revokes tokens; preserves jobs. |
-| `POST /webhook` | Receives signed Linear Agent session events and PR `Attachment` events. |
+| `POST /webhook` | Receives signed Linear Agent session events, PR `Attachment` events and Inbox notifications. Every other event is logged as `ignored`, with its `type` and `action`. |
 | `POST /jobs/claim` | Claims oldest eligible delegation for 10 minutes; `?kinds=closeout` claims a [closeout job](#closeout-jobs) instead, `?kinds=delegation,closeout` either; 204 when empty. |
 | `GET /jobs/watching` | Recovers this machine's launched jobs. |
 | `GET /jobs/<id>/task` | Reads issue and delegation details for the claim; for a [closeout job](#closeout-jobs), also what to close out. |
@@ -118,6 +119,22 @@ Per-job routes require `?claimId=<claimId>` and reject another machine's claim.
 Expired leases return to the same machine only. Stop or delegate again if that
 machine cannot return. Webhook activities and field writes retry through a durable
 outbox; delivery is at least once. There is no token-sharing endpoint.
+
+### Delegating again
+
+Linear sends an Agent session event only the first time an issue is delegated to the
+app. Delegate it again, after a stop or an undelegation, and Linear sends just an Inbox
+notification (`AppUserNotification`, action `issueAssignedToYou`). Cloud Inbox waits
+five seconds for a session event. If none comes and the issue is still delegated to the
+app, it opens a new agent session on the issue itself and queues the job there, which
+replaces the issue's earlier jobs as any new delegation does. Whoever delegated, named
+in the notification, stands in for the session's creator. Each notification starts one
+session at most, and an undelegation notification starts nothing.
+
+This needs the app's **Inbox notifications** webhook category. Setup's registration
+page asks for it. An app registered before this must have it switched on by hand:
+open the app in Linear's API settings, tick Inbox notifications under its webhook
+events, and save. Without it, delegating again does nothing.
 
 ### Closeout jobs
 

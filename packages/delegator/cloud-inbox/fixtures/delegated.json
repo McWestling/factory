@@ -1,0 +1,35 @@
+{
+  "type": "AppUserNotification",
+  "action": "issueAssignedToYou",
+  "createdAt": "2026-11-20T12:00:00.000Z",
+  "organizationId": "org-example",
+  "oauthClientId": "client-example",
+  "appUserId": "app-user-example",
+  "notification": {
+    "id": "notification-1",
+    "type": "issueAssignedToYou",
+    "createdAt": "2026-11-20T12:00:00.000Z",
+    "updatedAt": "2026-11-20T12:00:00.000Z",
+    "archivedAt": null,
+    "actorId": "user-example",
+    "externalUserActorId": null,
+    "userId": "app-user-example",
+    "issueId": "issue-1",
+    "issue": {
+      "id": "issue-1",
+      "identifier": "ABC-123",
+      "title": "Example issue",
+      "teamId": "team-example",
+      "team": { "id": "team-example", "key": "ABC", "name": "Example team" },
+      "url": "https://linear.app/example/issue/ABC-123"
+    },
+    "actor": {
+      "id": "user-example",
+      "name": "Example User",
+      "email": "user@example.com",
+      "url": "https://linear.app/example/profiles/user"
+    }
+  },
+  "webhookTimestamp": 0,
+  "webhookId": "webhook-example"
+}

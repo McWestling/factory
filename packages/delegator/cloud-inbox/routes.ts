@@ -3,7 +3,7 @@
 
 import { isLaunchEvidence } from '../job.ts';
 import { hex, sha256, timingSafeEqual, type Config } from './auth.ts';
-import { JOB_KINDS, MAX_UPDATE_CHARS, type AgentEvent, type JobKind, type JobQueue, type MergeEvent, type Refusal, type Snapshot,
+import { JOB_KINDS, MAX_UPDATE_CHARS, type AgentEvent, type DelegatedEvent, type JobKind, type JobQueue, type MergeEvent, type Refusal, type Snapshot,
   type UpdateType } from './queue.ts';
 
 const TIMESTAMP_WINDOW_MS = 60_000;
@@ -43,11 +43,27 @@ type Payload = {
   agentSession?: { id?: unknown; issueId?: unknown; issue?: { id?: unknown }; creatorId?: unknown };
   agentActivity?: { id?: unknown; signal?: unknown };
   data?: { issueId?: unknown; metadata?: PullRequest };
+  notification?: { id?: unknown; issueId?: unknown; issue?: { id?: unknown }; actorId?: unknown; actor?: { id?: unknown } };
   updatedFrom?: { metadata?: PullRequest };
 };
 type PullRequest = { status?: unknown; url?: unknown; repoLogin?: unknown; repoName?: unknown; branch?: unknown };
 
 const filled = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
+/** A webhook's `type` or `action` for a log line: a short string, or empty. */
+const label = (value: unknown) => typeof value === 'string' ? value.slice(0, 64) : '';
+
+/**
+ * An Inbox notification that an issue was delegated to the app, or null for any other
+ * notification, an undelegation included. `actorId` is the person who delegated.
+ */
+function delegatedEvent({ action, appUserId, notification }: Payload): DelegatedEvent | null {
+  if (action !== 'issueAssignedToYou') return null;
+  const issueId = notification?.issueId ?? notification?.issue?.id;
+  const actorId = notification?.actorId ?? notification?.actor?.id;
+  if (!filled(notification?.id) || !filled(issueId)) return null;
+  return { action: 'delegated', appUserId: filled(appUserId) ? appUserId : '', notificationId: notification.id, issueId,
+    actorId: filled(actorId) ? actorId : undefined };
+}
 
 /** An `Attachment` update that moved a PR to `merged`, or null for any other `Attachment` event. */
 function mergeEvent({ action, data, updatedFrom }: Payload): MergeEvent | null {
@@ -114,11 +130,17 @@ export async function handleWebhook(request: Request, config: Config, inbox: Inb
   if (type === 'Attachment') {
     const merge = mergeEvent(payload);
     const outcome = merge ? await inbox.webhook(merge) : 'ignored';
-    log({ event: 'webhook', type, ...(merge && { issue: merge.issueId }), outcome });
+    log({ event: 'webhook', type, action: label(action), ...(merge && { issue: merge.issueId }), outcome });
     return text(200, 'OK');
   }
+  const delegated = type === 'AppUserNotification' ? delegatedEvent(payload) : null;
+  if (delegated) {
+    const outcome = await inbox.webhook(delegated);
+    log({ event: 'webhook', type: label(type), action: label(action), issue: delegated.issueId, outcome });
+    return outcome === 'app-user' ? text(403, 'Forbidden') : text(200, 'OK');
+  }
   if (type !== 'AgentSessionEvent' || (action !== 'created' && action !== 'prompted')) {
-    log({ event: 'webhook', outcome: 'ignored' });
+    log({ event: 'webhook', type: label(type), action: label(action), outcome: 'ignored' });
     return text(200, 'OK');
   }
   const sessionId = agentSession?.id;

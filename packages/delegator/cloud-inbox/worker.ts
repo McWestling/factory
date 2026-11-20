@@ -5,7 +5,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { LaunchEvidence } from '../job.ts';
 import { AppAuth, isAdmin, readConfig, type InstallResult } from './auth.ts';
-import { JobQueue, type AgentEvent, type JobKind, type MergeEvent, type Outcome, type Snapshot, type UpdateType } from './queue.ts';
+import { JobQueue, type AgentEvent, type DelegatedEvent, type JobKind, type MergeEvent, type Outcome, type Snapshot, type UpdateType } from './queue.ts';
 import { BASE_PATH, handleRunner, handleWebhook, log, text, underBasePath, type Inbox } from './routes.ts';
 
 interface Env {
@@ -132,7 +132,7 @@ export class Machine extends DurableObject<Env> {
   /** Delivers the outbox. Fires right after a queue change and again for each retry. */
   async alarm() { await this.#jobs.deliver(); }
 
-  webhook(event: AgentEvent | MergeEvent) { return this.#jobs.webhook(event); }
+  webhook(event: AgentEvent | MergeEvent | DelegatedEvent) { return this.#jobs.webhook(event); }
 
   claim(machine: string, kinds?: readonly JobKind[]) { return this.#jobs.claim(machine, kinds); }
 

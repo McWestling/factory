@@ -119,8 +119,10 @@ export async function setup(file: string, io: SetupIO): Promise<void> {
         'oauth.redirect_uris': `${state.origin}/delegator/callback`,
         'oauth.grant_types': 'authorization_code', 'webhook.enabled': 'true',
         'webhook.url': `${state.origin}/delegator/webhook`, 'webhook.resourceTypes': 'AgentSessionEvent' }).toString();
-      // Linear reads a repeated parameter as a list; closeout jobs need Attachment events.
+      // Linear reads a repeated parameter as a list; closeout jobs need Attachment events, and
+      // a second delegation of an issue arrives only as an Inbox notification.
       url.searchParams.append('webhook.resourceTypes', 'Attachment');
+      url.searchParams.append('webhook.resourceTypes', 'AppUserNotification');
       state.registrationUrl = url.href;
     }
     await save(file, state);

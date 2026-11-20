@@ -310,7 +310,7 @@ test('a merged PR from a launch opens a new session on the issue and queues one 
   const h = await launchedJob();
   const lines = webhookLog(t);
   assert.equal((await h.deliver(mergedPayload())).status, 200);
-  assert.deepEqual(lines(), [{ event: 'webhook', type: 'Attachment', issue: 'issue-1', outcome: 'queued' }]);
+  assert.deepEqual(lines(), [{ event: 'webhook', type: 'Attachment', action: 'update', issue: 'issue-1', outcome: 'queued' }]);
   const create = h.linear.requests.find((r) => r.query.includes('agentSessionCreateOnIssue'));
   assert.deepEqual(create?.variables, { issue: 'issue-1' });
   assert.deepEqual(closeouts(h), [{ id: 'session-created-1', issue_id: 'issue-1', state: 'queued', machine: 'example-machine' }]);
@@ -2038,4 +2038,234 @@ test('several slow metadata reads share one deadline and leave the watch retryab
   h.linear.github = () => Response.json({ base: { repo: { full_name: 'owner/repo' } },
     head: { ref: 'launch-branch', repo: { full_name: 'owner/repo' } } });
   assert.equal((await call(h, 'POST', 'pull-request', h.claimId)).status, 200);
+});
+
+// Delegating an issue again: Linear sends an Inbox notification but no session event.
+
+/** Past the wait Cloud Inbox gives Linear's own `created` event before it opens a session. */
+const WAITED_MS = 5_000;
+/** An Inbox notification that `issue-1` was delegated to the app. Built from Linear's published schema, not captured. */
+const delegatedPayload = (id = 'notification-1', edit?: (payload: Record<string, any>) => void) => {
+  const payload = fixture('delegated');
+  payload.notification.id = id;
+  edit?.(payload);
+  return payload;
+};
+/** Delivers the notification, waits out the wait, then fires the alarm. */
+const delegatedAgain = async (h: Harness, id?: string, edit?: (payload: Record<string, any>) => void) => {
+  const res = await h.send(delegatedPayload(id, edit));
+  h.clock.now += WAITED_MS;
+  await h.flush();
+  return res;
+};
+
+test('a delegation notification with no created event opens one session and queues one job, with the queued thought', async (t) => {
+  const h = setup();
+  const lines = webhookLog(t);
+  assert.equal((await h.deliver(delegatedPayload())).status, 200);
+  assert.deepEqual(lines(), [{ event: 'webhook', type: 'AppUserNotification', action: 'issueAssignedToYou', issue: 'issue-1', outcome: 'waiting' }]);
+  // Nothing starts until Linear's own `created` event has had its chance.
+  assert.equal(sessionsCreated(h), 0);
+  assert.deepEqual(h.rows().jobs, []);
+  h.clock.now += WAITED_MS;
+  await h.flush();
+  assert.equal(sessionsCreated(h), 1);
+  assert.deepEqual(h.rows().jobs, [{ id: 'session-created-1', issue_id: 'issue-1', state: 'queued' }]);
+  assert.deepEqual(sent(h.posts), [['session-created-1', 'thought', MESSAGES.queued('Delegator')]]);
+  assert.deepEqual(h.rows().outbox, []);
+});
+
+test('a first delegation, created event then notification, queues one job and opens no session', async (t) => {
+  const h = setup();
+  await h.created('session-1');
+  const lines = webhookLog(t);
+  await delegatedAgain(h);
+  assert.deepEqual(lines().map((line) => line.outcome), ['covered']);
+  assert.equal(sessionsCreated(h), 0);
+  assert.deepEqual(h.rows().jobs, [{ id: 'session-1', issue_id: 'issue-1', state: 'queued' }]);
+  assert.deepEqual(h.rows().outbox, []);
+});
+
+test('a first delegation, notification then created event, queues one job and opens no session', async () => {
+  const h = setup();
+  await h.deliver(delegatedPayload());
+  h.clock.now += 1_000;
+  await h.created('session-1');
+  h.clock.now += WAITED_MS;
+  await h.flush();
+  assert.equal(sessionsCreated(h), 0);
+  assert.deepEqual(h.rows().jobs, [{ id: 'session-1', issue_id: 'issue-1', state: 'queued' }]);
+  assert.deepEqual(sent(h.posts), [['session-1', 'thought', MESSAGES.queued('Delegator')]]);
+  assert.deepEqual(h.rows().outbox, []);
+});
+
+test("Linear's created echo for a session Cloud Inbox opened queues no second job", async (t) => {
+  const h = setup();
+  await delegatedAgain(h);
+  const lines = webhookLog(t);
+  await h.deliver(ownCreated(h, 'session-created-1'));
+  await h.deliver(ownCreated(h, 'session-created-1', 'app-user-example'));
+  assert.deepEqual(lines().map((line) => line.outcome), ['own-session', 'own-session']);
+  assert.deepEqual(h.rows().jobs, [{ id: 'session-created-1', issue_id: 'issue-1', state: 'queued' }]);
+  assert.equal(sent(h.posts).length, 1);
+});
+
+test("Linear's created echo arriving before the session create returns adopts the session as the one job", async () => {
+  const h = setup();
+  await h.send(delegatedPayload());
+  h.clock.now += WAITED_MS;
+  // Hold the create, the request after the delegate read.
+  const answer = h.linear.answer;
+  let create!: ReturnType<typeof h.linear.hold>;
+  const reading = new Promise<void>((resolve) => {
+    h.linear.answer = (query, variables) => {
+      if (!query.includes('agentSessionCreateOnIssue')) { create = h.linear.hold(); resolve(); }
+      return answer(query, variables);
+    };
+  });
+  const delivering = h.flush();
+  await reading;
+  await create.waiting;
+  h.linear.answer = answer;
+  await h.send(ownCreated(h, 'session-created-1'));
+  create.release();
+  await delivering;
+  await h.flush();
+  assert.equal(sessionsCreated(h), 1);
+  assert.deepEqual(h.rows().jobs, [{ id: 'session-created-1', issue_id: 'issue-1', state: 'queued' }]);
+  assert.deepEqual(sent(h.posts), [['session-created-1', 'thought', MESSAGES.queued('Delegator')]]);
+  assert.deepEqual(h.rows().outbox, []);
+  assert.equal((await taskOf(h)).creatorId, 'user-example');
+});
+
+/** Claims the waiting job and reads its task. */
+const taskOf = async (h: Harness) => {
+  const claim = await h.claimed();
+  return { ...await (await call(h, 'GET', 'task', claim!.claimId, undefined, claim!.sessionId)).json(), ...claim! };
+};
+
+test("a session create whose response is lost is adopted from Linear's echo, not created again", async () => {
+  const h = setup();
+  const answer = h.linear.answer;
+  h.linear.answer = (query, variables) => {
+    const data = answer(query, variables);
+    if (query.includes('agentSessionCreateOnIssue')) throw new Error('response lost');
+    return data;
+  };
+  await delegatedAgain(h);
+  h.linear.answer = answer;
+  assert.deepEqual(h.rows().jobs, []);
+  await h.deliver(ownCreated(h, 'session-created-1'));
+  h.clock.now += 60_000;
+  await h.flush();
+  assert.equal(sessionsCreated(h), 1);
+  assert.deepEqual(h.rows().jobs, [{ id: 'session-created-1', issue_id: 'issue-1', state: 'queued' }]);
+  assert.deepEqual(h.rows().outbox, []);
+});
+
+test('delegating again replaces the earlier job of the issue, as a new created event does', async () => {
+  const h = await claimedJob();
+  h.clock.now += 60_000;
+  await delegatedAgain(h);
+  assert.deepEqual(h.rows().jobs.map((j) => [j.id, j.state]), [['session-1', 'claimed'], ['session-created-1', 'queued']]);
+  assert.deepEqual(await (await h.runner('GET', '/jobs/watching')).json(), []);
+  // A waiting job is ended in its thread.
+  const waiting = setup();
+  await waiting.created('session-1');
+  waiting.clock.now += 60_000;
+  await delegatedAgain(waiting);
+  assert.deepEqual(waiting.rows().jobs, [{ id: 'session-created-1', issue_id: 'issue-1', state: 'queued' }]);
+  assert.ok(sent(waiting.posts).some(([session, type, body]) => session === 'session-1' && type === 'response' && body === MESSAGES.replaced));
+});
+
+test('whoever delegated stands in for the session creator: in the task and as the launch assignee', async () => {
+  const h = setup();
+  await delegatedAgain(h);
+  const task = await taskOf(h);
+  assert.equal(task.creatorId, 'user-example');
+  assert.equal(task.delegated, true);
+  await call(h, 'POST', 'launched', task.claimId, undefined, task.sessionId);
+  await h.flush();
+  assert.equal(h.linear.world.issues['issue-1']!.assigneeId, 'user-example');
+});
+
+test('a delegation notification naming nobody gives a task with no creator, for the Runner to refuse', async () => {
+  const h = setup();
+  await delegatedAgain(h, undefined, (payload) => {
+    delete payload.notification.actorId;
+    delete payload.notification.actor;
+  });
+  assert.equal((await taskOf(h)).creatorId, null);
+});
+
+test('a repeated delegation notification starts nothing more', async (t) => {
+  const h = setup();
+  await delegatedAgain(h);
+  const lines = webhookLog(t);
+  h.clock.now += 60_000;
+  assert.equal((await delegatedAgain(h)).status, 200);
+  assert.deepEqual(lines().map((line) => line.outcome), ['duplicate']);
+  assert.equal(sessionsCreated(h), 1);
+  assert.equal(h.rows().jobs.length, 1);
+});
+
+test('a later delegation notification of the same issue opens another session', async () => {
+  const h = setup();
+  await delegatedAgain(h);
+  h.clock.now += 60_000;
+  await delegatedAgain(h, 'notification-2');
+  assert.equal(sessionsCreated(h), 2);
+  assert.deepEqual(h.rows().jobs, [{ id: 'session-created-2', issue_id: 'issue-1', state: 'queued' }]);
+});
+
+test('an undelegation notification starts nothing and is logged as ignored, with its type and action', async (t) => {
+  const h = setup();
+  const lines = webhookLog(t);
+  assert.equal((await delegatedAgain(h, undefined, (payload) => {
+    payload.action = payload.notification.type = 'issueUnassignedFromYou';
+  })).status, 200);
+  assert.deepEqual(lines(), [{ event: 'webhook', type: 'AppUserNotification', action: 'issueUnassignedFromYou', outcome: 'ignored' }]);
+  assert.equal(sessionsCreated(h), 0);
+  assert.deepEqual(h.rows(), { jobs: [], seen: [], outbox: [], ended: [] });
+});
+
+test('a delegation undone within the wait opens no session', async () => {
+  const h = setup();
+  await h.send(delegatedPayload());
+  h.linear.world.issues['issue-1']!.delegateId = null;
+  h.clock.now += WAITED_MS;
+  await h.flush();
+  assert.equal(sessionsCreated(h), 0);
+  assert.deepEqual(h.rows(), { jobs: [], seen: [], outbox: [], ended: [] });
+});
+
+test('a delegation notification waits out a Linear failure, then opens one session', async () => {
+  const h = setup();
+  h.linear.failNext = 1;
+  await delegatedAgain(h);
+  assert.deepEqual(h.rows().jobs, []);
+  h.clock.now += 60_000;
+  await h.flush();
+  assert.equal(sessionsCreated(h), 1);
+  assert.equal(h.rows().jobs.length, 1);
+});
+
+test('a delegation notification for another app user gets 403 and starts nothing', async () => {
+  const h = setup();
+  const res = await delegatedAgain(h, undefined, (payload) => { payload.appUserId = 'another-app'; });
+  assert.equal(res.status, 403);
+  assert.deepEqual(h.rows(), { jobs: [], seen: [], outbox: [], ended: [] });
+});
+
+test('an ignored webhook is logged with its type and action', async (t) => {
+  const h = setup();
+  const lines = webhookLog(t);
+  await h.deliver({ type: 'Issue', action: 'update', organizationId: 'org-example' });
+  await h.deliver({ type: 'AppUserNotification', action: 'issueAssignedToYou', organizationId: 'org-example', notification: {} });
+  await h.deliver({ type: 7, organizationId: 'org-example' });
+  assert.deepEqual(lines(), [
+    { event: 'webhook', type: 'Issue', action: 'update', outcome: 'ignored' },
+    { event: 'webhook', type: 'AppUserNotification', action: 'issueAssignedToYou', outcome: 'ignored' },
+    { event: 'webhook', type: '', action: '', outcome: 'ignored' },
+  ]);
 });
