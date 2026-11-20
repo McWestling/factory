@@ -52,7 +52,7 @@ export type Task = {
   /** Set by Cloud Inbox for a closeout job, with the launch it closes out and, when there's nothing to close, why. */
   kind?: 'closeout';
   launch?: LaunchEvidence;
-  skip?: 'canceled' | 'unverified';
+  skip?: 'canceled' | 'unreadable' | 'unverified';
 };
 
 export type Exec = (file: string, args: string[], timeoutMs: number) => Promise<{ stdout: string }>;
@@ -773,6 +773,9 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
   if (closeout) {
     // Cloud Inbox made this session itself and verified the launch, so the delegate and creator don't apply.
     if (task.skip === 'canceled') return refuse('canceled', 'Issue canceled; no closeout launched.', 'response');
+    if (task.skip === 'unreadable') {
+      return refuse('unreadable', `Couldn't read the merged PR from GitHub; check Cloud Inbox's GitHub token. Nothing launched. ${BY_HAND}`, 'response');
+    }
     if (task.skip !== undefined || !isLaunchEvidence(task.launch)) {
       return refuse('unverified', `Couldn't verify the merged PR came from this launch; nothing launched. ${BY_HAND}`, 'response');
     }

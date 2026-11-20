@@ -142,8 +142,10 @@ A closeout job's task adds `kind: "closeout"` and `launch`, the `{repo, branch}`
 launch recorded. It adds `skip: "canceled"` when the issue is canceled. Otherwise it
 checks the issue's PR attachments the way `watch` does, base and head repo equal to the
 launch's repo and head branch equal to its branch, and also needs that PR merged. If
-none passes, it adds `skip: "unverified"`. A launch's record is kept while a closeout
-of it is, so a closeout claimed late still names its launch. The Runner
+none passes, it adds `skip: "unreadable"` when GitHub refused one of them with a 401, 403
+or 404 that isn't a rate limit, which points at its token, and `skip: "unverified"`
+otherwise, including a timeout, a 5xx or a rate limit. A launch's record is kept while
+a closeout of it is, so a closeout claimed late still names its launch. The Runner
 turns a skip into the session's final response instead of launching. A merge whose
 webhook never arrives, or that comes more than 30 days after its launch, gets no
 closeout job; run `do-closeout` by hand.

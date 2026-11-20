@@ -96,8 +96,11 @@ export type Task = {
   /** Set only for a closeout job, with the launch it closes out and, when it has nothing to close, why. */
   kind?: 'closeout';
   launch?: LaunchEvidence;
-  /** `canceled`: the issue was canceled. `unverified`: no attached PR is the launch's, merged. */
-  skip?: 'canceled' | 'unverified';
+  /**
+   * `canceled`: the issue was canceled. `unreadable`: no attached PR is the launch's, merged, and
+   * GitHub refused one for a token problem. `unverified`: no attached PR is the launch's, merged.
+   */
+  skip?: 'canceled' | 'unreadable' | 'unverified';
   delegated: boolean;
   creatorId: string | null;
   identifier: string;
@@ -412,8 +415,9 @@ export class JobQueue {
       ? { repo: String(job.launch_repo), branch: String(job.launch_branch) } : undefined;
     if (issue.state.type === 'canceled') return { ...task, kind: 'closeout', launch, skip: 'canceled' };
     const urls = (issue.attachments?.nodes ?? []).map((a) => a.url ?? '');
-    const merged = launch && (await this.#launchPullRequests('task', id, urls, launch)).found.some(({ pr }) => pr.merged === true);
-    return { ...task, kind: 'closeout', launch, ...(!merged && { skip: 'unverified' as const }) };
+    const read = launch && await this.#launchPullRequests('task', id, urls, launch);
+    if (read && read.found.some(({ pr }) => pr.merged === true)) return { ...task, kind: 'closeout', launch };
+    return { ...task, kind: 'closeout', launch, skip: read?.unreadable ? 'unreadable' : 'unverified' };
   }
 
   /**
