@@ -42,6 +42,8 @@ build_app() {
 	mkdir -p "$app/Contents/MacOS" "$resources/runner/launchd" "$resources/menubar"
 	swiftc -O -target "$(uname -m)-apple-macosx14.0" "$menubar_dir/Status.swift" "$menubar_dir/App.swift" -o "$app/Contents/MacOS/FactoryRunnerMenuBar"
 	cp "$menubar_dir/Info.plist" "$app/Contents/Info.plist"
+	# The app and the Runner are always built together, so this one time covers both.
+	plutil -replace FactoryBuildTime -string "$(date -u '+%Y-%m-%d %H:%M UTC')" "$app/Contents/Info.plist"
 	cp "$package_dir/job.ts" "$package_dir/parse-issue.ts" "$resources/"
 	cp "$package_dir/runner/runner.ts" "$resources/runner/"
 	cp "$script_dir/install.sh" "$script_dir/runner.plist" "$resources/runner/launchd/"
