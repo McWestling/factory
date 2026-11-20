@@ -43,7 +43,7 @@ test('setup resumes an interrupted registration and reruns without changing cred
     assert.equal(commands.filter((args) => args.includes('deploy')).length, deploys);
     const manifest = new URL(JSON.parse(installed).registrationUrl);
     assert.equal(manifest.searchParams.get('distribution'), 'private');
-    assert.deepEqual(manifest.searchParams.getAll('webhook.resourceTypes'), ['AgentSessionEvent', 'Attachment']);
+    assert.deepEqual(manifest.searchParams.getAll('webhook.resourceTypes'), ['AgentSessionEvent', 'Attachment', 'AppUserNotification']);
     assert.equal(manifest.searchParams.get('webhook.enabled'), 'true');
     assert.equal(manifest.searchParams.get('oauth.client_name'), 'Delegator');
     assert.equal(manifest.searchParams.get('oauth.redirect_uris'), 'https://factory-cloud-inbox.example.workers.dev/delegator/callback');

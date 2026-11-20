@@ -12,6 +12,18 @@ const GRAPHQL_URL = 'https://api.linear.app/graphql';
 const LEASE_MS = 10 * 60_000;
 const HISTORY_MS = 30 * 24 * 60 * 60_000;
 const POST_TIMEOUT_MS = 10_000;
+/**
+ * How long a delegation notification waits for Linear's own `created` event before Cloud Inbox
+ * opens the session itself. A first delegation sends both, within a second of each other.
+ * A notification also counts as the same delegation as a session Linear made within this long of
+ * it, by Linear's own timestamps, however late either arrives.
+ * ponytail: a `created` that arrives after the wait still gets a second session, which replaces
+ * it; and delegating again within the wait of a session that was then stopped starts nothing.
+ * Ask Linear for the issue's sessions if either ever happens.
+ */
+export const DELEGATION_WAIT_MS = 5_000;
+/** How long after a delegation notification a `created` with no human creator can be Cloud Inbox's own. */
+const OWN_SESSION_MS = 10 * 60_000;
 // Leave room for Linear reads and linking within the Runner's 30-second deadline.
 const METADATA_TIMEOUT_MS = 5_000;
 const RETRY_MAX_MS = 60 * 60_000;
@@ -68,26 +80,45 @@ export type AgentEvent = {
   stop: boolean;
   /** The session's human creator; absent when the app or an automation started it. */
   creatorId?: string;
+  /** When Linear made the session, on a `created`. */
+  createdAt?: number;
 };
 
+/**
+ * A verified Inbox notification that the issue was delegated to the app. Linear sends one for
+ * every delegation, but a session event only for an issue's first. `actorId` is who delegated.
+ */
+export type DelegatedEvent = {
+  action: 'delegated'; appUserId: string; notificationId: string; issueId: string; actorId?: string;
+  /** When Linear made the notification. */
+  createdAt?: number;
+};
+/** A waiting delegation's outbox body: the issue, and who delegated it. */
+type Delegation = { issue: string; creator: string | null };
 /** A merged-PR `Attachment` update: the issue, and the PR's URL, repo (`owner/name`) and head branch. */
 export type MergeEvent = { action: 'merged'; issueId: string; url: string; repo: string; branch: string };
 /** A closeout's outbox body: the launch job it closes out, its issue, machine and PR URL. */
 type Closeout = { launch: string; issue: string; machine: string; pr: string };
 
-/** `delegation` jobs come from Linear; Cloud Inbox queues a `closeout` job itself when a launch's PR merges. */
+/**
+ * `delegation` jobs come from Linear's `created` event, or from its delegation notification when
+ * no `created` comes with it; Cloud Inbox queues a `closeout` job itself when a launch's PR merges.
+ */
 export type JobKind = 'delegation' | 'closeout';
 export const JOB_KINDS: readonly JobKind[] = ['delegation', 'closeout'];
 
-export type WebhookResult = 'queued' | 'duplicate' | 'no-match' | 'own-session' | 'answered' | 'ended' | 'no-issue' | 'app-user';
+/** `waiting`: a delegation notification is waiting for Linear's `created`; `covered`: one already came. */
+export type WebhookResult = 'queued' | 'duplicate' | 'no-match' | 'own-session' | 'answered' | 'ended' | 'no-issue' | 'app-user'
+  | 'waiting' | 'covered';
 export type Outcome = 'launched' | 'failed';
 export type UpdateType = 'thought' | 'response' | 'error';
 /**
  * An outbox row: an activity, or a write-back. `launch` applies a launch's field changes
  * and `release` clears the delegate; their body holds the issue id, not text. `closeout`
  * creates a closeout job's session and then the job; its body holds the launch as JSON.
+ * `delegation` does the same for an issue delegated without a session; its body is a `Delegation`.
  */
-type RowType = UpdateType | 'launch' | 'release' | 'closeout';
+type RowType = UpdateType | 'launch' | 'release' | 'closeout' | 'delegation';
 
 /** Why a Runner operation was refused: no current claim, an ended session, no PR, or Linear failed. */
 export type Refusal = 'not-claimed' | 'ended' | 'no-pr' | 'linear';
@@ -185,8 +216,8 @@ export class JobQueue {
     this.#schedule = schedule;
     this.#githubToken = githubToken;
     // `machine` is the machine whose claim holds the job. A closeout job `closes` a launch
-    // job, whose PR is `pull_request`.
-    const added = { kind: "TEXT NOT NULL DEFAULT 'delegation'", closes: 'TEXT', pull_request: 'TEXT' };
+    // job, whose PR is `pull_request`. `creator` is who delegated, for a session Cloud Inbox opened.
+    const added = { kind: "TEXT NOT NULL DEFAULT 'delegation'", closes: 'TEXT', pull_request: 'TEXT', creator: 'TEXT' };
     sql.exec(`CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, issue_id TEXT NOT NULL,
       state TEXT NOT NULL, lease_until INTEGER, updated_at INTEGER NOT NULL, claim_id TEXT, machine TEXT,
       launch_repo TEXT, launch_branch TEXT)`);
@@ -203,6 +234,11 @@ export class JobQueue {
     sql.exec('CREATE TABLE IF NOT EXISTS superseded (session_id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     // Launch jobs whose merge already queued a closeout, so it queues once.
     sql.exec('CREATE TABLE IF NOT EXISTS closeouts (launch_id TEXT PRIMARY KEY, issue_id TEXT NOT NULL, at INTEGER NOT NULL)');
+    // Delegation notifications already handled, so each starts one session at most.
+    sql.exec('CREATE TABLE IF NOT EXISTS notifications (id TEXT PRIMARY KEY, issue_id TEXT NOT NULL, at INTEGER NOT NULL)');
+    // When each issue's newest delegation session arrived, and when Linear made it if Linear did,
+    // so its notification opens no second one.
+    sql.exec('CREATE TABLE IF NOT EXISTS delegated (issue_id TEXT PRIMARY KEY, at INTEGER NOT NULL, created_at INTEGER)');
     // `queued` marks the queued thought, which a claim cancels.
     sql.exec(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL,
       type TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
@@ -238,12 +274,13 @@ export class JobQueue {
   }
 
   /** Acts on a webhook whose signature, timestamp and org the Worker already checked. */
-  async webhook(event: AgentEvent | MergeEvent): Promise<WebhookResult> {
+  async webhook(event: AgentEvent | MergeEvent | DelegatedEvent): Promise<WebhookResult> {
     if (event.action === 'merged') return this.#merged(event);
     const app = await this.#auth.installation();
     if (!app || app.appUserId !== event.appUserId) return 'app-user';
     // No await from here on, so each change and the activities it needs are atomic.
     const now = this.#now();
+    if (event.action === 'delegated') return this.#delegated(event, now);
     const ended = this.#sql.exec('SELECT 1 FROM ended WHERE session_id = ?', event.sessionId).toArray().length > 0;
 
     if (event.action === 'prompted') {
@@ -265,7 +302,7 @@ export class JobQueue {
     }
 
     if (!event.issueId) return 'no-issue';
-    if (this.#ownSession(event, app.appUserId)) return 'own-session';
+    if (this.#ownSession(event, app)) return 'own-session';
     const fresh = this.#sql.exec(
       'INSERT INTO seen (session_id, at) VALUES (?, ?) ON CONFLICT DO NOTHING RETURNING session_id',
       event.sessionId, now).toArray();
@@ -273,15 +310,48 @@ export class JobQueue {
     if (!fresh.length) return ended ? 'ended' : 'duplicate';
     // A new delegation supersedes the issue's older jobs, even if it was stopped before
     // this webhook arrived.
-    this.#sql.exec(`INSERT INTO superseded (session_id, at) SELECT id, ? FROM jobs WHERE issue_id = ? AND id != ?
-      ON CONFLICT DO NOTHING`, now, event.issueId, event.sessionId);
+    this.#supersede(event.sessionId, event.issueId, now, event.createdAt);
     if (ended) return 'ended';
-    this.#sql.exec("INSERT INTO jobs (id, issue_id, state, updated_at) VALUES (?, ?, 'queued', ?)",
-      event.sessionId, event.issueId, now);
-    this.#settle(now);
-    this.#enqueue(event.sessionId, 'thought', MESSAGES.queued(app.appName ?? 'Delegator'), now, true);
+    this.#queueDelegation(event.sessionId, event.issueId, null, app.appName, now);
     this.#wake();
     return 'queued';
+  }
+
+  /**
+   * A new delegation session of the issue: supersedes its older jobs, and covers a delegation
+   * notification still waiting, or arriving within the wait, so that one opens no second session.
+   */
+  #supersede(sessionId: string, issueId: string, now: number, createdAt?: number) {
+    this.#sql.exec(`INSERT INTO superseded (session_id, at) SELECT id, ? FROM jobs WHERE issue_id = ? AND id != ?
+      ON CONFLICT DO NOTHING`, now, issueId, sessionId);
+    this.#sql.exec(`INSERT INTO delegated (issue_id, at, created_at) VALUES (?, ?, ?)
+      ON CONFLICT (issue_id) DO UPDATE SET at = excluded.at, created_at = excluded.created_at`, issueId, now, createdAt ?? null);
+    this.#sql.exec("DELETE FROM outbox WHERE type = 'delegation' AND json_extract(body, '$.issue') = ?", issueId);
+  }
+
+  /** Queues the delegation job with its queued thought, replacing the issue's older waiting jobs. */
+  #queueDelegation(sessionId: string, issueId: string, creator: string | null, appName: string | undefined, now: number) {
+    this.#sql.exec("INSERT INTO jobs (id, issue_id, state, updated_at, creator) VALUES (?, ?, 'queued', ?, ?)",
+      sessionId, issueId, now, creator);
+    this.#settle(now);
+    this.#enqueue(sessionId, 'thought', MESSAGES.queued(appName ?? 'Delegator'), now, true);
+  }
+
+  /**
+   * Each notification counts once. Unless a `created` for the issue came within the wait, or
+   * Linear made that session within the wait of the notification, it waits that long for one; `#delegation` then opens the session. A newer notification of the
+   * issue replaces one still waiting.
+   */
+  #delegated(event: DelegatedEvent, now: number): WebhookResult {
+    if (!this.#sql.exec('INSERT INTO notifications (id, issue_id, at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING RETURNING id',
+      event.notificationId, event.issueId, now).toArray().length) return 'duplicate';
+    if (this.#sql.exec('SELECT 1 FROM delegated WHERE issue_id = ? AND (at > ? OR abs(created_at - ?) < ?)',
+      event.issueId, now - DELEGATION_WAIT_MS, event.createdAt ?? null, DELEGATION_WAIT_MS).toArray().length) return 'covered';
+    this.#sql.exec("DELETE FROM outbox WHERE type = 'delegation' AND json_extract(body, '$.issue') = ?", event.issueId);
+    const delegation: Delegation = { issue: event.issueId, creator: event.actorId ?? null };
+    this.#enqueue(`delegation:${event.notificationId}`, 'delegation', JSON.stringify(delegation), now, false, DELEGATION_WAIT_MS);
+    this.#wake();
+    return 'waiting';
   }
 
   /**
@@ -306,25 +376,40 @@ export class JobQueue {
   }
 
   /**
-   * True for Linear's `created` webhook of a session Cloud Inbox made for a closeout: one with
-   * no human creator, on an issue that has a closeout. Linear may send it before, or without,
-   * the create's response, so a closeout still waiting on that create adopts the session.
+   * True for Linear's `created` webhook of a session Cloud Inbox made, for a closeout or for a
+   * delegation that came without one: a session with no human creator, on an issue that has a
+   * closeout, a recent delegation notification or one still waiting. Linear may send it before, or without, the create's
+   * response, so a closeout or delegation still waiting on that create adopts the session.
    */
-  #ownSession(event: AgentEvent, appUserId: string): boolean {
-    if (event.creatorId && event.creatorId !== appUserId) return false;
-    if (!this.#sql.exec('SELECT 1 FROM closeouts WHERE issue_id = ?', event.issueId!).toArray().length) return false;
-    // A replay of a session already handled must not take another closeout's pending create.
-    if (this.#sql.exec('SELECT 1 FROM seen WHERE session_id = ?', event.sessionId).toArray().length) return true;
+  #ownSession(event: AgentEvent, app: { appUserId: string; appName?: string }): boolean {
+    if (event.creatorId && event.creatorId !== app.appUserId) return false;
+    const issueId = event.issueId!;
     const now = this.#now();
-    const [pending] = this.#sql.exec(`SELECT id, body FROM outbox WHERE type = 'closeout'
-      AND json_extract(body, '$.issue') = ? ORDER BY id LIMIT 1`, event.issueId!).toArray();
-    // ponytail: a retry that created a second session before this webhook arrived leaves this one empty.
+    if (!this.#sql.exec(`SELECT 1 FROM closeouts WHERE issue_id = ?
+      UNION ALL SELECT 1 FROM notifications WHERE issue_id = ? AND at > ?
+      UNION ALL SELECT 1 FROM outbox WHERE type = 'delegation' AND json_extract(body, '$.issue') = ?`,
+      issueId, issueId, now - OWN_SESSION_MS, issueId).toArray().length) return false;
+    // A replay of a session already handled must not take another pending create.
+    if (this.#sql.exec('SELECT 1 FROM seen WHERE session_id = ?', event.sessionId).toArray().length) return true;
+    const [pending] = this.#sql.exec(`SELECT id, type, body FROM outbox WHERE type IN ('closeout', 'delegation')
+      AND json_extract(body, '$.issue') = ? ORDER BY id LIMIT 1`, issueId).toArray();
+    // ponytail: a retry that created a second session before this webhook arrived leaves this one
+    // empty, as does a human's `created` that took the waiting delegation while its create was in
+    // flight (logged `adopted`). With a closeout and a delegation both pending, the older takes it.
+    const seen = () => this.#sql.exec('INSERT INTO seen (session_id, at) VALUES (?, ?) ON CONFLICT DO NOTHING', event.sessionId, now);
     if (!pending) {
-      this.#sql.exec('INSERT INTO seen (session_id, at) VALUES (?, ?) ON CONFLICT DO NOTHING', event.sessionId, now);
+      seen();
       return true;
     }
     this.#sql.exec('DELETE FROM outbox WHERE id = ?', Number(pending.id));
-    this.#queueCloseout(event.sessionId, JSON.parse(String(pending.body)), now);
+    if (pending.type === 'closeout') {
+      this.#queueCloseout(event.sessionId, JSON.parse(String(pending.body)), now);
+    } else {
+      seen();
+      const { creator } = JSON.parse(String(pending.body)) as Delegation;
+      this.#supersede(event.sessionId, issueId, now);
+      this.#queueDelegation(event.sessionId, issueId, creator, app.appName, now);
+    }
     this.#wake();
     return true;
   }
@@ -394,7 +479,7 @@ export class JobQueue {
     const issueId = this.#held(machine, id, claimId);
     if (!issueId) return 'not-claimed';
     // A closeout's launch is the job it closes, kept as long as the closeout.
-    const [job] = this.#sql.exec(`SELECT c.kind, l.launch_repo, l.launch_branch FROM jobs c
+    const [job] = this.#sql.exec(`SELECT c.kind, c.creator, l.launch_repo, l.launch_branch FROM jobs c
       LEFT JOIN jobs l ON l.id = c.closes WHERE c.id = ?`, id).toArray();
     const closeout = job?.kind === 'closeout';
     const data = await this.#read<TaskData>(closeout ? CLOSEOUT_TASK : TASK, { issue: issueId, session: id });
@@ -403,7 +488,8 @@ export class JobQueue {
     const app = await this.#auth.installation();
     const task: Task = {
       delegated: Boolean(app && issue.delegate?.id === app.appUserId),
-      creatorId: data?.agentSession?.creator?.id ?? null,
+      // A session Cloud Inbox opened has no creator; whoever delegated stands in for them.
+      creatorId: (job?.creator as string | null) ?? data?.agentSession?.creator?.id ?? null,
       identifier: issue.identifier,
       description: issue.description ?? '',
       branchName: issue.branchName,
@@ -572,9 +658,9 @@ export class JobQueue {
     if (row?.at != null) this.#schedule(Number(row.at));
   }
 
-  #enqueue(sessionId: string, type: RowType, body: string, now: number, queued = false) {
+  #enqueue(sessionId: string, type: RowType, body: string, now: number, queued = false, wait = 0) {
     this.#sql.exec('INSERT INTO outbox (session_id, type, body, created_at, next_at, queued) VALUES (?, ?, ?, ?, ?, ?)',
-      sessionId, type, body, now, now, queued ? 1 : 0);
+      sessionId, type, body, now, now + wait, queued ? 1 : 0);
   }
 
   /** Marks a session ended and posts its final activity, cancelling its thoughts not yet sent. */
@@ -602,6 +688,8 @@ export class JobQueue {
     this.#sql.exec('DELETE FROM seen_activities WHERE at <= ?', now - HISTORY_MS);
     this.#sql.exec('DELETE FROM ended WHERE at <= ?', now - HISTORY_MS);
     this.#sql.exec('DELETE FROM unreadable WHERE at <= ?', now - HISTORY_MS);
+    this.#sql.exec('DELETE FROM notifications WHERE at <= ?', now - HISTORY_MS);
+    this.#sql.exec('DELETE FROM delegated WHERE at <= ?', now - HISTORY_MS);
     // Kept while its launch row is, so a launch never queues a second closeout.
     this.#sql.exec('DELETE FROM closeouts WHERE at <= ? AND launch_id NOT IN (SELECT id FROM jobs)', now - HISTORY_MS);
     // Kept while a write-back of the session is still pending, however old.
@@ -647,6 +735,7 @@ export class JobQueue {
       if (type === 'launch') return await this.#launch(token, id, body, sessionId);
       if (type === 'release') return await this.#release(token, id, body, sessionId);
       if (type === 'closeout') return await this.#closeout(token, body);
+      if (type === 'delegation') return await this.#delegation(token, id, body);
       const data = await this.#linear<{ agentActivityCreate?: { success?: boolean } }>(token, ACTIVITY,
         { input: { agentSessionId: sessionId, content: { type, body } } });
       return data.agentActivityCreate?.success === true;
@@ -659,7 +748,8 @@ export class JobQueue {
   /**
    * A launch's field changes: `In Progress` (the team's first started status) unless the
    * issue is already started, completed or canceled; the `Orca` label, replacing any other
-   * label in its group; and the session creator as assignee. Dropped once the issue is
+   * label in its group; and the session creator, or whoever delegated a session Cloud Inbox
+   * opened, as assignee. Dropped once the issue is
    * handed to someone else or delegated again.
    */
   async #launch(token: string, row: number, issueId: string, sessionId: string): Promise<boolean> {
@@ -679,7 +769,8 @@ export class JobQueue {
       const siblings = (issue.labels?.nodes ?? []).filter((l) => group && l.parent?.id === group && l.id !== label.id);
       if (siblings.length) input.removedLabelIds = siblings.map((l) => l.id);
     }
-    const creator = agentSession?.creator?.id;
+    const [job] = this.#sql.exec('SELECT creator FROM jobs WHERE id = ?', sessionId).toArray();
+    const creator = (job?.creator as string | null) ?? agentSession?.creator?.id;
     if (creator) input.assigneeId = creator;
     return this.#updateIssue(token, row, issueId, sessionId, input);
   }
@@ -707,6 +798,41 @@ export class JobQueue {
     if (data.agentSessionCreateOnIssue?.success !== true || !session) return false;
     this.#queueCloseout(session, closeout, this.#now());
     return true;
+  }
+
+  /**
+   * Opens the session for a delegation Linear sent no `created` for, then queues its job. Dropped
+   * if the issue is no longer delegated to the app. A `created` that arrived meanwhile removed
+   * this row: Linear's echo of this session adopted it, or another session covers the delegation
+   * and this one ends as replaced.
+   */
+  async #delegation(token: string, row: number, body: string): Promise<boolean> {
+    const { issue: issueId, creator } = JSON.parse(body) as Delegation;
+    const waiting = () => this.#sql.exec('SELECT 1 FROM outbox WHERE id = ?', row).toArray().length > 0;
+    const { issue } = await this.#linear<{ issue?: { delegate?: Id } }>(token, DELEGATE, { issue: issueId });
+    if (!issue) return false;
+    const app = await this.#auth.installation();
+    const done = (outcome: string, session?: string) => {
+      log({ event: 'delegation', issue: issueId, ...(session && { session }), outcome });
+      return true;
+    };
+    if (!app || issue.delegate?.id !== app.appUserId) return done('not-delegated');
+    if (!waiting()) return done('covered');
+    const data = await this.#linear<{ agentSessionCreateOnIssue?: { success?: boolean; agentSession?: Id } }>(
+      token, CREATE_SESSION, { issue: issueId });
+    const session = data.agentSessionCreateOnIssue?.agentSession?.id;
+    if (data.agentSessionCreateOnIssue?.success !== true || !session) return false;
+    // No await from here on. Marked seen, so a later `created` webhook for it is a duplicate.
+    const now = this.#now();
+    if (!this.#sql.exec('INSERT INTO seen (session_id, at) VALUES (?, ?) ON CONFLICT DO NOTHING RETURNING session_id',
+      session, now).toArray().length) return done('adopted', session);
+    if (!waiting()) {
+      this.#end(session, MESSAGES.replaced, now);
+      return done('replaced', session);
+    }
+    this.#supersede(session, issueId, now);
+    this.#queueDelegation(session, issueId, creator, app.appName, now);
+    return done('queued', session);
   }
 
   /**
