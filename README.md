@@ -92,4 +92,4 @@ It exits non-zero until every step passes; at a terminal, it waits for each fix 
 
 ## Contributing
 
-Contributions are accepted under this repo's [MIT license](LICENSE) (inbound=outbound). Run `scripts/setup` once in a new checkout; it installs what the checks in [`AGENTS.md`](AGENTS.md) need, and is safe to rerun. Every repo set up with `/do-repo-setup` uses the same command when it has anything to set up. [Verifier](packages/verifier/README.md) and [Delegator](packages/delegator/README.md) development notes live in their package READMEs, and [`AGENTS.md`](AGENTS.md) says where things go.
+Contributions are accepted under this repo's [MIT license](LICENSE) (inbound=outbound). Run `scripts/setup` once in a new checkout; it installs what the checks in [`AGENTS.md`](AGENTS.md) need, and is safe to rerun. [Verifier](packages/verifier/README.md) and [Delegator](packages/delegator/README.md) development notes live in their package READMEs, and [`AGENTS.md`](AGENTS.md) says where things go.

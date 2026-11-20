@@ -119,6 +119,6 @@ Keep only the checkbox groups that have steps. Write each step so the maintainer
 - **Existing state:** point the step at an issue, branch or file that already exists. Never ask the maintainer to make a scratch one.
 - **Refresh first:** when the PR changes installed skills or a locally installed service, the first **After pulling** step is the repo's upkeep or reinstall command from its README, if it has one, with its pass line.
 - **Setup:** when the PR changes what a checkout needs (dependencies, generated files, local tools), an **After pulling** step runs `scripts/setup`, never the install commands it holds.
-- **New shell:** every **After pulling** command must work in a new shell at the repo root, with nothing left over from your session: no exported variables, no `cd`, no activated toolchain. Before writing the step, run it that way (for example `env -i HOME="$HOME" PATH="$PATH" sh -c '<command>'` from the repo root) and fix the step or the repo until it passes.
+- **New shell:** every **After pulling** command must work in a new shell at the repo root, with nothing left over from your session: no exported variables, no `cd`, no activated toolchain. Before writing the step, run it that way (for example `$SHELL -lc '<command>'` from the repo root, a new login shell) and fix the step or `scripts/setup` until it passes.
 
 Put the issue id in the body in either form, so the tracker links the PR.
