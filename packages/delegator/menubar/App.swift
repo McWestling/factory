@@ -330,6 +330,7 @@ private struct RunnerMenu: View {
             set: { runner.run($0 ? "--enable-app-login" : "--disable-app-login") }
         ))
         if let error = runner.actionError, !error.isEmpty { Text(error) }
+        if let built = Bundle.main.object(forInfoDictionaryKey: "FactoryBuildTime") as? String { Text("Build: \(built)") }
         Button("Quit menu bar app") { NSApplication.shared.terminate(nil) }
     }
 

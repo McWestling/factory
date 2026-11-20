@@ -58,6 +58,13 @@ done
 [ -x "$staged/Contents/MacOS/FactoryRunnerMenuBar" ]
 cmp "$plist" "$tmp/before.plist"
 
+# The build stamps its time in UTC, which the menu shows as "Build: <time>".
+before=$(date -u '+%Y-%m-%d %H:%M UTC')
+HOME="$tmp/home" PATH="$tmp/bin:$PATH" sh "$root/packages/delegator/runner/launchd/install.sh" --build-app "$staged"
+after=$(date -u '+%Y-%m-%d %H:%M UTC')
+built=$(/usr/libexec/PlistBuddy -c 'Print :FactoryBuildTime' "$staged/Contents/Info.plist")
+[ "$built" = "$before" ] || [ "$built" = "$after" ] || { echo "build time $built isn't $before" >&2; exit 1; }
+
 # Reinstalling quits the running menu bar app before its LaunchAgent opens it again,
 # and a missing app (pkill exit 1) isn't an error, but a failed pkill is.
 log="$tmp/calls"
