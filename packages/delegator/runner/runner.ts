@@ -659,7 +659,7 @@ async function reportLaunch(config: RunnerConfig, api: ReturnType<typeof inbox>,
     launch.thoughtPosted = true;
     record(deps, log, (launches) => { launches[claim.sessionId] = launch; });
   }
-  // A refine launch has no PR to close out, so Cloud Inbox takes no evidence for it.
+  // A refine launch sends none, so no merge queues a closeout for it.
   const evidence = launch.githubRepo && !launch.refine ? { repo: launch.githubRepo, branch: launch.branch } : undefined;
   if (launch.refine || launch.closeout) {
     // A lost report leaves the launch record: a reclaim, or watch recovery once launched, finishes it.
