@@ -517,6 +517,17 @@ test('a refine launch posts its response after reporting launched, and is never 
   assert.equal(readFileSync(f.deps.launches, 'utf8'), '{}');
 });
 
+test('a refine launch reports launched to the real queue without evidence, so no merge closes it out', async () => {
+  const inbox = realInbox(['wayfinder:grilling']);
+  await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
+  const f = fakes();
+  f.deps.fetch = inbox.fetch;
+  await poll(refineConfig, f.deps);
+  assert.deepEqual(inbox.state(), ['launched']);
+  assert.equal(await inbox.queue.webhook({ action: 'merged', issueId: 'issue-1', url: 'https://github.com/owner/repo/pull/7',
+    repo: 'owner/repo', branch: goodTask.branchName! }), 'no-match');
+});
+
 for (const afterDelivery of [false, true]) {
   test(`a refine launch whose report was lost ${afterDelivery ? 'after' : 'before'} delivery responds once and is never watched`, async () => {
     const inbox = realInbox(['wayfinder:grilling']);
