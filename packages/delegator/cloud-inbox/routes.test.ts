@@ -5,7 +5,7 @@ import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { test, type TestContext } from 'node:test';
 import { AppAuth, type Config, type Storage } from './auth.ts';
-import { JobQueue, MAX_UPDATE_CHARS, MESSAGES, type Sql } from './queue.ts';
+import { DELEGATION_WAIT_MS, JobQueue, MAX_UPDATE_CHARS, MESSAGES, type Sql } from './queue.ts';
 import { handleRunner, handleWebhook, MAX_WEBHOOK_BYTES, underBasePath, type Inbox } from './routes.ts';
 
 const fixture = (name: string) =>
@@ -2043,7 +2043,7 @@ test('several slow metadata reads share one deadline and leave the watch retryab
 // Delegating an issue again: Linear sends an Inbox notification but no session event.
 
 /** Past the wait Cloud Inbox gives Linear's own `created` event before it opens a session. */
-const WAITED_MS = 5_000;
+const WAITED_MS = DELEGATION_WAIT_MS;
 /** An Inbox notification that `issue-1` was delegated to the app. Built from Linear's published schema, not captured. */
 const delegatedPayload = (id = 'notification-1', edit?: (payload: Record<string, any>) => void) => {
   const payload = fixture('delegated');
@@ -2268,4 +2268,27 @@ test('an ignored webhook is logged with its type and action', async (t) => {
     { event: 'webhook', type: 'AppUserNotification', action: 'issueAssignedToYou', outcome: 'ignored' },
     { event: 'webhook', type: '', action: '', outcome: 'ignored' },
   ]);
+});
+
+test("a first delegation's notification arriving late, after its job was claimed, opens no second session", async (t) => {
+  const h = setup();
+  await h.created('session-1');
+  await h.claimed();
+  h.clock.now += 60_000;
+  const lines = webhookLog(t);
+  // Linear made the session and the notification in the same second, whenever each arrived.
+  await delegatedAgain(h, undefined, (payload) => {
+    payload.notification.createdAt = new Date(Date.parse(fixture('created').agentSession.createdAt) + 500).toISOString();
+  });
+  assert.deepEqual(lines().map((line) => line.outcome), ['covered']);
+  assert.equal(sessionsCreated(h), 0);
+  assert.deepEqual(h.rows().jobs, [{ id: 'session-1', issue_id: 'issue-1', state: 'claimed' }]);
+});
+
+test('a created event with no creator, on an issue delegated again long ago, is queued like any other', async () => {
+  const h = setup();
+  await delegatedAgain(h);
+  h.clock.now += 60 * 60_000;
+  await h.deliver(ownCreated(h, 'session-2'));
+  assert.deepEqual(h.rows().jobs, [{ id: 'session-2', issue_id: 'issue-1', state: 'queued' }]);
 });

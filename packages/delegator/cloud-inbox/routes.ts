@@ -40,10 +40,10 @@ type Payload = {
   organizationId?: unknown;
   appUserId?: unknown;
   webhookTimestamp?: unknown;
-  agentSession?: { id?: unknown; issueId?: unknown; issue?: { id?: unknown }; creatorId?: unknown };
+  agentSession?: { id?: unknown; issueId?: unknown; issue?: { id?: unknown }; creatorId?: unknown; createdAt?: unknown };
   agentActivity?: { id?: unknown; signal?: unknown };
   data?: { issueId?: unknown; metadata?: PullRequest };
-  notification?: { id?: unknown; issueId?: unknown; issue?: { id?: unknown }; actorId?: unknown; actor?: { id?: unknown } };
+  notification?: { id?: unknown; issueId?: unknown; issue?: { id?: unknown }; actorId?: unknown; actor?: { id?: unknown }; createdAt?: unknown };
   updatedFrom?: { metadata?: PullRequest };
 };
 type PullRequest = { status?: unknown; url?: unknown; repoLogin?: unknown; repoName?: unknown; branch?: unknown };
@@ -51,6 +51,8 @@ type PullRequest = { status?: unknown; url?: unknown; repoLogin?: unknown; repoN
 const filled = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
 /** A webhook's `type` or `action` for a log line: a short string, or empty. */
 const label = (value: unknown) => typeof value === 'string' ? value.slice(0, 64) : '';
+/** Linear's timestamp as epoch milliseconds, or undefined. */
+const time = (value: unknown) => (typeof value === 'string' && Date.parse(value)) || undefined;
 
 /**
  * An Inbox notification that an issue was delegated to the app, or null for any other
@@ -62,7 +64,7 @@ function delegatedEvent({ action, appUserId, notification }: Payload): Delegated
   const actorId = notification?.actorId ?? notification?.actor?.id;
   if (!filled(notification?.id) || !filled(issueId)) return null;
   return { action: 'delegated', appUserId: filled(appUserId) ? appUserId : '', notificationId: notification.id, issueId,
-    actorId: filled(actorId) ? actorId : undefined };
+    actorId: filled(actorId) ? actorId : undefined, createdAt: time(notification.createdAt) };
 }
 
 /** An `Attachment` update that moved a PR to `merged`, or null for any other `Attachment` event. */
@@ -158,6 +160,7 @@ export async function handleWebhook(request: Request, config: Config, inbox: Inb
     activityId: typeof activityId === 'string' ? activityId : undefined,
     stop,
     creatorId: filled(agentSession?.creatorId) ? agentSession.creatorId : undefined,
+    createdAt: time(agentSession?.createdAt),
   };
 
   const result = await inbox.webhook(event);
