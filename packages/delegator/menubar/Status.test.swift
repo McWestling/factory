@@ -40,6 +40,18 @@ enum StatusCheck {
         assert(relativeTime("not a date", now: now) == "not a date")
         assert(initial != runnerState(json: Data(idle.replacingOccurrences(of: "\"paused\":false", with: "\"paused\":true").utf8), launchAgentLoaded: true, now: now))
 
+        // Recent rows lead with the job's stage emoji; records written before the Runner kept stages have none.
+        let recent = idle.replacingOccurrences(of: "\"recent\":[]", with: """
+        "recent":[{"identifier":"ABC-1","outcome":"launched","stage":"refine","time":"2026-01-15T07:00:00Z"},\
+        {"identifier":"ABC-2","outcome":"launched","stage":"implement","time":"2026-01-15T07:00:00Z"},\
+        {"identifier":"ABC-3","outcome":"closeout-launched","stage":"closeout","time":"2026-01-15T07:00:00Z"},\
+        {"identifier":null,"outcome":"job-failed","time":"2026-01-15T07:00:00Z"}]
+        """)
+        assert(runnerState(json: Data(recent.utf8), launchAgentLoaded: true, now: now).snapshot!.recent.map { recentLine($0, now: now) } == [
+            "🗺️ ABC-1 · launched · 1 hour ago", "🛠️ ABC-2 · launched · 1 hour ago",
+            "🧹 ABC-3 · closeout-launched · 1 hour ago", "Unknown · job-failed · 1 hour ago",
+        ])
+
         // GET /pool, with the Runners' status.json snapshots as they arrive.
         let pool = """
         {"queueDepth":2,"machines":[

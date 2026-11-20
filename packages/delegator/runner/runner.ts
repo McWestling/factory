@@ -70,7 +70,7 @@ export type Deps = {
   now?: () => number;
 };
 
-type Outcome = { identifier: string | null; outcome: string; time: string };
+type Outcome = { identifier: string | null; outcome: string; stage?: Stage; time: string };
 type Status = {
   version: 1; updatedAt: string; pid: number;
   inbox: { status: 'ok' | 'unreachable'; lastOkAt: string | null };
@@ -379,8 +379,10 @@ type Reply = { operationId?: string; worktree?: string };
 
 /** Each stage the Runner launches, marked on its Orca workspace and Linear messages; GLOSSARY.md defines them. */
 const STAGES = { refine: '🗺️', implement: '🛠️', closeout: '🧹' } as const;
-const stage = (launch: Pick<Launch, 'refine' | 'closeout'>) =>
-  STAGES[launch.closeout ? 'closeout' : launch.refine ? 'refine' : 'implement'];
+type Stage = keyof typeof STAGES;
+const stageOf = (launch: Pick<Launch, 'refine' | 'closeout'>): Stage =>
+  launch.closeout ? 'closeout' : launch.refine ? 'refine' : 'implement';
+const stage = (launch: Pick<Launch, 'refine' | 'closeout'>) => STAGES[stageOf(launch)];
 
 type Launch = {
   at: number;
@@ -723,9 +725,10 @@ export async function handleJob(config: RunnerConfig, deps: Deps, claim: Claim):
   value.current = { identifier: safeId(claim.issueId) ?? 'unknown', sessionId: safeId(claim.sessionId) ?? 'unknown' };
   writeStatus(deps);
   let outcome = 'job-failed';
-  try { return outcome = await runJob(config, deps, claim); }
+  const job: { stage?: Stage } = {};
+  try { return outcome = await runJob(config, deps, claim, job); }
   finally {
-    const entry = { identifier: value.current.identifier, outcome, time: time(deps) };
+    const entry = { identifier: value.current.identifier, outcome, ...job, time: time(deps) };
     value.recent = [...value.recent, entry].slice(-10);
     if (!['launched', 'undelegated', 'closeout-launched', 'closeout-canceled'].includes(outcome)) value.lastError = entry;
     value.current = null;
@@ -733,7 +736,8 @@ export async function handleJob(config: RunnerConfig, deps: Deps, claim: Claim):
   }
 }
 
-async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<string> {
+/** Sets `job.stage` once the stage is known, for the job's recent outcome. */
+async function runJob(config: RunnerConfig, deps: Deps, claim: Claim, job: { stage?: Stage }): Promise<string> {
   const api = inbox(config, deps);
   const log = (outcome: string) => deps.log({ event: 'job', session: claim.sessionId, outcome });
   let closeout = false;
@@ -750,6 +754,7 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
   if (saved?.launched) {
     // Launched under an earlier claim whose report was lost: the agent is already running.
     log('launch-recovered');
+    job.stage = stageOf(saved);
     return reportLaunch(config, api, deps, claim, log, saved);
   }
 
@@ -768,6 +773,7 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim): Promise<s
   const retry = closeout ? BY_HAND : RETRY;
   const description = typeof task.description === 'string' ? task.description : '';
   const refine = !closeout && Array.isArray(task.labels) && task.labels.some((label) => typeof label === 'string' && label.startsWith('wayfinder:'));
+  job.stage = stageOf({ closeout, refine });
   let issue: DelegatorIssue;
   let branchName = task.branchName;
   if (closeout) {

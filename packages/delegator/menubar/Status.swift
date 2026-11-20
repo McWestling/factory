@@ -4,7 +4,7 @@ struct RunnerSnapshot: Decodable {
     struct Inbox: Decodable, Equatable { let status: String; let lastOkAt: String? }
     struct Current: Decodable, Equatable { let identifier: String; let sessionId: String }
     struct Watch: Decodable, Equatable { let identifier: String; let since: String }
-    struct Outcome: Decodable, Equatable { let identifier: String?; let outcome: String; let time: String }
+    struct Outcome: Decodable, Equatable { let identifier: String?; let outcome: String; let stage: String?; let time: String }
 
     let version: Int
     let updatedAt: String
@@ -76,6 +76,15 @@ extension RunnerSnapshot {
         if lastError != nil { return .failed }
         return .ready
     }
+}
+
+/// Each stage's emoji: the same set as GLOSSARY.md's **Stage** and the Runner's `STAGES`.
+let stageEmoji = ["refine": "🗺️", "implement": "🛠️", "closeout": "🧹"]
+
+/// A Recent row: the job's stage emoji when its record has one, then its issue, outcome and time.
+func recentLine(_ entry: RunnerSnapshot.Outcome, now: Date) -> String {
+    let line = "\(entry.identifier ?? "Unknown") · \(entry.outcome) · \(relativeTime(entry.time, now: now))"
+    return entry.stage.flatMap { stageEmoji[$0] }.map { "\($0) \(line)" } ?? line
 }
 
 /// A fixed string, worked out once per render. `Text(date, style: .relative)` must not be used in the menu:
