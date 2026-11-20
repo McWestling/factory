@@ -1357,10 +1357,31 @@ for (const [label, attachment, edit] of [
   });
 }
 
-test('a closeout task whose PR GitHub refuses skips as unverified', async () => {
+for (const status of [401, 403, 404]) {
+  test(`a closeout task whose only PR GitHub refuses with ${status} skips as unreadable`, async () => {
+    const h = await claimedCloseout();
+    h.linear.github = () => new Response(null, { status });
+    assert.deepEqual(await h.task(), { kind: 'closeout', launch: LAUNCH, skip: 'unreadable' });
+  });
+}
+
+for (const [label, github] of [
+  ['a rate limit', () => new Response(null, { status: 403, headers: { 'x-ratelimit-remaining': '0' } })],
+  ['a 5xx', () => new Response(null, { status: 502 })],
+  ['a timeout', () => { throw new DOMException('Timed out', 'TimeoutError'); }],
+] as [string, () => Response][]) {
+  test(`a closeout task whose PR read hits ${label} skips as unverified`, async () => {
+    const h = await claimedCloseout();
+    h.linear.github = github;
+    assert.deepEqual(await h.task(), { kind: 'closeout', launch: LAUNCH, skip: 'unverified' });
+  });
+}
+
+test('a closeout task with the merged launch PR and another PR GitHub refuses has no skip', async () => {
   const h = await claimedCloseout();
-  h.linear.github = () => new Response(null, { status: 404 });
-  assert.deepEqual(await h.task(), { kind: 'closeout', launch: LAUNCH, skip: 'unverified' });
+  h.linear.world.issues['issue-1']!.attachments = ['https://github.com/owner/repo/pull/1', 'https://github.com/owner/repo/pull/2'];
+  h.linear.github = (url) => url.endsWith('/2') ? new Response(null, { status: 404 }) : Response.json(launchPr());
+  assert.deepEqual(await h.task(), { kind: 'closeout', launch: LAUNCH, skip: undefined });
 });
 
 test('a status update posts only its type and body, on the job session', async () => {
