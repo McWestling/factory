@@ -1,10 +1,10 @@
 ---
 name: do-repo-setup
-description: Set up a repo for the factory skills. Points AGENTS.md at the home repo's tracker doc when the values live in another repo, removing any local copy; otherwise writes the repo's values-only tracker doc (`docs/issue-tracker.md`) from Linear and a fixed template, asking only what neither settles, and links it from AGENTS.md. It writes the repo's own Review rule into AGENTS.md, copies the Tool Stack's scripts-language rule into AGENTS.md, offers to run the Adding a repo blocks on the Tool Stack's service pages, fills in any missing parts of the README's non-developer intro, and installs the dev-port convention in a repo with a dev server. Re-running fills gaps and offers each template line the doc has drifted from. It ends by offering a draft PR of what it wrote.
+description: Set up a repo for the factory skills. Points AGENTS.md at the home repo's tracker doc when the values live in another repo, removing any local copy; otherwise writes the repo's values-only tracker doc (`docs/issue-tracker.md`) from Linear and a fixed template, asking only what neither settles, and links it from AGENTS.md. It writes the repo's own Review rule into AGENTS.md, copies the Tool Stack's scripts-language rule into AGENTS.md, offers to run the Adding a repo blocks on the Tool Stack's service pages, fills in any missing parts of the README's non-developer intro, moves the repo's setup into `scripts/setup` when it has any, and installs the dev-port convention in a repo with a dev server. Re-running fills gaps and offers each template line the doc has drifted from. It ends by offering a draft PR of what it wrote.
 disable-model-invocation: true
 ---
 
-The other factory skills (`do-post-its`, `do-triage`, `do-refine`, `do-implement`, `do-closeout`) hold all of the procedure and none of the workspace values. Those values live in one short **tracker doc**, kept in one **home repo**; every other repo's `AGENTS.md` points to it. Your job is to set the repo you are in up so the other skills can run here: point it at the home repo's doc, or, when this repo is the home repo or there is no other, write the doc here. If the repo has a dev server, you also install the [dev-port convention](https://github.com/mcwestling/factory/blob/main/tools/orca/README.md), so parallel Orca workspaces each get their own ports.
+The other factory skills (`do-post-its`, `do-triage`, `do-refine`, `do-implement`, `do-closeout`) hold all of the procedure and none of the workspace values. Those values live in one short **tracker doc**, kept in one **home repo**; every other repo's `AGENTS.md` points to it. Your job is to set the repo you are in up so the other skills can run here: point it at the home repo's doc, or, when this repo is the home repo or there is no other, write the doc here. If the repo has something to set up, you give it [`scripts/setup`](#7-setup-script). If it has a dev server, you also install the [dev-port convention](https://github.com/mcwestling/factory/blob/main/tools/orca/README.md), so parallel Orca workspaces each get their own ports.
 
 Setup is opinionated and deterministic: the same Linear workspace always gives the same doc. The doc is the template in [tracker-template.md](tracker-template.md), copied verbatim, with only its `{{…}}` slots filled from Linear. Never reword, reorder or add to the template's text.
 
@@ -20,7 +20,7 @@ Run this before anything else; it asks nothing, so it doesn't count toward the q
 
 - **`gh`:** run `gh auth status`. If `gh` is missing or the command fails, stop and tell the user to install it or run `gh auth login`, then run setup again.
 - **Upstream skills:** inspect the current agent's advertised skills for `grilling`, `domain-modeling`, `research`, `prototype`, `tdd`, `codebase-design` and `code-review`, either all prefixed `mattpocock-skills:` or all bare from `mattpocock/skills`. The last two support upstream TDD. Use the agent's existing plugin list and skills-CLI list/lock to distinguish an enabled installation from one merely cached on disk. An installation that this session cannot discover is pending, not usable. Do not invoke a dependency just to check setup: it may start an interview or edit files.
-- **Orca:** recommended, never required. It's found if any `ORCA_*` environment variable is set or `orca` is on the `PATH`. If not, carry on and mention it in [Finish](#8-finish).
+- **Orca:** recommended, never required. It's found if any `ORCA_*` environment variable is set or `orca` is on the `PATH`. If not, carry on and mention it in [Finish](#9-finish).
 
 ### Dependency installation
 
@@ -53,14 +53,14 @@ After the step 3 answer, run only the approved route, then recheck the current a
 ## 1. Find what exists
 
 1. **Tracker doc path:** Find it through `AGENTS.md`, which names either a path in this repo or a doc in another repo (like `docs/issue-tracker.md` in `owner/name`); read another repo's doc from its checkout, found through `orca repo list --json`. If `AGENTS.md` names none, use `docs/issue-tracker.md`.
-   - **Pointer repo:** `AGENTS.md` names a doc in another repo, so that repo is the **home repo** and this one is settled: never ask the home repo question, never write a local doc, and never edit the home repo's checkout. Find its checkout in `orca repo list --json` by matching its `origin` remote, and read the doc there. If there is no checkout, no Orca, or no doc at that path, note it for [Finish](#8-finish). Skip the doc's gaps, drift and template questions below: they belong to the home repo's run.
+   - **Pointer repo:** `AGENTS.md` names a doc in another repo, so that repo is the **home repo** and this one is settled: never ask the home repo question, never write a local doc, and never edit the home repo's checkout. Find its checkout in `orca repo list --json` by matching its `origin` remote, and read the doc there. If there is no checkout, no Orca, or no doc at that path, note it for [Finish](#9-finish). Skip the doc's gaps, drift and template questions below: they belong to the home repo's run.
    - **Otherwise:** list the candidate home repos for [step 3](#3-ask-once): each repo in `orca repo list --json`, other than this one, whose checkout holds a tracker doc and whose `AGENTS.md` doesn't point elsewhere. Without Orca there are none.
 2. **Existing doc:** if it exists, read it. Every value already in it is settled: you never overwrite it, only fill gaps. A **gap** is a template heading that is missing or empty, or a line starting `TODO:`.
 3. **AGENTS.md:** note whether it links the tracker doc, any other links to a local doc, whether it has a `## Scripts` section, and whether it says how PRs are reviewed (a **Review** line under `## Pull requests`).
 4. **README:** read `README.md`, if any, and note which parts of the intro it has, using [step 6](#6-readme-intro)'s check.
-5. **Dev server:** read the `dev` script in the root `package.json` (the workspace root's, in a monorepo), `scripts/dev-port`, and `orca.yaml`. No `package.json` or no `dev` script means no dev server: skip [Dev ports](#7-dev-ports).
+5. **Setup and dev server:** read `scripts/setup`, the CI workflows, the `dev` script in the root `package.json` (the workspace root's, in a monorepo), `scripts/dev-port`, and `orca.yaml`. No `package.json` or no `dev` script means no dev server: skip [Dev ports](#8-dev-ports).
    When writing or checking `orca.yaml` setup, recommend setting Orca's setup policy to off by default in the repo settings. This lets Linear-only sessions start without installing dependencies; delegated `do-implement` runs still get setup from the Runner when they request it.
-6. **Working tree:** note the current branch and which files `git status` already shows as changed, so [Finish](#8-finish) can tell setup's changes from the user's.
+6. **Working tree:** note the current branch and which files `git status` already shows as changed, so [Finish](#9-finish) can tell setup's changes from the user's.
 
 ## 2. Read Linear
 
@@ -103,7 +103,7 @@ Collect everything below that applies, and ask it all in one AskUserQuestion rou
   exit 1'
   ```
 
-  Use the printed path as `<python>` for every `adopt.py` call in this setup run. If it prints nothing, skip the blocks and name their pages in [Finish](#8-finish). Otherwise pipe each block to `<python> adopt.py check` (the `adopt.py` beside this file), from the repo root. The check only reads: it runs none of the block's commands, so it can't tell whether a service is already set up, and you must not run them yourself to find out. For each page whose check prints `applies: yes`, ask: **Run** (recommended) or **Skip for now**, naming the page, with the check's `done-check:`, `run:` and `maintainer:` lines verbatim in the option's preview. Explain that **Run** approves the `done` command first and the steps only if it does not exit 0. Ask nothing for a page that doesn't apply.
+  Use the printed path as `<python>` for every `adopt.py` call in this setup run. If it prints nothing, skip the blocks and name their pages in [Finish](#9-finish). Otherwise pipe each block to `<python> adopt.py check` (the `adopt.py` beside this file), from the repo root. The check only reads: it runs none of the block's commands, so it can't tell whether a service is already set up, and you must not run them yourself to find out. For each page whose check prints `applies: yes`, ask: **Run** (recommended) or **Skip for now**, naming the page, with the check's `done-check:`, `run:` and `maintainer:` lines verbatim in the option's preview. Explain that **Run** approves the `done` command first and the steps only if it does not exit 0. Ask nothing for a page that doesn't apply.
 - **Template change:** a line or section in the doc that differs from the template with its slots filled, including one the template no longer has. Ask: "Factory's template now reads <new text>. Switch, or keep yours?", with **Switch** first.
 - **Drift:** on a re-run, a value in the doc that Linear contradicts (a renamed status, a deleted view). Offer to update the doc line or keep it.
 
@@ -135,11 +135,11 @@ If the user skips a question that fills a slot, write `TODO:` and the question i
 4. **Scripts:** if the Tool Stack has a Scripts row and `AGENTS.md` has no `## Scripts` section, append one: the heading, then the row's rule verbatim as its only paragraph, writing each Linear mention as a plain Markdown link (`[name](url)`). If the user picked replace in step 3, swap the section's text for the rule. No Tool Stack or no Scripts row: skip this, and say nothing about it.
 5. **Linear:** make the changes the user picked in step 3, and nothing else.
 
-Don't commit yet; [Finish](#8-finish) offers that.
+Don't commit yet; [Finish](#9-finish) offers that.
 
 ## 5. Adding a repo
 
-Skip this step if no page has a block or the user picked Run for none. Otherwise, for each page they picked, in Tool Stack order, pipe its block to `<python> adopt.py run` from the repo root, using the interpreter selected in [the interview](#3-ask-once). It first runs the approved `done` command, if present; exit 0 prints `done: yes` and skips the steps. Otherwise it runs the approved steps in order, stops at the first failure, and prints only `ok:` and `failed:` lines (never the commands' output) and the `maintainer:` steps it didn't run. Keep those lines for [Finish](#8-finish).
+Skip this step if no page has a block or the user picked Run for none. Otherwise, for each page they picked, in Tool Stack order, pipe its block to `<python> adopt.py run` from the repo root, using the interpreter selected in [the interview](#3-ask-once). It first runs the approved `done` command, if present; exit 0 prints `done: yes` and skips the steps. Otherwise it runs the approved steps in order, stops at the first failure, and prints only `ok:` and `failed:` lines (never the commands' output) and the `maintainer:` steps it didn't run. Keep those lines for [Finish](#9-finish).
 
 A failed page doesn't stop setup: carry on with the next page and the steps below. Never retry, fix or work around a failed step, install a tool a step needs, or fetch a credential for it; the maintainer does that.
 
@@ -167,7 +167,17 @@ Draft it from the repo itself (code, existing docs, the product's initiative des
 
 **Public safety:** say what it does and who it's for. Never include secrets, internal URLs, workspace or machine ids, personal data, or client details, unless the client is already public about it.
 
-## 7. Dev ports
+## 7. Setup script
+
+`scripts/setup` is the one command that gets a checkout ready, the same in every repo, so people and agents can name it without knowing the repo. It is safe to rerun, Orca's worktree hook and CI both run it, and after it has run once, every new shell in that checkout can run the repo's documented commands. A repo with nothing to set up has no script.
+
+1. **Find the setup:** the commands a fresh clone needs before its documented commands work: `orca.yaml` `scripts.setup` (leaving out `./scripts/dev-port`, which [Dev ports](#8-dev-ports) owns), the install steps CI runs before its checks, and any install step `AGENTS.md` or the README tells a reader to run. These often name the same install in different forms: take each install once, in the `orca.yaml` or docs form, and leave out a CI install that differs from it. If there are none, skip this step: never write an empty script.
+2. **Write it:** if `scripts/setup` exists, keep it. Otherwise write it, executable, running those installs in order from the repo root, within the repo's `## Scripts` rule (a few lines of shell usually do). It must not rely on anything set in the shell that runs it, and must leave nothing a later shell has to set: anything later commands need goes in the checkout's files, never in exported variables.
+3. **Orca:** make sure `orca.yaml` `scripts.setup` runs `./scripts/setup`, replacing the commands it now holds and keeping any `./scripts/dev-port` after it. If `orca.yaml` is missing, create it with just `scripts:` and `setup: ./scripts/setup`. Dev ports chains after it.
+4. **CI:** in each CI workflow, replace the install steps it now holds with one step that runs `./scripts/setup`, after any toolchain step (like `actions/setup-node`). Leave a step that installs differently from the script (other flags, a cache) as it is.
+5. **Docs:** where `AGENTS.md` or the README tells a reader to run one of those install commands, name `scripts/setup` instead.
+
+## 8. Dev ports
 
 Skip this step if step 1 found no dev server. Otherwise do each part that isn't already in place. Never touch the per-machine registry; the script manages it.
 
@@ -189,9 +199,9 @@ Skip this step if step 1 found no dev server. Otherwise do each part that isn't 
 
    Use `vite --port "$PORT"` for Vite, and no flag for a server that reads `PORT` itself. Keep the rest of the command as it was. If the [questions](#3-ask-once) covered the dev command and the user said edit, change that file to take its port from `PORT` and start the `dev` script with the `PORT=…` prefix above. If they skipped, leave it.
 
-## 8. Finish
+## 9. Finish
 
-If all dependencies are advertised and usable, say "Looks good, we're set up!". Otherwise say "Repo setup finished; supporting skills are still pending", name the missing skills or failed install, and give the fresh-session instruction above when needed. Add a few words if dev ports were skipped for having no dev server, or if you replaced a `scripts/dev-port` that had drifted. If an Adding a repo block ran, failed or was skipped for want of Python, add one line naming the maintainer steps left to do and any page that failed, with its failed step and exit code. In a pointer repo whose home repo doc couldn't be read, add one line saying why (no checkout in `orca repo list`, no Orca, or no doc at that path). If the [machine check](#machine-check) didn't find Orca, add one line recommending it, with the link <https://onorca.dev/download>. If you wrote nothing, stop there.
+If all dependencies are advertised and usable, say "Looks good, we're set up!". Otherwise say "Repo setup finished; supporting skills are still pending", name the missing skills or failed install, and give the fresh-session instruction above when needed. Add a few words if the setup script was skipped for having nothing to set up, if dev ports were skipped for having no dev server, or if you replaced a `scripts/dev-port` that had drifted. If an Adding a repo block ran, failed or was skipped for want of Python, add one line naming the maintainer steps left to do and any page that failed, with its failed step and exit code. In a pointer repo whose home repo doc couldn't be read, add one line saying why (no checkout in `orca repo list`, no Orca, or no doc at that path). If the [machine check](#machine-check) didn't find Orca, add one line recommending it, with the link <https://onorca.dev/download>. If you wrote nothing, stop there.
 
 If you wrote files, name them in one line, then ask once (AskUserQuestion): **Open a draft PR** (recommended) or **Leave the changes for me**. Leaving them ends the run with the working tree as it is, for the user to review with `git diff`.
 

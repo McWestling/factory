@@ -20,7 +20,7 @@ Orca doesn't assign ports, so dev servers in parallel workspaces fight over the 
 
    ```yaml
    scripts:
-     setup: pnpm bootstrap && ./scripts/dev-port
+     setup: ./scripts/setup && ./scripts/dev-port
    ```
 
 3. Wrap the dev command, passing the port the way the server takes one (`next dev -p "$PORT"`, `vite --port "$PORT"`, or nothing for a server that reads `PORT`):

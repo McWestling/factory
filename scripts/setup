@@ -1,0 +1,4 @@
+#!/bin/sh
+# Get this checkout ready. Safe to rerun.
+set -e
+cd "$(dirname "$0")/../packages/delegator" && npm ci

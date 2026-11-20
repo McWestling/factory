@@ -63,7 +63,7 @@ Factory is built for McWestling, not as a product: there is no support, and anyt
 
    It installs the Factory skills and the supporting skills for each agent CLI it finds, or only the ones you name (`npm run setup -- claude codex`), and lets them read the folders holding your checkouts. Add `--verify` (`npm run setup -- --verify`) to also check each agent can reach Linear and see them.
 
-4. Run `/do-repo-setup` in each of your repos. It points the repo’s `AGENTS.md` at your fork’s tracker doc, and offers to install the supporting skills, dev ports and your Tool Stack’s service commands ([example](skills/do-repo-setup/adding-a-repo.example.toml)).
+4. Run `/do-repo-setup` in each of your repos. It points the repo’s `AGENTS.md` at your fork’s tracker doc, moves its setup into `scripts/setup`, and offers to install the supporting skills, dev ports and your Tool Stack’s service commands ([example](skills/do-repo-setup/adding-a-repo.example.toml)).
 5. Optionally, [deploy your own Cloud Inbox](packages/delegator/README.md#set-up-your-cloud-inbox) to delegate work from Linear.
 
 You need Git, Node.js 22.20+ with npm, the [GitHub CLI](https://cli.github.com) signed in with `gh auth login`, and [Linear’s MCP server](https://linear.app/docs/mcp) connected to your agent. Python 3.11+ enables service setup; a POSIX shell and `nc` enable dev ports. [Orca](https://onorca.dev/download) is recommended for parallel agent workspaces. Delegator development requires Node.js 26.
@@ -92,4 +92,4 @@ It exits non-zero until every step passes; at a terminal, it waits for each fix 
 
 ## Contributing
 
-Contributions are accepted under this repo's [MIT license](LICENSE) (inbound=outbound). [Verifier](packages/verifier/README.md) and [Delegator](packages/delegator/README.md) development notes live in their package READMEs, and [`AGENTS.md`](AGENTS.md) says where things go.
+Contributions are accepted under this repo's [MIT license](LICENSE) (inbound=outbound). Run `scripts/setup` once in a new checkout; it installs what the checks in [`AGENTS.md`](AGENTS.md) need, and is safe to rerun. [Verifier](packages/verifier/README.md) and [Delegator](packages/delegator/README.md) development notes live in their package READMEs, and [`AGENTS.md`](AGENTS.md) says where things go.
