@@ -5,8 +5,10 @@
 
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { createServer, type Server } from 'node:http';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname, extname, isAbsolute, join, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { ENDED_STATUSES, JOB_KINDS, LIVE_STATUSES, PULL_REQUEST, type Outcome as JobOutcome, type Task, type UpdateType, type Watch, type Watching } from '../contract.ts';
 import { isLaunchEvidence, type Claim, type LaunchEvidence } from '../job.ts';
@@ -888,6 +890,71 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim, job: { sta
   return outcome;
 }
 
+const REPORTS = join(homedir(), 'Reports');
+const REPORTS_PORT = 8765;
+const TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+  '.json': 'application/json', '.txt': 'text/plain; charset=utf-8', '.svg': 'image/svg+xml',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp',
+};
+const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+type ReportReply = { status: number; headers?: Record<string, string>; body?: string | Buffer };
+
+/** The real path of `path` when it resolves, symlinks included, inside `root`; otherwise null. */
+async function inside(root: string, path: string): Promise<string | null> {
+  try {
+    const [base, real] = await Promise.all([realpath(root), realpath(path)]);
+    return real === base || real.startsWith(base + sep) ? real : null;
+  } catch { return null; }
+}
+
+/** One read-only request against the reports folder: a file, a folder's `index.html`, or a folder listing. */
+async function answerReport(root: string, method: string, url: string, host: string): Promise<ReportReply> {
+  // Only this Mac's own names, or its tailnet name that `tailscale serve` forwards: a page whose domain was rebound to 127.0.0.1 is refused.
+  const name = host.toLowerCase().replace(/:\d+$/, '');
+  if (name !== '127.0.0.1' && name !== 'localhost' && !name.endsWith('.ts.net')) return { status: 403 };
+  if (method !== 'GET' && method !== 'HEAD') return { status: 405, headers: { Allow: 'GET, HEAD' } };
+  try {
+    const { pathname } = new URL(url, 'http://reports');
+    const path = decodeURIComponent(pathname);
+    if (path.includes('\0')) return { status: 400 };
+    const real = await inside(root, join(root, path));
+    if (!real) return { status: 404 };
+    let file = real;
+    if ((await stat(real)).isDirectory()) {
+      // Relative, so a path like `/.//host` can't turn it into a redirect off this server.
+      if (!pathname.endsWith('/')) return { status: 301, headers: { Location: `${pathname.slice(pathname.lastIndexOf('/') + 1)}/` } };
+      const index = await inside(root, join(real, 'index.html'));
+      if (index && (await stat(index)).isFile()) file = index;
+      else {
+        const items = (await readdir(real, { withFileTypes: true }))
+          .filter((entry) => !entry.name.startsWith('.'))
+          .sort((a, b) => a.name < b.name ? -1 : 1)
+          .map((entry) => {
+            const slash = entry.isDirectory() ? '/' : '';
+            return `<li><a href="${encodeURIComponent(entry.name)}${slash}">${escapeHtml(entry.name + slash)}</a></li>`;
+          });
+        const title = escapeHtml(`Reports${path}`);
+        return { status: 200, headers: { 'Content-Type': TYPES['.html'], 'Cache-Control': 'no-cache' },
+          body: `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${title}</title><h1>${title}</h1><ul>${items.join('')}</ul>\n` };
+      }
+    }
+    return { status: 200, body: await readFile(file),
+      headers: { 'Content-Type': TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream', 'Cache-Control': 'no-cache' } };
+  } catch { return { status: 404 }; }
+}
+
+/** Serves `root` read-only on localhost. A failure to listen, such as a taken port, is only logged. */
+export function serveReports(root: string, port: number, log: Deps['log']): Server {
+  const server = createServer((req, res) => {
+    void answerReport(root, req.method ?? '', req.url ?? '/', req.headers.host ?? '').then(({ status, headers, body }) => res.writeHead(status, headers).end(body));
+  });
+  server.on('error', (error: NodeJS.ErrnoException) =>
+    log({ event: 'reports', outcome: error.code === 'EADDRINUSE' ? 'port-in-use' : 'reports-failed' }));
+  server.listen(port, '127.0.0.1');
+  return server;
+}
+
 /** One poll: claims a job and handles it. Returns whether there was one. */
 export async function poll(config: RunnerConfig, deps: Deps): Promise<boolean> {
   writeStatus(deps);
@@ -936,6 +1003,7 @@ if (import.meta.main) {
     drain: join(stateDir, 'drain.json'),
   };
   startStatusHeartbeat(deps);
+  serveReports(REPORTS, REPORTS_PORT, deps.log);
   deps.log({ event: 'start', outcome: 'ok' });
   let checking = false;
   const check = async () => {

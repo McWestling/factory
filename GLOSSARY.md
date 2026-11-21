@@ -49,7 +49,7 @@ The Runner's launch for a delegated issue with a `wayfinder:` label: `do-refine`
 _Avoid_: decision launch
 
 **Runner**:
-The local process on a machine that claims jobs from Cloud Inbox through its restricted machine-facing API and launches them in Orca. It holds no Linear credentials. Lives in `packages/delegator/runner/`.
+The local process on a machine that claims jobs from Cloud Inbox through its restricted machine-facing API and launches them in Orca. It also serves the reports folder on localhost. It holds no Linear credentials. Lives in `packages/delegator/runner/`.
 _Avoid_: daemon, local client
 
 **Stage**:
@@ -119,3 +119,9 @@ _Avoid_: setup script, onboarding steps
 
 **Work view**:
 One shared Linear issue view per active product (an initiative with status `Active`), named `Work: <Product>`. It shows issues with that Product label in `Todo` and not blocked, `In Progress`, `In Review` or `🧹 Closing out`, grouped by status with Project and Labels as row properties.
+
+## Decisions
+
+**ADR**:
+An architecture decision record: a short record of one decision, kept in a repo's `docs/adr/`. The decision ticket in Linear holds the reasoning; the ADR keeps the rule beside the code it governs. Write one only for a rule reviewers must cite or a future agent could unknowingly undo, and link it to the decision ticket for the reasoning. For any other decision, the closed decision ticket is the record.
+_Avoid_: design doc, decision log
