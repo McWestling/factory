@@ -4,12 +4,10 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { acknowledgeDrain, poll, watchJobs, type Deps, type RunnerConfig } from './runner/runner.ts';
-import { updateRunner, withLock, type UpkeepDeps } from './upkeep.ts';
+import { BUNDLED, updateRunner, withLock, type UpkeepDeps } from './upkeep.ts';
 
 const root = resolve(import.meta.dirname, '../..');
 const LABEL = 'com.mcwestling.factory-delegator.runner';
-const BUNDLED = ['job.ts', 'parse-issue.ts', 'runner/runner.ts', 'runner/launchd/install.sh',
-  'runner/launchd/runner.plist', 'menubar/menubar.plist'];
 
 /** A disposable machine: real files under a temp home, with the installer and launchd faked. */
 function machine({ runner = 'running' as 'running' | 'stopped' | 'none' } = {}) {
@@ -313,4 +311,12 @@ test('a new Runner that never reports and cannot be stopped leaves both bundles 
   assert.equal(existsSync(`${machineA.app}.failed`), false);
   assert.equal(machineA.m.pid, 4242, 'the service is still running');
   assert.equal(machineA.m.calls.filter((call) => call.startsWith('launchctl bootstrap')).length, 1, 'no restart of the previous bundle');
+});
+
+test('the bundled files are all the Runner needs to load, and the installer copies each of them', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bundle-'));
+  for (const file of BUNDLED) cpSync(join(root, 'packages/delegator', file), join(dir, file));
+  await import(join(dir, 'runner/runner.ts'));
+  const install = readFileSync(join(root, 'packages/delegator/runner/launchd/install.sh'), 'utf8');
+  for (const file of BUNDLED.filter((file) => !file.includes('/'))) assert.match(install, new RegExp(`\\$package_dir/${file}`));
 });

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { loadConfig } from '../delegator/runner/runner.ts';
+import { BUNDLED } from '../delegator/upkeep.ts';
 import { claudeVerdict, cliArgs, codexVerdict, setup, viewerUrl, type SetupDeps } from './setup.ts';
 import { readRule } from './read-roots.ts';
 
@@ -917,7 +918,7 @@ test('with nobody at the terminal, read roots are left alone', async () => {
 /** Fakes a successful `install.sh --build-app <staged>`: a bundle whose sources match the checkout byte for byte. */
 function stagedBuild(mac: ReturnType<typeof machine>, file: string, args: string[]) {
   mac.m.calls.push(`${file} ${args.join(' ')}`);
-  for (const path of ['job.ts', 'parse-issue.ts', 'runner/runner.ts', 'runner/launchd/install.sh', 'runner/launchd/runner.plist', 'menubar/menubar.plist']) {
+  for (const path of BUNDLED) {
     const source = join(mac.root, 'packages/delegator', path);
     const target = join(args[2]!, 'Contents/Resources', path);
     mkdirSync(join(source, '..'), { recursive: true });

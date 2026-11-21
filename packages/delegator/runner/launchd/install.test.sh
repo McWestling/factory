@@ -31,7 +31,7 @@ runner="$app/Contents/Resources/runner/runner.ts"
 cli_runner=$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:1' "$plist")
 [ "$cli_runner" = "$runner" ]
 case "$cli_runner" in "$root"/*) exit 1 ;; esac
-for file in runner/runner.ts runner/launchd/install.sh runner/launchd/runner.plist job.ts parse-issue.ts; do
+for file in runner/runner.ts runner/launchd/install.sh runner/launchd/runner.plist job.ts parse-issue.ts contract.ts; do
   [ -f "$app/Contents/Resources/$file" ]
 done
 HOME="$tmp/home" PATH="$tmp/bin:$PATH" FACTORY_LAUNCHD_RENDER_ONLY=1   sh "$app/Contents/Resources/runner/launchd/install.sh" --install-runner
@@ -52,7 +52,7 @@ cmp "$plist" "$tmp/before.plist"
 rm -f "$tmp/bin/swiftc"
 staged="$tmp/staged.app"
 HOME="$tmp/home" PATH="$tmp/bin:$PATH" sh "$root/packages/delegator/runner/launchd/install.sh" --build-app "$staged"
-for file in runner/runner.ts runner/launchd/install.sh runner/launchd/runner.plist menubar/menubar.plist job.ts parse-issue.ts; do
+for file in runner/runner.ts runner/launchd/install.sh runner/launchd/runner.plist menubar/menubar.plist job.ts parse-issue.ts contract.ts; do
   cmp "$staged/Contents/Resources/$file" "$root/packages/delegator/$file"
 done
 [ -x "$staged/Contents/MacOS/FactoryRunnerMenuBar" ]

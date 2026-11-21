@@ -13,7 +13,8 @@ import { test } from 'node:test';
 import type { AppAuth } from '../cloud-inbox/auth.ts';
 import { JobQueue } from '../cloud-inbox/queue.ts';
 import { handleRunner } from '../cloud-inbox/routes.ts';
-import { acknowledgeDrain, checkWatches, readWatches, startStatusHeartbeat, handleJob, launchArgs, loadConfig, NOT_ALLOWED, poll, rereadConfig, resumeWatches, serveReports, watchJobs, type Deps, type RunnerConfig, type Task } from './runner.ts';
+import { acknowledgeDrain, checkWatches, readWatches, startStatusHeartbeat, handleJob, launchArgs, loadConfig, NOT_ALLOWED, poll, rereadConfig, resumeWatches, serveReports, watchJobs, type Deps, type RunnerConfig } from './runner.ts';
+import { JOB_KINDS, type Task } from '../contract.ts';
 
 const example = new URL('../config.example.json', import.meta.url);
 const config: RunnerConfig = {
@@ -29,7 +30,6 @@ const config: RunnerConfig = {
   skill: 'do-implement',
   refineRepo: 'owner/repo',
 };
-const claim = { issueId: 'issue-1', sessionId: 'session-1', claimId: 'claim-1' };
 const description = (model = 'Claude Opus 5.5', repo = 'owner/repo') =>
   `[repo=${repo}] [level=standard] [model=${model}]`;
 const goodTask: Task = {
@@ -39,14 +39,120 @@ const goodTask: Task = {
   description: description(),
   branchName: 'someone/abc-123-do-the-thing',
   statusType: 'unstarted',
+  labels: [],
 };
 const ok = JSON.stringify({ ok: true, result: {} });
 const registeredRepo = { id: 'repo-1', kind: 'git', path: '/repos/repo', gitRemoteIdentity: { canonicalKey: 'github.com/owner/repo' } };
 const repoList = (repos: unknown[] = [registeredRepo]) => JSON.stringify({ ok: true, result: { repos } });
 const orcaError = (code: string) => Object.assign(new Error('exit 1'), { stdout: JSON.stringify({ ok: false, error: { code } }) });
 
-/** A fake Cloud Inbox and Orca, recording every call. */
-function fakes(task: Partial<Task> | null = goodTask, orca: (string | Error)[] = [ok, ok]) {
+const PR7 = 'https://github.com/owner/repo/pull/7';
+
+/**
+ * The real queue and Runner API, with Linear and GitHub faked from `task`, holding session-1 on
+ * issue-1: a delegation, or a closeout of a merged launch when `task.kind` says so. Linear answers
+ * every read with one issue and session; `status` is what a watch reads.
+ */
+async function realInbox(task: Partial<Task> | null) {
+  const db = new DatabaseSync(':memory:');
+  const clock = { now: 1_800_000_000_000 };
+  const issueEdits: Record<string, unknown>[] = [];
+  const thoughts: string[] = [];
+  const responses: string[] = [];
+  const links: string[] = [];
+  const status = { sessionStatus: 'active', issueState: task?.skip === 'canceled' ? 'canceled' : task?.statusType,
+    pullRequests: [] as string[] };
+  const linear: typeof fetch = async (input, init) => {
+    if (String(input).startsWith('https://api.github.com/')) {
+      // As in Workers, whose fetch throws on `redirect: 'error'`.
+      if (init?.redirect === 'error') throw new TypeError('Invalid redirect value, must be one of "follow" or "manual"');
+      if (task?.skip === 'unreadable') return new Response(null, { status: 401 });
+      return Response.json({ merged: task?.skip !== 'unverified',
+        base: { repo: { full_name: 'owner/repo' } }, head: { ref: goodTask.branchName, repo: { full_name: 'owner/repo' } } });
+    }
+    const { query, variables } = JSON.parse(String(init?.body));
+    if (query.includes('agentActivityCreate')) {
+      if (variables.input.content.type === 'thought') thoughts.push(variables.input.content.body);
+      if (variables.input.content.type === 'response') {
+        responses.push(variables.input.content.body);
+        status.sessionStatus = 'complete';
+      }
+      return Response.json({ data: { agentActivityCreate: { success: true } } });
+    }
+    if (query.includes('agentSessionUpdate')) {
+      links.push(variables.url);
+      return Response.json({ data: { agentSessionUpdate: { success: true } } });
+    }
+    if (query.includes('issueUpdate')) {
+      issueEdits.push(variables.input);
+      return Response.json({ data: { issueUpdate: { success: true } } });
+    }
+    if (query.includes('agentSessionCreateOnIssue')) {
+      return Response.json({ data: { agentSessionCreateOnIssue: { success: true, agentSession: { id: 'session-1' } } } });
+    }
+    if (!task) return Response.json({ data: { issue: null, agentSession: null } });
+    return Response.json({ data: {
+      issue: {
+        identifier: task.identifier, description: task.description, branchName: task.branchName,
+        state: { type: status.issueState }, delegate: { id: task.delegated ? 'app-user' : 'someone-else' },
+        team: { id: 'team-1', states: { nodes: [] } },
+        labels: { nodes: (task.labels ?? []).map((name) => ({ id: `label-${name}`, name })) },
+        attachments: { nodes: status.pullRequests.map((url) => ({ url })) },
+      },
+      agentSession: { creator: { id: task.creatorId }, status: status.sessionStatus },
+      issueLabels: { nodes: [] },
+    } });
+  };
+  const auth = { installation: async () => ({ appUserId: 'app-user', appName: 'Example' }), getAccessToken: async () => 'token' };
+  const queue = new JobQueue({ exec: (query, ...bindings) => {
+    const rows = db.prepare(query).all(...bindings);
+    return { toArray: () => rows };
+  } }, auth as unknown as AppAuth, () => {}, linear, () => clock.now);
+  const inboxConfig = { orgId: 'org', adminSecret: 'admin',
+    app: { clientId: 'client', clientSecret: 'secret', webhookSecret: 'webhook' },
+    machines: { 'example-machine': config.bearerSecret, 'other-machine': 'bearer-other' } };
+  const ops: string[] = [];
+  let loseLaunched = 0;
+  let loseThought = 0;
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    url.pathname = url.pathname.replace('/delegator', '');
+    ops.push(url.pathname.split('/').pop()!);
+    if (url.pathname.endsWith('/updates') && loseThought-- > 0) throw new TypeError('fetch failed');
+    // Lost before it reaches Cloud Inbox.
+    if (url.pathname.endsWith('/launched') && loseLaunched-- > 0) throw new TypeError('fetch failed');
+    return handleRunner(new Request(url, init), inboxConfig, queue);
+  };
+  const state = () => db.prepare('SELECT state FROM jobs').all().map((row) => row.state);
+  /** Delegates issue-`n` in a new session-`n`. */
+  const delegate = (n: number) => queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: `session-${n}`,
+    issueId: `issue-${n}`, stop: false });
+  if (task?.kind === 'closeout') {
+    await queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'launch-1', issueId: 'issue-1', stop: false });
+    const launch = (await queue.claim('example-machine'))!;
+    const evidence = { repo: 'owner/repo', branch: goodTask.branchName };
+    await queue.finish('example-machine', launch.sessionId, launch.claimId, 'launched', evidence);
+    await queue.update('example-machine', launch.sessionId, launch.claimId, 'response', 'Done.');
+    await queue.webhook({ action: 'merged', issueId: 'issue-1', url: PR7, ...evidence });
+    await queue.deliver();
+    status.sessionStatus = 'active';
+    status.pullRequests = [PR7];
+    thoughts.length = 0;
+    responses.length = 0;
+    issueEdits.length = 0;
+  } else await delegate(1);
+  return { queue, clock, status, issueEdits, thoughts, responses, links, ops, fetch, state, delegate,
+    prs: (urls: string[]) => { status.pullRequests = urls; }, lose: (n: number) => { loseLaunched = n; },
+    loseThought: () => { loseThought = 1; } };
+}
+type Inbox = Awaited<ReturnType<typeof realInbox>>;
+
+/**
+ * The Runner's deps on the real Cloud Inbox of `realInbox`, or on `shared` for a restarted Runner,
+ * and a fake Orca, recording every call.
+ */
+async function fakes(task: Partial<Task> | null = goodTask, orca: (string | Error)[] = [ok, ok], shared?: Inbox) {
+  const inbox = shared ?? await realInbox(task);
   const requests: string[] = [];
   const updates: [string, string][] = [];
   const snapshots: { paused: boolean; current: { identifier: string } | null }[] = [];
@@ -54,24 +160,14 @@ function fakes(task: Partial<Task> | null = goodTask, orca: (string | Error)[] =
   const stateDir = mkdtempSync(join(tmpdir(), 'runner-watch-'));
   const deps: Deps = {
     async fetch(input, init) {
-      const url = new URL(String(input));
-      assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer bearer-example');
-      const path = url.pathname.replace('/delegator', '');
-      if (path === '/pool/snapshot') {
-        assert.equal(init?.method, 'PUT');
-        snapshots.push(JSON.parse(String(init?.body)));
-        return new Response(null, { status: 204 });
-      }
-      requests.push(`${init?.method} ${path}`);
-      if (path === '/jobs/claim') return Response.json(claim);
-      assert.equal(url.searchParams.get('claimId'), 'claim-1');
-      if (path.endsWith('/task')) return Response.json(task);
+      const path = new URL(String(input)).pathname.replace('/delegator', '');
+      if (path === '/pool/snapshot') snapshots.push(JSON.parse(String(init?.body)));
+      else requests.push(`${init?.method} ${path}`);
       if (path.endsWith('/updates')) {
         const { type, body } = JSON.parse(String(init?.body));
         updates.push([type, body]);
-        return new Response(null, { status: 202 });
       }
-      return new Response(null, { status: 204 });
+      return inbox.fetch(input, init);
     },
     async exec(file, args) {
       assert.equal(file, 'orca');
@@ -87,11 +183,25 @@ function fakes(task: Partial<Task> | null = goodTask, orca: (string | Error)[] =
     status: join(stateDir, 'status.json'),
     paused: join(stateDir, 'paused'),
   };
-  return { deps, requests, updates, snapshots, argv };
+  /** Claims the next job as this Runner, for a test that hands it to handleJob. */
+  const claim = async () => {
+    const claimed = await inbox.queue.claim('example-machine', JOB_KINDS);
+    assert.ok(claimed);
+    return claimed;
+  };
+  return { deps, requests, updates, snapshots, argv, inbox, claim };
+}
+
+/** Forces a task Cloud Inbox never sends, read through the recording fetch like any other. */
+function forceTask(f: Awaited<ReturnType<typeof fakes>>, task: unknown) {
+  const fetch = f.inbox.fetch;
+  f.inbox.fetch = async (input, init) => new URL(String(input)).pathname.endsWith('/task')
+    ? Response.json(task) : fetch(input, init);
 }
 
 test('a launched job keeps its claim for completion watching after a restart', async () => {
-  const f = fakes();
+  const f = await fakes();
+  const claim = await f.claim();
   await handleJob(config, f.deps, claim);
   const saved = JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1'];
   assert.equal(saved.claimId, claim.claimId);
@@ -101,22 +211,12 @@ test('a launched job keeps its claim for completion watching after a restart', a
 });
 
 async function watching() {
-  const f = fakes();
-  await handleJob(config, f.deps, claim);
+  const f = await fakes();
+  await handleJob(config, f.deps, await f.claim());
   f.requests.length = 0;
   f.updates.length = 0;
-  const status = { sessionStatus: 'active', issueState: 'started', pullRequests: [] as string[] };
-  const fetch = f.deps.fetch;
-  f.deps.fetch = async (input, init) => {
-    const path = new URL(String(input)).pathname;
-    if (path.endsWith('/watch') || path.endsWith('/pull-request')) {
-      assert.equal(new URL(String(input)).searchParams.get('claimId'), claim.claimId);
-      f.requests.push(`${init?.method} ${path.replace('/delegator', '')}`);
-      return Response.json(path.endsWith('/watch') ? status : { url: status.pullRequests[0] });
-    }
-    return fetch(input, init);
-  };
-  return { ...f, status };
+  f.inbox.status.issueState = 'started';
+  return { ...f, status: f.inbox.status };
 }
 
 test('a PR is linked before the final response, and a restart does not repeat it', async () => {
@@ -198,23 +298,26 @@ test('unknown status and malformed PR URLs never produce a final response', asyn
   f.status.sessionStatus = 'unexpected';
   await watchJobs(config, f.deps);
   f.status.sessionStatus = 'active';
-  f.status.pullRequests = ['https://github.com.evil.example/owner/repo/pull/7'];
+  // Cloud Inbox drops it, so only a forced watch can send it.
+  const fetch = f.inbox.fetch;
+  f.inbox.fetch = async (input, init) => new URL(String(input)).pathname.endsWith('/watch')
+    ? Response.json({ ...f.status, pullRequests: ['https://github.com.evil.example/owner/repo/pull/7'] }) : fetch(input, init);
   await watchJobs(config, f.deps);
   assert.deepEqual(f.updates, []);
   assert.ok(JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1']);
 });
 
 test('a failed watch-state write keeps the launch reclaimable instead of forgetting it', async () => {
-  const f = fakes();
+  const f = await fakes();
   mkdirSync(f.deps.watches);
-  await handleJob(config, f.deps, claim);
+  await handleJob(config, f.deps, await f.claim());
   assert.ok(!f.requests.includes('POST /jobs/session-1/launched'));
   assert.equal(JSON.parse(readFileSync(f.deps.launches, 'utf8'))['session-1'].launched, true);
 });
 
 test('a launch runs orca open, then the exact worktree create argv', async () => {
-  const f = fakes();
-  assert.equal(await handleJob(config, f.deps, claim), 'launched');
+  const f = await fakes();
+  assert.equal(await handleJob(config, f.deps, await f.claim()), 'launched');
   assert.deepEqual(f.argv, [
     ['open', '--json'],
     ['repo', 'list', '--json'],
@@ -249,7 +352,7 @@ test('a skill other than do-implement skips setup and Luna still gets high effor
 // an issue" in cloud-inbox/routes.test.ts. The Runner's requests don't vary with status.
 for (const statusType of ['unstarted', 'started', 'completed']) {
   test(`success on a ${statusType} issue posts the started thought, then reports launched, and nothing else`, async () => {
-    const f = fakes({ ...goodTask, statusType });
+    const f = await fakes({ ...goodTask, statusType });
     await poll(config, f.deps);
     assert.deepEqual(f.requests, [
       'POST /jobs/claim',
@@ -276,8 +379,8 @@ const refusals: [string, Partial<Task>, string][] = [
 ];
 for (const [label, change, message] of refusals) {
   test(`${label} posts one error, reports failed, and never launches`, async () => {
-    const f = fakes({ ...goodTask, ...change });
-    assert.notEqual(await handleJob(config, f.deps, claim), 'launched');
+    const f = await fakes({ ...goodTask, ...change });
+    assert.notEqual(await handleJob(config, f.deps, await f.claim()), 'launched');
     assert.deepEqual(f.updates, [['error', message]]);
     assert.deepEqual(f.requests.slice(-2), ['POST /jobs/session-1/updates', 'POST /jobs/session-1/failed']);
     assert.deepEqual(f.argv, []);
@@ -285,23 +388,23 @@ for (const [label, change, message] of refusals) {
 }
 
 test('an issue no longer delegated is dropped silently', async () => {
-  const f = fakes({ ...goodTask, delegated: false });
-  assert.equal(await handleJob(config, f.deps, claim), 'undelegated');
+  const f = await fakes({ ...goodTask, delegated: false });
+  assert.equal(await handleJob(config, f.deps, await f.claim()), 'undelegated');
   assert.deepEqual(f.updates, []);
   assert.deepEqual(f.requests, ['GET /jobs/session-1/task', 'POST /jobs/session-1/failed']);
 });
 
 test('Orca still unavailable after one retry gets the Orca-down error', async () => {
-  const f = fakes(goodTask, [ok, orcaError('runtime_unavailable'), orcaError('runtime_unavailable')]);
-  assert.equal(await handleJob(config, f.deps, claim), 'orca-unavailable');
+  const f = await fakes(goodTask, [ok, orcaError('runtime_unavailable'), orcaError('runtime_unavailable')]);
+  assert.equal(await handleJob(config, f.deps, await f.claim()), 'orca-unavailable');
   assert.equal(f.argv.length, 4);
   assert.deepEqual(f.updates, [['error', "Orca isn't running on Example Mac. Open Orca and delegate again to retry."]]);
   assert.equal(f.requests.at(-1), 'POST /jobs/session-1/failed');
 });
 
 test('Orca becoming available on the retry launches', async () => {
-  const f = fakes(goodTask, [orcaError('runtime_unavailable'), orcaError('runtime_unavailable'), ok]);
-  assert.equal(await handleJob(config, f.deps, claim), 'launched');
+  const f = await fakes(goodTask, [orcaError('runtime_unavailable'), orcaError('runtime_unavailable'), ok]);
+  assert.equal(await handleJob(config, f.deps, await f.claim()), 'launched');
   assert.equal(f.argv.length, 4);
 });
 
@@ -313,8 +416,8 @@ const orcaFailures: [string | Error, string][] = [
 ];
 for (const [failure, message] of orcaFailures) {
   test(`an Orca failure is reported, not retried: ${message.slice(0, 40)}`, async () => {
-    const f = fakes(goodTask, [ok, failure]);
-    assert.notEqual(await handleJob(config, f.deps, claim), 'launched');
+    const f = await fakes(goodTask, [ok, failure]);
+    assert.notEqual(await handleJob(config, f.deps, await f.claim()), 'launched');
     assert.equal(f.argv.length, 3);
     assert.deepEqual(f.updates, [['error', message]]);
     assert.equal(f.requests.at(-1), 'POST /jobs/session-1/failed');
@@ -322,95 +425,22 @@ for (const [failure, message] of orcaFailures) {
 }
 
 test('an unreadable task is refused', async () => {
-  const f = fakes();
+  const f = await fakes();
   const fetch = f.deps.fetch;
   f.deps.fetch = async (input, init) => String(input).includes('/task') ? new Response('', { status: 502 }) : fetch(input, init);
-  assert.equal(await handleJob(config, f.deps, claim), 'task-unreadable');
+  assert.equal(await handleJob(config, f.deps, await f.claim()), 'task-unreadable');
   assert.deepEqual(f.requests.slice(-2), ['POST /jobs/session-1/updates', 'POST /jobs/session-1/failed']);
 });
 
 test('a null task is refused as unreadable and never launches', async () => {
-  const f = fakes(null);
-  assert.equal(await handleJob(config, f.deps, claim), 'task-unreadable');
+  const f = await fakes();
+  forceTask(f, null);
+  assert.equal(await handleJob(config, f.deps, await f.claim()), 'task-unreadable');
   assert.equal(f.updates.length, 1);
   assert.equal(f.updates[0]![0], 'error');
   assert.deepEqual(f.requests.slice(-2), ['POST /jobs/session-1/updates', 'POST /jobs/session-1/failed']);
   assert.deepEqual(f.argv, []);
 });
-
-/** The real queue and Runner API behind the Runner's fetch, with Linear faked. */
-function realInbox(labels: string[] = []) {
-  const db = new DatabaseSync(':memory:');
-  const clock = { now: 1_800_000_000_000 };
-  const issueEdits: Record<string, unknown>[] = [];
-  const thoughts: string[] = [];
-  const responses: string[] = [];
-  const links: string[] = [];
-  let sessionStatus = 'active';
-  let pullRequests: string[] = [];
-  const linear: typeof fetch = async (input, init) => {
-    if (String(input).startsWith('https://api.github.com/')) {
-      // As in Workers, whose fetch throws on `redirect: 'error'`.
-      if (init?.redirect === 'error') throw new TypeError('Invalid redirect value, must be one of "follow" or "manual"');
-      return Response.json({
-        base: { repo: { full_name: 'owner/repo' } }, head: { ref: goodTask.branchName, repo: { full_name: 'owner/repo' } },
-      });
-    }
-    const { query, variables } = JSON.parse(String(init?.body));
-    if (query.includes('agentActivityCreate')) {
-      if (variables.input.content.type === 'thought') thoughts.push(variables.input.content.body);
-      if (variables.input.content.type === 'response') {
-        responses.push(variables.input.content.body);
-        sessionStatus = 'complete';
-      }
-      return Response.json({ data: { agentActivityCreate: { success: true } } });
-    }
-    if (query.includes('agentSessionUpdate')) {
-      links.push(variables.url);
-      return Response.json({ data: { agentSessionUpdate: { success: true } } });
-    }
-    if (query.includes('attachments')) return Response.json({ data: {
-      issue: { attachments: { nodes: pullRequests.map((url) => ({ url })) } }, agentSession: { status: sessionStatus },
-    } });
-    if (query.includes('issueUpdate')) {
-      issueEdits.push(variables.input);
-      return Response.json({ data: { issueUpdate: { success: true } } });
-    }
-    return Response.json({ data: {
-      issue: {
-        identifier: goodTask.identifier, description: goodTask.description, branchName: goodTask.branchName,
-        state: { type: 'unstarted' }, delegate: { id: 'app-user' }, team: { id: 'team-1', states: { nodes: [] } },
-        labels: { nodes: labels.map((name) => ({ id: `label-${name}`, name })) },
-      },
-      agentSession: { creator: { id: 'user-allowed' } },
-      issueLabels: { nodes: [] },
-    } });
-  };
-  const auth = { installation: async () => ({ appUserId: 'app-user', appName: 'Example' }), getAccessToken: async () => 'token' };
-  const queue = new JobQueue({ exec: (query, ...bindings) => {
-    const rows = db.prepare(query).all(...bindings);
-    return { toArray: () => rows };
-  } }, auth as unknown as AppAuth, () => {}, linear, () => clock.now);
-  const inboxConfig = { orgId: 'org', adminSecret: 'admin',
-    app: { clientId: 'client', clientSecret: 'secret', webhookSecret: 'webhook' },
-    machines: { 'example-machine': config.bearerSecret, 'other-machine': 'bearer-other' } };
-  const ops: string[] = [];
-  let loseLaunched = 0;
-  let loseThought = 0;
-  const fetch: typeof globalThis.fetch = async (input, init) => {
-    const url = new URL(String(input));
-    url.pathname = url.pathname.replace('/delegator', '');
-    ops.push(url.pathname.split('/').pop()!);
-    if (url.pathname.endsWith('/updates') && loseThought-- > 0) throw new TypeError('fetch failed');
-    // Lost before it reaches Cloud Inbox.
-    if (url.pathname.endsWith('/launched') && loseLaunched-- > 0) throw new TypeError('fetch failed');
-    return handleRunner(new Request(url, init), inboxConfig, queue);
-  };
-  const state = () => db.prepare('SELECT state FROM jobs').all().map((row) => row.state);
-  return { queue, clock, issueEdits, thoughts, responses, links, ops, fetch, state,
-    prs: (urls: string[]) => { pullRequests = urls; }, lose: (n: number) => { loseLaunched = n; },
-    loseThought: () => { loseThought = 1; } };
-}
 
 const refineTask: Partial<Task> = { ...goodTask, description: 'Decide which way to go.', labels: ['Factory', 'wayfinder:grilling'] };
 const refineConfig: RunnerConfig = { ...config, levels: { ...config.levels, deep: 'GPT-6 Luna' } };
@@ -425,8 +455,8 @@ for (const [stage, task, cfg, name] of [
   ['a refine', refineTask, refineConfig, '🗺️ abc-123-do-the-thing'],
 ] as const) {
   test(`${stage} launch names its new workspace with the stage emoji, keeping --name plain`, async () => {
-    const f = fakes(task, [ok, created('/worktrees/abc-123')]);
-    assert.equal(await handleJob(cfg, f.deps, claim), 'launched');
+    const f = await fakes(task, [ok, created('/worktrees/abc-123')]);
+    assert.equal(await handleJob(cfg, f.deps, await f.claim()), 'launched');
     const create = f.argv.find((args) => args[1] === 'create')!;
     assert.equal(create[create.indexOf('--name') + 1], 'abc-123-do-the-thing');
     assert.deepEqual(f.argv.at(-1), renamed('/worktrees/abc-123', name));
@@ -435,9 +465,9 @@ for (const [stage, task, cfg, name] of [
 
 test('a failed rename is logged but leaves the outcome, lastError and messages alone', async () => {
   const outcomes: unknown[] = [];
-  const f = fakes(goodTask, [ok, created('/worktrees/abc-123'), orcaError('worktree_not_found')]);
+  const f = await fakes(goodTask, [ok, created('/worktrees/abc-123'), orcaError('worktree_not_found')]);
   f.deps.log = (fields) => outcomes.push(fields.outcome);
-  assert.equal(await handleJob(config, f.deps, claim), 'launched');
+  assert.equal(await handleJob(config, f.deps, await f.claim()), 'launched');
   assert.deepEqual(f.argv.filter((args) => args[1] === 'set').length, 1);
   assert.ok(outcomes.includes('rename-failed'));
   assert.equal(JSON.parse(readFileSync(f.deps.status, 'utf8')).lastError, null);
@@ -445,35 +475,35 @@ test('a failed rename is logged but leaves the outcome, lastError and messages a
 });
 
 test('a rename gets a short timeout, so a hung Orca holds the job for 30 seconds at most', async () => {
-  const f = fakes(goodTask, [ok, created('/worktrees/abc-123')]);
+  const f = await fakes(goodTask, [ok, created('/worktrees/abc-123')]);
   const timeouts: number[] = [];
   const exec = f.deps.exec;
   f.deps.exec = async (file, args, timeout) => { if (args[1] === 'set') timeouts.push(timeout); return exec(file, args, timeout); };
-  await handleJob(config, f.deps, claim);
+  await handleJob(config, f.deps, await f.claim());
   assert.deepEqual(timeouts, [30_000]);
 });
 
 test('a create reply without the worktree renames it by the launch\'s worktree id instead', async () => {
   const reply = JSON.stringify({ ok: true, result: { lineage: null, launch: { worktreeId: 'repo-1::/worktrees/abc-123' } } });
-  const f = fakes(goodTask, [ok, reply]);
-  assert.equal(await handleJob(config, f.deps, claim), 'launched');
+  const f = await fakes(goodTask, [ok, reply]);
+  assert.equal(await handleJob(config, f.deps, await f.claim()), 'launched');
   assert.deepEqual(f.argv.at(-1), ['worktree', 'set', '--worktree', 'id:repo-1::/worktrees/abc-123',
     '--display-name', '🛠️ abc-123-do-the-thing', '--json']);
 });
 
 test('a create reply naming no worktree runs no rename and logs it as failed', async () => {
   const outcomes: unknown[] = [];
-  const f = fakes(goodTask, [ok, ok]);
+  const f = await fakes(goodTask, [ok, ok]);
   f.deps.log = (fields) => outcomes.push(fields.outcome);
-  assert.equal(await handleJob(config, f.deps, claim), 'launched');
+  assert.equal(await handleJob(config, f.deps, await f.claim()), 'launched');
   assert.ok(!f.argv.some((args) => args[1] === 'set'));
   assert.ok(outcomes.includes('rename-failed'));
   assert.equal(JSON.parse(readFileSync(f.deps.status, 'utf8')).lastError, null);
 });
 
 test('a wayfinder issue without tags launches do-refine in refineRepo with the deep model, attended, without setup', async () => {
-  const f = fakes(refineTask);
-  assert.equal(await handleJob(refineConfig, f.deps, claim), 'launched');
+  const f = await fakes(refineTask);
+  assert.equal(await handleJob(refineConfig, f.deps, await f.claim()), 'launched');
   assert.deepEqual(f.argv.at(-1), ['worktree', 'create', '--name', 'abc-123-do-the-thing', '--repo', 'path:/repos/repo',
     '--branch', 'someone/abc-123-do-the-thing', '--agent', 'codex', '--model', 'gpt-6-luna', '--effort', 'high',
     `--prompt=$do-refine ABC-123\n${attended}`, '--setup', 'skip', '--linear-issue', 'ABC-123', '--json']);
@@ -481,28 +511,28 @@ test('a wayfinder issue without tags launches do-refine in refineRepo with the d
 
 test('each recent outcome records its stage, so the menu bar can mark refine, implement and closeout rows', async () => {
   const stageOf = (f: { deps: { status: string } }) => JSON.parse(readFileSync(f.deps.status, 'utf8')).recent.map((entry: { stage?: string }) => entry.stage);
-  const refine = fakes(refineTask);
-  await handleJob(refineConfig, refine.deps, claim);
+  const refine = await fakes(refineTask);
+  await handleJob(refineConfig, refine.deps, await refine.claim());
   assert.deepEqual(stageOf(refine), ['refine']);
-  const implement = fakes();
-  await handleJob(config, implement.deps, claim);
+  const implement = await fakes();
+  await handleJob(config, implement.deps, await implement.claim());
   assert.deepEqual(stageOf(implement), ['implement']);
-  const closeout = closeoutFakes();
-  await handleJob(config, closeout.deps, claim);
+  const closeout = await closeoutFakes();
+  await handleJob(config, closeout.deps, await closeout.claim());
   assert.deepEqual(stageOf(closeout), ['closeout']);
 });
 
 test('a refine launch still honours a model pin', async () => {
-  const f = fakes({ ...refineTask, description: '[model=Claude Opus 5.5]' });
-  await handleJob(refineConfig, f.deps, claim);
+  const f = await fakes({ ...refineTask, description: '[model=Claude Opus 5.5]' });
+  await handleJob(refineConfig, f.deps, await f.claim());
   const args = f.argv.at(-1)!;
   assert.equal(args[args.indexOf('--model') + 1], 'claude-opus-5-5');
   assert.ok(args.includes(`--prompt=/do-refine ABC-123\n${attended}`));
 });
 
 test('a refine launch without refineRepo set is refused, naming the key', async () => {
-  const f = fakes(refineTask);
-  assert.equal(await handleJob({ ...refineConfig, refineRepo: undefined }, f.deps, claim), 'refused-refineRepo');
+  const f = await fakes(refineTask);
+  assert.equal(await handleJob({ ...refineConfig, refineRepo: undefined }, f.deps, await f.claim()), 'refused-refineRepo');
   assert.equal(f.updates.length, 1);
   assert.equal(f.updates[0]![0], 'error');
   assert.match(f.updates[0]![1], /`refineRepo`/);
@@ -511,7 +541,7 @@ test('a refine launch without refineRepo set is refused, naming the key', async 
 });
 
 test('a refine launch posts its response after reporting launched, and is never watched', async () => {
-  const f = fakes(refineTask);
+  const f = await fakes(refineTask);
   await poll(refineConfig, f.deps);
   assert.deepEqual(f.requests, ['POST /jobs/claim', 'GET /jobs/session-1/task', 'POST /jobs/session-1/updates',
     'POST /jobs/session-1/launched', 'POST /jobs/session-1/updates']);
@@ -521,10 +551,8 @@ test('a refine launch posts its response after reporting launched, and is never 
 });
 
 test('a refine launch reports launched to the real queue without evidence, so no merge closes it out', async () => {
-  const inbox = realInbox(['wayfinder:grilling']);
-  await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
-  const f = fakes();
-  f.deps.fetch = inbox.fetch;
+  const f = await fakes(refineTask);
+  const { inbox } = f;
   await poll(refineConfig, f.deps);
   assert.deepEqual(inbox.state(), ['launched']);
   assert.equal(await inbox.queue.webhook({ action: 'merged', issueId: 'issue-1', url: 'https://github.com/owner/repo/pull/7',
@@ -533,9 +561,8 @@ test('a refine launch reports launched to the real queue without evidence, so no
 
 for (const afterDelivery of [false, true]) {
   test(`a refine launch whose report was lost ${afterDelivery ? 'after' : 'before'} delivery responds once and is never watched`, async () => {
-    const inbox = realInbox(['wayfinder:grilling']);
-    await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
-    const f = fakes();
+    const f = await fakes(refineTask);
+    const { inbox } = f;
     let lost = false;
     f.deps.fetch = async (input, init) => {
       if (!lost && String(input).includes('/launched')) {
@@ -561,9 +588,8 @@ for (const afterDelivery of [false, true]) {
 
 for (const accepted of [false, true]) {
   test(`a refine response lost ${accepted ? 'after Cloud Inbox accepts it' : 'before Cloud Inbox accepts it'} is posted once after a restart`, async () => {
-    const inbox = realInbox(['wayfinder:grilling']);
-    await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
-    const first = fakes();
+    const first = await fakes(refineTask);
+    const { inbox } = first;
     let lost = false;
     first.deps.fetch = async (input, init) => {
       if (!lost && String(input).includes('/updates') && JSON.parse(String(init?.body)).type === 'response') {
@@ -579,7 +605,7 @@ for (const accepted of [false, true]) {
     await inbox.queue.deliver();
 
     // A new process with the same launches, watches and status files.
-    const second = fakes();
+    const second = await fakes();
     const restarted: Deps = { ...first.deps, exec: second.deps.exec, fetch: inbox.fetch };
     await checkWatches(refineConfig, restarted);
     await inbox.queue.deliver();
@@ -595,10 +621,8 @@ for (const accepted of [false, true]) {
 }
 
 test('a final response accepted before a lost acknowledgement is not queued twice', async () => {
-  const inbox = realInbox();
-  await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
-  const f = fakes();
-  f.deps.fetch = inbox.fetch;
+  const f = await fakes();
+  const { inbox } = f;
   await poll(config, f.deps);
   inbox.prs(['https://github.com/owner/repo/pull/7']);
   f.deps.fetch = async (input, init) => {
@@ -617,13 +641,11 @@ test('a final response accepted before a lost acknowledgement is not queued twic
 });
 
 test('an upgraded Runner retains a legacy watch without evidence and never posts a contextual PR', async () => {
-  const inbox = realInbox();
-  await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
+  const f = await fakes();
+  const { inbox } = f;
   const old = await inbox.queue.claim('example-machine');
   await inbox.queue.finish('example-machine', old!.sessionId, old!.claimId, 'launched');
   inbox.prs(['https://github.com/owner/repo/pull/7']);
-  const f = fakes();
-  f.deps.fetch = inbox.fetch;
   await resumeWatches(config, f.deps);
   await watchJobs(config, f.deps);
   await inbox.queue.deliver();
@@ -637,9 +659,8 @@ test('an upgraded Runner retains a legacy watch without evidence and never posts
 
 for (const afterDelivery of [false, true]) {
   test(`completion watching resumes after a launch report lost ${afterDelivery ? 'after' : 'before'} delivery`, async () => {
-    const inbox = realInbox();
-    await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
-    const f = fakes();
+    const f = await fakes();
+    const { inbox } = f;
     let lost = false;
     f.deps.fetch = async (input, init) => {
       if (!lost && String(input).includes('/launched')) {
@@ -665,10 +686,8 @@ for (const afterDelivery of [false, true]) {
 
 for (const restart of [false, true]) {
   test(`a lost launch report is recovered on reclaim${restart ? ' after a Runner restart' : ''}, launching once`, async () => {
-    const inbox = realInbox();
-    await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
-    let f = fakes();
-    f.deps.fetch = inbox.fetch;
+    let f = await fakes();
+    const { inbox } = f;
     inbox.lose(1);
     assert.equal(await poll(config, f.deps), true);
     assert.deepEqual(inbox.state(), ['claimed']);
@@ -676,8 +695,8 @@ for (const restart of [false, true]) {
     if (restart) {
       // A new process: nothing carries over but the launches file.
       const launches = f.deps.launches;
-      f = fakes();
-      f.deps = { ...f.deps, fetch: inbox.fetch, launches };
+      f = await fakes(goodTask, [ok, ok], inbox);
+      f.deps = { ...f.deps, launches };
     }
     inbox.clock.now += 10 * 60_000;
     assert.equal(await poll(config, f.deps), true);
@@ -693,18 +712,15 @@ for (const restart of [false, true]) {
 }
 
 test("another machine can't relaunch a job whose launch report was lost; the original machine recovers it", async () => {
-  const inbox = realInbox();
-  await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
-  const a = fakes();
-  a.deps.fetch = inbox.fetch;
+  const a = await fakes();
+  const { inbox } = a;
   inbox.lose(1);
   assert.equal(await poll(config, a.deps), true);
   assert.deepEqual(inbox.state(), ['claimed']);
 
   // A's lease runs out while it's away. B has no access to A's launches.json.
   inbox.clock.now += 10 * 60_000;
-  const b = fakes();
-  b.deps.fetch = inbox.fetch;
+  const b = await fakes(goodTask, [ok, ok], inbox);
   const other = { ...config, bearerSecret: 'bearer-other', machine: 'Other Mac' };
   assert.equal(await poll(other, b.deps), false);
   assert.deepEqual(b.argv, []);
@@ -740,10 +756,8 @@ for (const [label, listing, recovers, repoOutput = repoInfo] of [
   ['a malformed row', listed([null, { branch: 'refs/heads/other' }]), false],
 ] as const) {
   test(`a create whose outcome write was skipped recovers only with ${label}`, async (t) => {
-    const inbox = realInbox();
-    await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
-    const f = fakes();
-    f.deps.fetch = inbox.fetch;
+    const f = await fakes();
+    const { inbox } = f;
     inbox.loseThought();
     let created = false;
     const rename = fs.renameSync;
@@ -765,8 +779,8 @@ for (const [label, listing, recovers, repoOutput = repoInfo] of [
       syncBuiltinESMExports();
     }
     assert.equal(JSON.parse(readFileSync(f.deps.launches, 'utf8'))['session-1']?.launched, false);
-    const restarted = fakes();
-    restarted.deps = { ...restarted.deps, fetch: inbox.fetch, launches: f.deps.launches };
+    const restarted = await fakes(goodTask, [ok, ok], inbox);
+    restarted.deps = { ...restarted.deps, launches: f.deps.launches };
     restarted.deps.exec = async (_file, args) => {
       restarted.argv.push(args);
       if (args[0] === 'repo' && args[1] === 'list') return { stdout: repoList() };
@@ -795,17 +809,15 @@ for (const [label, listing, recovers, repoOutput = repoInfo] of [
 }
 
 test('recovery posts a lost thought once and remembers it across another reclaim', async () => {
-  const inbox = realInbox();
-  await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
-  const f = fakes();
-  f.deps.fetch = inbox.fetch;
+  const f = await fakes();
+  const { inbox } = f;
   inbox.lose(1);
   inbox.loseThought();
   await poll(config, f.deps);
   assert.equal(inbox.thoughts.length, 0);
   for (let i = 0; i < 2; i++) {
-    const restarted = fakes();
-    restarted.deps = { ...restarted.deps, fetch: inbox.fetch, launches: f.deps.launches };
+    const restarted = await fakes(goodTask, [ok, ok], inbox);
+    restarted.deps = { ...restarted.deps, launches: f.deps.launches };
     inbox.clock.now += 10 * 60_000;
     await poll(config, restarted.deps);
     await inbox.queue.deliver();
@@ -817,7 +829,7 @@ test('recovery posts a lost thought once and remembers it across another reclaim
 
 for (const contents of ['{broken', 'null', '{"session-1":42}', '{"session-1":{"at":42}}']) {
   test(`a corrupt launch file logs once per read without throwing: ${contents}`, async () => {
-    const f = fakes(null);
+    const f = await fakes(null);
     const logs: Record<string, string>[] = [];
     f.deps.log = (fields) => { logs.push(fields); };
     writeFileSync(f.deps.launches, contents);
@@ -829,7 +841,7 @@ for (const contents of ['{broken', 'null', '{"session-1":42}', '{"session-1":{"a
 }
 
 test('an unreadable launch file logs without throwing', async () => {
-  const f = fakes(null);
+  const f = await fakes(null);
   const logs: Record<string, string>[] = [];
   f.deps.log = (fields) => { logs.push(fields); };
   mkdirSync(f.deps.launches);
@@ -840,16 +852,16 @@ test('an unreadable launch file logs without throwing', async () => {
 });
 
 test('a failed intent write refuses before a worktree can be created', async () => {
-  const f = fakes();
+  const f = await fakes();
   f.deps.launches = join(f.deps.launches, 'missing', 'launches.json');
-  assert.equal(await handleJob(config, f.deps, claim), 'launch-record-failed');
+  assert.equal(await handleJob(config, f.deps, await f.claim()), 'launch-record-failed');
   assert.deepEqual(f.argv, [['open', '--json'], ['repo', 'list', '--json']]);
   assert.deepEqual(f.requests.slice(-2), ['POST /jobs/session-1/updates', 'POST /jobs/session-1/failed']);
 });
 
 test('an empty queue claims nothing more', async () => {
-  const f = fakes();
-  f.deps.fetch = async () => new Response(null, { status: 204 });
+  const f = await fakes();
+  await f.claim(); // Leaves the queue empty.
   assert.equal(await poll(config, f.deps), false);
   assert.deepEqual(f.argv, []);
 });
@@ -900,16 +912,16 @@ for (const [label, value] of badConfigs) {
 
 test("a config edit changes the next launch's level model without a restart", async () => {
   const path = writeConfig(mkdtempSync(join(tmpdir(), 'runner-')), config);
-  const f = fakes({ ...goodTask, description: '[repo=owner/repo] [level=standard]' });
+  const f = await fakes({ ...goodTask, description: '[repo=owner/repo] [level=standard]' });
   writeConfig(dirname(dirname(dirname(path))), { ...config, levels: { ...config.levels, standard: 'GPT-6 Luna' } });
-  assert.equal(await handleJob(rereadConfig(config, f.deps, path), f.deps, claim), 'launched');
+  assert.equal(await handleJob(rereadConfig(config, f.deps, path), f.deps, await f.claim()), 'launched');
   assert.ok(f.argv[2]!.includes('gpt-6-luna'));
 });
 
-test('an invalid config on reread keeps the last good one and logs once per change, without its value', () => {
+test('an invalid config on reread keeps the last good one and logs once per change, without its value', async () => {
   const path = writeConfig(mkdtempSync(join(tmpdir(), 'runner-')), config);
   const logs: Record<string, string>[] = [];
-  const f = fakes();
+  const f = await fakes();
   f.deps.log = (fields) => logs.push(fields);
   const home = dirname(dirname(dirname(path)));
   writeConfig(home, { ...config, bearerSecret: '' });
@@ -943,9 +955,9 @@ for (const [label, prepare] of exits) {
 }
 
 test('an idle poll publishes the private menu bar status contract', async () => {
-  const f = fakes();
+  const f = await fakes();
   f.deps.now = () => 1_800_000_000_000;
-  f.deps.fetch = async () => new Response(null, { status: 204 });
+  await f.claim(); // Leaves the queue empty.
   assert.equal(await poll(config, f.deps), false);
   assert.deepEqual(JSON.parse(readFileSync(f.deps.status, 'utf8')), {
     version: 1, updatedAt: '2027-01-15T08:00:00.000Z', pid: process.pid,
@@ -956,7 +968,7 @@ test('an idle poll publishes the private menu bar status contract', async () => 
 });
 
 test('status shows the current launch, then its outcome and open watch without private task data', async () => {
-  const f = fakes();
+  const f = await fakes();
   f.deps.now = () => 1_800_000_000_000;
   const exec = f.deps.exec;
   f.deps.exec = async (...args) => {
@@ -971,13 +983,15 @@ test('status shows the current launch, then its outcome and open watch without p
   assert.deepEqual(status.watching, [{ identifier: 'ABC-123', since: '2027-01-15T08:00:00.000Z' }]);
   assert.deepEqual(status.recent, [{ identifier: 'ABC-123', outcome: 'launched', stage: 'implement', time: '2027-01-15T08:00:00.000Z' }]);
   assert.equal(status.lastError, null);
-  for (const secret of [config.bearerSecret, config.inboxUrl, goodTask.description, goodTask.branchName, claim.claimId]) {
+  for (const secret of [config.bearerSecret, config.inboxUrl, goodTask.description, goodTask.branchName,
+    JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1'].claimId]) {
     assert.ok(!text.includes(secret));
   }
 });
 
 test('failed jobs retain the last error and only the ten latest outcomes', async () => {
-  const f = fakes(goodTask, [ok, orcaError('worktree_conflict')]);
+  const f = await fakes(goodTask, [ok, orcaError('worktree_conflict')]);
+  for (let n = 2; n <= 12; n++) await f.inbox.delegate(n);
   f.deps.now = () => 1_800_000_000_000;
   await poll(config, f.deps);
   const failure = { identifier: 'ABC-123', outcome: 'orca-worktree_conflict', stage: 'implement', time: '2027-01-15T08:00:00.000Z' };
@@ -994,9 +1008,7 @@ test('pause prevents claims while recovery and PR watching continue, and removal
   const f = await watching();
   writeFileSync(f.deps.paused, '');
   f.status.pullRequests = ['https://github.com/owner/repo/pull/7'];
-  const fetch = f.deps.fetch;
-  f.deps.fetch = async (input, init) => String(input).endsWith('/jobs/watching')
-    ? Response.json([]) : fetch(input, init);
+  await f.inbox.delegate(2);
   assert.equal(await poll(config, f.deps), false);
   assert.deepEqual(f.requests, []);
   await resumeWatches(config, f.deps);
@@ -1012,7 +1024,7 @@ test('pause prevents claims while recovery and PR watching continue, and removal
 });
 
 test('each poll reports the status snapshot to Cloud Inbox, even while paused', async () => {
-  const f = fakes();
+  const f = await fakes();
   writeFileSync(f.deps.paused, '');
   assert.equal(await poll(config, f.deps), false);
   assert.deepEqual(f.requests, []);
@@ -1022,11 +1034,11 @@ test('each poll reports the status snapshot to Cloud Inbox, even while paused', 
 });
 
 test('a job reports its issue as current once the task is read, and a failed report never stops it', async () => {
-  const f = fakes();
+  const f = await fakes();
   await poll(config, f.deps);
   assert.deepEqual(f.snapshots.map((snapshot) => snapshot.current?.identifier ?? null), [null, 'ABC-123']);
 
-  const g = fakes();
+  const g = await fakes();
   const fetch = g.deps.fetch;
   const logged: string[] = [];
   g.deps.log = (fields) => { logged.push(`${fields.event} ${fields.outcome}`); };
@@ -1038,7 +1050,7 @@ test('a job reports its issue as current once the task is read, and a failed rep
 });
 
 test('reports go out one at a time, so a slow older report never lands after a newer one', async () => {
-  const f = fakes();
+  const f = await fakes();
   const fetch = f.deps.fetch;
   const arrived: { paused: boolean; current: { identifier: string } | null }[] = [];
   let inFlight = 0;
@@ -1065,9 +1077,11 @@ test('reports go out one at a time, so a slow older report never lands after a n
 });
 
 test('a status write failure logs once without stopping polls and later writes recover', async () => {
-  const f = fakes();
+  const f = await fakes();
   const logs: Record<string, string>[] = [];
   f.deps.log = (entry) => logs.push(entry);
+  await f.inbox.delegate(2);
+  await f.inbox.delegate(3);
   mkdirSync(f.deps.status);
   await poll(config, f.deps);
   await poll(config, f.deps);
@@ -1078,9 +1092,9 @@ test('a status write failure logs once without stopping polls and later writes r
 });
 
 test('claim failures preserve last contact time without copying error text into status', async () => {
-  const f = fakes();
+  const f = await fakes();
   f.deps.now = () => 1_800_000_000_000;
-  f.deps.fetch = async () => new Response(null, { status: 204 });
+  await f.claim(); // Leaves the queue empty.
   await poll(config, f.deps);
   f.deps.now = () => 1_800_000_001_000;
   f.deps.fetch = async () => { throw new Error(config.inboxUrl + config.bearerSecret); };
@@ -1091,7 +1105,7 @@ test('claim failures preserve last contact time without copying error text into 
 });
 
 test('a stale status temporary file cannot weaken permissions or leak through a symlink', async () => {
-  const f = fakes();
+  const f = await fakes();
   const other = join(dirname(f.deps.status), 'other');
   writeFileSync(other, 'untouched');
   fs.symlinkSync(other, `${f.deps.status}.tmp`);
@@ -1102,7 +1116,7 @@ test('a stale status temporary file cannot weaken permissions or leak through a 
 
 test('heartbeat keeps a pending launch fresh and stops refreshing when cleared', async (t) => {
   t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: 1_800_000_000_000 });
-  const f = fakes();
+  const f = await fakes();
   let release!: () => void;
   let started!: () => void;
   const pending = new Promise<void>((resolve) => { release = resolve; });
@@ -1117,7 +1131,7 @@ test('heartbeat keeps a pending launch fresh and stops refreshing when cleared',
   };
   const heartbeat = startStatusHeartbeat(f.deps);
   t.after(() => clearInterval(heartbeat));
-  const job = handleJob(config, f.deps, claim);
+  const job = handleJob(config, f.deps, await f.claim());
   await launching;
   for (let i = 0; i < 12; i++) {
     t.mock.timers.tick(10_000);
@@ -1138,7 +1152,7 @@ for (const [pin, model, id] of [
   ['gpt6', 'Claude Opus 5.5', 'claude-opus-5-5'],
 ]) {
   test(`pin ${pin} launches ${model} and reports the actual model`, async () => {
-    const f = fakes({ ...goodTask, description: description(pin) });
+    const f = await fakes({ ...goodTask, description: description(pin) });
     if (pin !== 'luna') {
       const exec = f.deps.exec;
       f.deps.exec = async (...args) => {
@@ -1148,7 +1162,7 @@ for (const [pin, model, id] of [
       };
     }
     const models = { ...config.models, 'GPT-6 Astra': { agent: 'codex', model: 'gpt-6-astra' } };
-    assert.equal(await handleJob({ ...config, models }, f.deps, claim), 'launched');
+    assert.equal(await handleJob({ ...config, models }, f.deps, await f.claim()), 'launched');
     assert.equal(f.argv[2]![f.argv[2]!.indexOf('--model') + 1], id);
     assert.equal(f.updates.at(-1)?.[1], `🛠️ Started ${model} in Orca on \`someone/abc-123-do-the-thing\`.`);
     assert.equal(f.updates.length, pin === 'luna' ? 1 : 2);
@@ -1157,8 +1171,8 @@ for (const [pin, model, id] of [
 
 for (const pin of ['', ' [model=]']) {
   test(`missing or empty pin ${JSON.stringify(pin)} uses the level without a fallback thought`, async () => {
-    const f = fakes({ ...goodTask, description: `[repo=owner/repo] [level=light]${pin}` });
-    assert.equal(await handleJob(config, f.deps, claim), 'launched');
+    const f = await fakes({ ...goodTask, description: `[repo=owner/repo] [level=light]${pin}` });
+    assert.equal(await handleJob(config, f.deps, await f.claim()), 'launched');
     assert.ok(f.argv[2]!.includes('gpt-6-luna'));
     assert.equal(f.updates.length, 1);
   });
@@ -1173,12 +1187,12 @@ for (const levels of [undefined, {}, { ...config.levels, standard: 'unknown' },
 }
 
 test('a registered repo resolves without a config entry, using its current path and GitHub casing', async () => {
-  const f = fakes();
+  const f = await fakes();
   const exec = f.deps.exec;
   f.deps.exec = (file, args, timeout) => args[0] === 'repo' && args[1] === 'list'
     ? Promise.resolve({ stdout: repoList([{ ...registeredRepo, path: '/new checkout/repo',
       gitRemoteIdentity: { canonicalKey: 'github.com/Owner/Repo' } }]) }) : exec(file, args, timeout);
-  assert.equal(await handleJob(config, f.deps, claim), 'launched');
+  assert.equal(await handleJob(config, f.deps, await f.claim()), 'launched');
   assert.ok(f.argv.some(args => args.includes('path:/new checkout/repo')));
 });
 
@@ -1195,11 +1209,11 @@ for (const [label, output] of [
   ['wrong host', repoList([{ ...registeredRepo, gitRemoteIdentity: { canonicalKey: 'gitlab.com/owner/repo' } }])],
 ] as const) {
   test(`repo discovery refuses ${label} before saving intent or creating a worktree`, async () => {
-    const f = fakes();
+    const f = await fakes();
     const exec = f.deps.exec;
     f.deps.exec = (file, args, timeout) => args[0] === 'repo' && args[1] === 'list'
       ? Promise.resolve({ stdout: output }) : exec(file, args, timeout);
-    assert.notEqual(await handleJob(config, f.deps, claim), 'launched');
+    assert.notEqual(await handleJob(config, f.deps, await f.claim()), 'launched');
     assert.equal(f.updates.length, 1);
     assert.equal(f.updates[0]?.[0], 'error');
     assert.equal(f.requests.at(-1), 'POST /jobs/session-1/failed');
@@ -1215,24 +1229,25 @@ test('legacy repos config is ignored', () => {
 
 
 test('repo discovery failure reports an error without exposing CLI output', async () => {
-  const f = fakes();
+  const f = await fakes();
   const exec = f.deps.exec;
   f.deps.exec = (file, args, timeout) => args[0] === 'repo' && args[1] === 'list'
     ? Promise.reject(new Error('private CLI details')) : exec(file, args, timeout);
-  assert.equal(await handleJob(config, f.deps, claim), 'orca-repos-unreadable');
+  assert.equal(await handleJob(config, f.deps, await f.claim()), 'orca-repos-unreadable');
   assert.deepEqual(f.updates, [['error', "Couldn't read registered repos from Orca on Example Mac. Check `orca repo list --json`. Fix it and delegate again to retry."]]);
   assert.ok(!f.argv.some(args => args[1] === 'create'));
 });
 
 test('new registrations are read on the next job without reloading config', async () => {
-  const f = fakes();
+  const f = await fakes();
   const exec = f.deps.exec;
   let repos: unknown[] = [];
   f.deps.exec = (file, args, timeout) => args[0] === 'repo' && args[1] === 'list'
     ? Promise.resolve({ stdout: repoList(repos) }) : exec(file, args, timeout);
-  assert.equal(await handleJob(config, f.deps, claim), 'refused-repo');
+  assert.equal(await handleJob(config, f.deps, await f.claim()), 'refused-repo');
+  await f.inbox.delegate(2);
   repos = [registeredRepo];
-  assert.equal(await handleJob(config, f.deps, claim), 'launched');
+  assert.equal(await handleJob(config, f.deps, await f.claim()), 'launched');
 });
 
 const requestDrain = (deps: Deps, nonce: string, until = Date.now() + 60_000) =>
@@ -1240,7 +1255,7 @@ const requestDrain = (deps: Deps, nonce: string, until = Date.now() + 60_000) =>
 const ack = (deps: Deps) => { try { return JSON.parse(readFileSync(`${deps.drain}.ack`, 'utf8')); } catch { return null; } };
 
 test('a drain is not acknowledged while a claim is in flight behind a fresh idle heartbeat', async () => {
-  const f = fakes(null);
+  const f = await fakes(null);
   f.deps.drain = join(dirname(f.deps.status), 'drain.json');
   let release!: () => void;
   const fetch = f.deps.fetch;
@@ -1267,9 +1282,9 @@ test('a drain is not acknowledged while a claim is in flight behind a fresh idle
 });
 
 test('saved watches are acknowledged, since they resume after a restart', async () => {
-  const f = fakes();
+  const f = await fakes();
   f.deps.drain = join(dirname(f.deps.status), 'drain.json');
-  await handleJob(config, f.deps, claim);
+  await handleJob(config, f.deps, await f.claim());
   assert.ok(JSON.parse(readFileSync(f.deps.watches, 'utf8'))['session-1'], 'the launch is watched');
   requestDrain(f.deps, 'watching');
   acknowledgeDrain(f.deps);
@@ -1277,7 +1292,7 @@ test('saved watches are acknowledged, since they resume after a restart', async 
 });
 
 test('unreadable watches, a stale request or a corrupt request are never acknowledged', async () => {
-  const f = fakes();
+  const f = await fakes();
   f.deps.drain = join(dirname(f.deps.status), 'drain.json');
   for (const contents of ['{"s":', '[]', '{"s":{}}']) {
     writeFileSync(f.deps.watches, contents);
@@ -1310,10 +1325,8 @@ test('a PR losing ownership after linking stays watched without a success respon
 });
 
 test('restart recovery accepts only the matching PR after contextual attachments', async () => {
-  const inbox = realInbox();
-  await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
-  const f = fakes();
-  f.deps.fetch = inbox.fetch;
+  const f = await fakes();
+  const { inbox } = f;
   await poll(config, f.deps);
   // Lose all local watches; Cloud Inbox must recover launch evidence itself.
   writeFileSync(f.deps.watches, '{}');
@@ -1327,10 +1340,8 @@ test('restart recovery accepts only the matching PR after contextual attachments
 });
 
 test("a matching PR completes its watch through Cloud Inbox's Workers fetch", async () => {
-  const inbox = realInbox();
-  await inbox.queue.webhook({ action: 'created', appUserId: 'app-user', sessionId: 'session-1', issueId: 'issue-1', stop: false });
-  const f = fakes();
-  f.deps.fetch = inbox.fetch;
+  const f = await fakes();
+  const { inbox } = f;
   await poll(config, f.deps);
   inbox.prs(['https://github.com/owner/repo/pull/7']);
   await watchJobs(config, f.deps);
@@ -1509,9 +1520,9 @@ for (const [label, set, body] of [
 
 test('Orca is asked about agents once per pass, however many watches', async () => {
   const f = await watching();
-  const saved = JSON.parse(readFileSync(f.deps.watches, 'utf8'));
-  saved['session-2'] = { ...saved['session-1'], sessionId: 'session-2' };
-  writeFileSync(f.deps.watches, JSON.stringify(saved));
+  await f.inbox.delegate(2);
+  await handleJob(config, f.deps, await f.claim());
+  f.updates.length = 0;
   const clock = agentsAre(f, () => []);
   await watchJobs(config, f.deps);
   assert.deepEqual([clock.ps, clock.repos], [1, 1]);
@@ -1568,8 +1579,8 @@ const lostLaunch = () => Object.assign(new Error('exit 1'), { stdout: JSON.strin
   error: { code: 'agent_session_operation_unknown', data: { retrySafe: true, operationId: '1800000000000-0123456789abcdef0123456789abcdef' } } }) });
 
 /** Fakes for a closeout: Orca knows the launch's checkout and lists `worktrees`; `launches` answer each agent launch. */
-function closeoutFakes(task: Partial<Task> = closeoutTask, launches: (string | Error)[] = [ok], worktrees: unknown[] = [closeoutWorktree]) {
-  const f = fakes(task);
+async function closeoutFakes(task: Partial<Task> = closeoutTask, launches: (string | Error)[] = [ok], worktrees: unknown[] = [closeoutWorktree]) {
+  const f = await fakes(task);
   f.deps.exec = async (_file, args) => {
     f.argv.push(args);
     if (args[0] === 'repo' && args[1] === 'list') return { stdout: repoList() };
@@ -1590,7 +1601,7 @@ const closeoutArgv = (agent: string, model: string, effort: string, prefix: stri
   '--prompt', `${prefix}do-closeout ABC-123\nDelegated run: nobody is watching this session.`, '--json'];
 
 test('the Runner claims closeout jobs as well as delegations', async () => {
-  const f = fakes();
+  const f = await fakes();
   const urls: string[] = [];
   const fetch = f.deps.fetch;
   f.deps.fetch = async (input, init) => { urls.push(String(input)); return fetch(input, init); };
@@ -1600,8 +1611,8 @@ test('the Runner claims closeout jobs as well as delegations', async () => {
 });
 
 test('a closeout with its worktree launches do-closeout there with the standard model, responds and is never watched', async () => {
-  const f = closeoutFakes();
-  assert.equal(await handleJob(config, f.deps, claim), 'closeout-launched');
+  const f = await closeoutFakes();
+  assert.equal(await handleJob(config, f.deps, await f.claim()), 'closeout-launched');
   assert.deepEqual(agentLaunches(f.argv), [closeoutArgv('claude', 'claude-opus-5-5', 'high', '/')]);
   assert.deepEqual(f.updates, [['thought', '🧹 Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing` for closeout.'], ['response', closing]]);
   assert.deepEqual(f.requests, ['GET /jobs/session-1/task', 'POST /jobs/session-1/updates',
@@ -1614,8 +1625,8 @@ test('a closeout with its worktree launches do-closeout there with the standard 
 });
 
 test('a Codex closeout gets a dollar prefix and the standard model settings', async () => {
-  const f = closeoutFakes();
-  await handleJob({ ...config, levels: { ...config.levels, standard: 'GPT-6 Luna' } }, f.deps, claim);
+  const f = await closeoutFakes();
+  await handleJob({ ...config, levels: { ...config.levels, standard: 'GPT-6 Luna' } }, f.deps, await f.claim());
   assert.deepEqual(agentLaunches(f.argv), [closeoutArgv('codex', 'gpt-6-luna', 'high', '$')]);
 });
 
@@ -1637,8 +1648,10 @@ for (const [label, task, worktrees, outcome, response, error] of [
     `The worktree for someone/abc-123-do-the-thing is gone on Example Mac; nothing launched. ${byHand}`, true],
 ] as const) {
   test(`a closeout with ${label} launches nothing, responds and finishes failed`, async () => {
-    const f = closeoutFakes(task, [ok], [...worktrees]);
-    assert.equal(await handleJob(config, f.deps, claim), outcome);
+    const f = await closeoutFakes(task, [ok], [...worktrees]);
+    // Cloud Inbox never sends a skip it doesn't know.
+    if (label === 'an unknown skip') forceTask(f, { ...task, labels: [] });
+    assert.equal(await handleJob(config, f.deps, await f.claim()), outcome);
     assert.deepEqual(agentLaunches(f.argv), []);
     assert.deepEqual(f.updates, [['response', response]]);
     assert.equal(f.requests.at(-1), 'POST /jobs/session-1/failed');
@@ -1647,15 +1660,15 @@ for (const [label, task, worktrees, outcome, response, error] of [
 }
 
 test('a lost closeout launch reply is retried once with its operation id, never as a fresh launch', async () => {
-  const f = closeoutFakes(closeoutTask, [lostLaunch(), ok]);
-  assert.equal(await handleJob(config, f.deps, claim), 'closeout-launched');
+  const f = await closeoutFakes(closeoutTask, [lostLaunch(), ok]);
+  assert.equal(await handleJob(config, f.deps, await f.claim()), 'closeout-launched');
   const first = closeoutArgv('claude', 'claude-opus-5-5', 'high', '/');
   assert.deepEqual(agentLaunches(f.argv), [first, [...first, '--retry-launch', '1800000000000-0123456789abcdef0123456789abcdef']]);
 });
 
 test('a closeout launch failure ends with the by-hand advice and is not requeued', async () => {
-  const f = closeoutFakes(closeoutTask, [orcaError('worktree_not_found')]);
-  assert.equal(await handleJob(config, f.deps, claim), 'closeout-orca-worktree_not_found');
+  const f = await closeoutFakes(closeoutTask, [orcaError('worktree_not_found')]);
+  assert.equal(await handleJob(config, f.deps, await f.claim()), 'closeout-orca-worktree_not_found');
   assert.equal(agentLaunches(f.argv).length, 1);
   assert.deepEqual(f.updates, [['error', `Orca couldn't start the agent (\`worktree_not_found\`). Check Orca on Example Mac. ${byHand}`]]);
   assert.equal(f.requests.at(-1), 'POST /jobs/session-1/failed');
@@ -1663,31 +1676,32 @@ test('a closeout launch failure ends with the by-hand advice and is not requeued
 });
 
 test('a closeout whose replayed reply is lost too says it may have started', async () => {
-  const f = closeoutFakes(closeoutTask, [lostLaunch(), lostLaunch()]);
-  assert.equal(await handleJob(config, f.deps, claim), 'closeout-orca-agent_session_operation_unknown');
+  const f = await closeoutFakes(closeoutTask, [lostLaunch(), lostLaunch()]);
+  assert.equal(await handleJob(config, f.deps, await f.claim()), 'closeout-orca-agent_session_operation_unknown');
   assert.equal(agentLaunches(f.argv).length, 2);
   assert.deepEqual(f.updates, [['error', 'Orca lost the launch reply, so the closeout may have started. '
     + 'Check the worktree for someone/abc-123-do-the-thing on Example Mac before you run do-closeout by hand.']]);
 });
 
 test('Orca down for a closeout keeps the single retry and the by-hand advice', async () => {
-  const f = closeoutFakes(closeoutTask, [orcaError('runtime_unavailable'), orcaError('runtime_unavailable')]);
-  assert.equal(await handleJob(config, f.deps, claim), 'closeout-orca-unavailable');
+  const f = await closeoutFakes(closeoutTask, [orcaError('runtime_unavailable'), orcaError('runtime_unavailable')]);
+  assert.equal(await handleJob(config, f.deps, await f.claim()), 'closeout-orca-unavailable');
   assert.equal(agentLaunches(f.argv).length, 2);
   assert.deepEqual(f.updates, [['error', `Orca isn't running on Example Mac. Open Orca. ${byHand}`]]);
 });
 
 test('a closeout whose launched report was lost is reported on reclaim without relaunching', async () => {
-  const f = closeoutFakes();
+  const f = await closeoutFakes();
   const fetch = f.deps.fetch;
   let lost = false;
   f.deps.fetch = async (input, init) => {
     if (!lost && String(input).includes('/launched')) { lost = true; throw new TypeError('lost'); }
     return fetch(input, init);
   };
-  await handleJob(config, f.deps, claim);
+  await handleJob(config, f.deps, await f.claim());
   assert.deepEqual(f.updates, [['thought', '🧹 Started Claude Opus 5.5 in Orca on `someone/abc-123-do-the-thing` for closeout.']]);
-  assert.equal(await handleJob(config, f.deps, claim), 'closeout-launched');
+  f.inbox.clock.now += 10 * 60_000;
+  assert.equal(await handleJob(config, f.deps, await f.claim()), 'closeout-launched');
   assert.equal(agentLaunches(f.argv).length, 1);
   assert.deepEqual(f.updates.at(-1), ['response', closing]);
   assert.equal(f.updates.length, 2);
@@ -1695,15 +1709,14 @@ test('a closeout whose launched report was lost is reported on reclaim without r
 });
 
 test('a closeout whose response was lost after launched is answered by watch recovery, not watched', async () => {
-  const f = closeoutFakes();
+  const f = await closeoutFakes();
   const fetch = f.deps.fetch;
   let lost = false;
   f.deps.fetch = async (input, init) => {
     if (!lost && String(input).includes('/updates') && JSON.parse(String(init?.body)).type === 'response') { lost = true; throw new TypeError('lost'); }
-    if (String(input).endsWith('/jobs/watching')) return Response.json([{ ...claim, at: 1 }]);
     return fetch(input, init);
   };
-  await handleJob(config, f.deps, claim);
+  await handleJob(config, f.deps, await f.claim());
   await checkWatches(config, f.deps);
   assert.deepEqual(f.updates.map(([type]) => type), ['thought', 'response']);
   assert.deepEqual(f.updates.at(-1), ['response', closing]);
@@ -1808,7 +1821,8 @@ test('a taken reports port is logged and the Runner keeps polling', async (t) =>
   t.after(() => server.close());
   await once(server, 'error');
   assert.deepEqual(logs, [{ event: 'reports', outcome: 'port-in-use' }]);
-  const f = fakes();
+  const f = await fakes();
+  await f.inbox.delegate(2);
   assert.equal(await poll(config, f.deps), true);
   assert.equal(await poll(config, f.deps), true);
 });

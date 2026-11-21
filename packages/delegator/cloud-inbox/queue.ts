@@ -2,12 +2,11 @@
 // Cloud Inbox posts, kept in Cloud Inbox's Durable Object. Runs under Node for tests, so SQL goes through `Sql`,
 // which both Cloudflare's SqlStorage and a node:sqlite adapter satisfy.
 
+import { ENDED_STATUSES, LIVE_STATUSES, PULL_REQUEST, type JobKind, type Outcome, type Task, type UpdateType, type Watch, type Watching } from '../contract.ts';
 import type { Claim, LaunchEvidence } from '../job.ts';
 import type { AppAuth } from './auth.ts';
 import { log } from './routes.ts';
 
-const ENDED_STATUSES = ['complete', 'error', 'stopped'];
-const LIVE_STATUSES = ['pending', 'active', 'awaitingInput', 'stale'];
 const GRAPHQL_URL = 'https://api.linear.app/graphql';
 const LEASE_MS = 10 * 60_000;
 const HISTORY_MS = 30 * 24 * 60 * 60_000;
@@ -33,7 +32,6 @@ const OFFLINE_MS = 5 * 60_000;
 export const MAX_UPDATE_CHARS = 2000;
 /** The Dispatch target label a launch sets. The Runner only launches in Orca. */
 const DISPATCH_LABEL = 'Orca';
-const PULL_REQUEST = /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+(?:[/?#]|$)/;
 
 export const MESSAGES = {
   queued: (app: string) =>
@@ -100,18 +98,9 @@ export type MergeEvent = { action: 'merged'; issueId: string; url: string; repo:
 /** A closeout's outbox body: the launch job it closes out, its issue, machine and PR URL. */
 type Closeout = { launch: string; issue: string; machine: string; pr: string };
 
-/**
- * `delegation` jobs come from Linear's `created` event, or from its delegation notification when
- * no `created` comes with it; Cloud Inbox queues a `closeout` job itself when a launch's PR merges.
- */
-export type JobKind = 'delegation' | 'closeout';
-export const JOB_KINDS: readonly JobKind[] = ['delegation', 'closeout'];
-
 /** `waiting`: a delegation notification is waiting for Linear's `created`; `covered`: one already came. */
 export type WebhookResult = 'queued' | 'duplicate' | 'no-match' | 'own-session' | 'answered' | 'ended' | 'no-issue' | 'app-user'
   | 'waiting' | 'covered';
-export type Outcome = 'launched' | 'failed';
-export type UpdateType = 'thought' | 'response' | 'error';
 /**
  * An outbox row: an activity, or a write-back. `launch` applies a launch's field changes
  * and `release` clears the delegate; their body holds the issue id, not text. `closeout`
@@ -122,26 +111,6 @@ type RowType = UpdateType | 'launch' | 'release' | 'closeout' | 'delegation';
 
 /** Why a Runner operation was refused: no current claim, an ended session, no PR, or Linear failed. */
 export type Refusal = 'not-claimed' | 'ended' | 'no-pr' | 'linear';
-/** What the Runner checks before launch. */
-export type Task = {
-  /** Set only for a closeout job, with the launch it closes out and, when it has nothing to close, why. */
-  kind?: 'closeout';
-  launch?: LaunchEvidence;
-  /**
-   * `canceled`: the issue was canceled. `unreadable`: no attached PR is the launch's, merged, and
-   * GitHub refused one for a token problem. `unverified`: no attached PR is the launch's, merged.
-   */
-  skip?: 'canceled' | 'unreadable' | 'unverified';
-  delegated: boolean;
-  creatorId: string | null;
-  identifier: string;
-  description: string;
-  branchName: string;
-  statusType: string;
-  /** Label names; a `wayfinder:` one makes the launch a refine launch. */
-  labels: string[];
-};
-export type Watch = { sessionStatus: string; issueState?: string; pullRequests: string[] };
 /** What a Runner last reported, as it writes its local `status.json`. Cloud Inbox doesn't read it. */
 export type Snapshot = Record<string, unknown>;
 export type Pool = {
@@ -454,7 +423,7 @@ export class JobQueue {
   }
 
   /** `machine`'s launched jobs, to recover completion watches after an upgrade or loss of its local state. */
-  async watching(machine: string): Promise<(Claim & { at: number; launch?: LaunchEvidence })[]> {
+  async watching(machine: string): Promise<Watching[]> {
     return this.#sql.exec(`SELECT id, issue_id, claim_id, updated_at, launch_repo, launch_branch FROM jobs WHERE state = 'launched'
       AND machine = ? AND id NOT IN (SELECT session_id FROM ended)
       AND id NOT IN (SELECT session_id FROM superseded)`, machine).toArray().map((row) => ({

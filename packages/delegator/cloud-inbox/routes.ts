@@ -1,10 +1,10 @@
 // Cloud Inbox's webhook route and Runner API. The Worker hands each request here with
 // a way to reach the shared queue, so `node:test` can drive the whole route.
 
+import { JOB_KINDS, type JobKind, type UpdateType } from '../contract.ts';
 import { isLaunchEvidence } from '../job.ts';
 import { hex, sha256, timingSafeEqual, type Config } from './auth.ts';
-import { JOB_KINDS, MAX_UPDATE_CHARS, type AgentEvent, type DelegatedEvent, type JobKind, type JobQueue, type MergeEvent, type Refusal, type Snapshot,
-  type UpdateType } from './queue.ts';
+import { MAX_UPDATE_CHARS, type AgentEvent, type DelegatedEvent, type JobQueue, type MergeEvent, type Refusal, type Snapshot } from './queue.ts';
 
 const TIMESTAMP_WINDOW_MS = 60_000;
 /** Far above any agent session event; anything larger is refused before it's parsed. */
