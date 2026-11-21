@@ -49,7 +49,7 @@ The Runner's launch for a delegated issue with a `wayfinder:` label: `do-refine`
 _Avoid_: decision launch
 
 **Runner**:
-The local process on a machine that claims jobs from Cloud Inbox through its restricted machine-facing API and launches them in Orca. It holds no Linear credentials. Lives in `packages/delegator/runner/`.
+The local process on a machine that claims jobs from Cloud Inbox through its restricted machine-facing API and launches them in Orca. It also serves the reports folder on localhost. It holds no Linear credentials. Lives in `packages/delegator/runner/`.
 _Avoid_: daemon, local client
 
 **Stage**:

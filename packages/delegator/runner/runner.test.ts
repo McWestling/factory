@@ -1,16 +1,19 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import { syncBuiltinESMExports } from 'node:module';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import type { AppAuth } from '../cloud-inbox/auth.ts';
 import { JobQueue } from '../cloud-inbox/queue.ts';
 import { handleRunner } from '../cloud-inbox/routes.ts';
-import { acknowledgeDrain, checkWatches, readWatches, startStatusHeartbeat, handleJob, launchArgs, loadConfig, NOT_ALLOWED, poll, rereadConfig, resumeWatches, watchJobs, type Deps, type RunnerConfig, type Task } from './runner.ts';
+import { acknowledgeDrain, checkWatches, readWatches, startStatusHeartbeat, handleJob, launchArgs, loadConfig, NOT_ALLOWED, poll, rereadConfig, resumeWatches, serveReports, watchJobs, type Deps, type RunnerConfig, type Task } from './runner.ts';
 
 const example = new URL('../config.example.json', import.meta.url);
 const config: RunnerConfig = {
@@ -1705,4 +1708,107 @@ test('a closeout whose response was lost after launched is answered by watch rec
   assert.deepEqual(f.updates.map(([type]) => type), ['thought', 'response']);
   assert.deepEqual(f.updates.at(-1), ['response', closing]);
   assert.deepEqual(readWatches(f.deps), {});
+});
+
+/** Starts the reports server on a free port and returns its base URL, closing it after the test. */
+async function reports(t: { after: (fn: () => void) => void }, root: string) {
+  const logs: Record<string, string>[] = [];
+  const server = serveReports(root, 0, (fields) => logs.push(fields));
+  t.after(() => server.close());
+  await once(server, 'listening');
+  const { address, port } = server.address() as AddressInfo;
+  return { base: `http://127.0.0.1:${port}`, address, logs };
+}
+
+test('the reports server lists report folders and serves their pages', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'reports-'));
+  mkdirSync(join(root, '2026-11-21-a-dive'));
+  writeFileSync(join(root, '2026-11-21-a-dive', 'index.html'), '<p>latest</p>');
+  writeFileSync(join(root, '2026-11-21-a-dive', 'v1.html'), '<p>older</p>');
+  mkdirSync(join(root, '2026-11-20-<b>'));
+  const { base, address } = await reports(t, root);
+  assert.equal(address, '127.0.0.1');
+
+  const listing = await fetch(`${base}/`);
+  assert.equal(listing.status, 200);
+  const html = await listing.text();
+  assert.match(html, /<a href="2026-11-21-a-dive\/">2026-11-21-a-dive\/<\/a>/);
+  assert.match(html, /<a href="2026-11-20-%3Cb%3E\/">2026-11-20-&#60;b&#62;\/<\/a>/);
+
+  const page = await fetch(`${base}/2026-11-21-a-dive/`);
+  assert.equal(page.headers.get('content-type'), 'text/html; charset=utf-8');
+  assert.equal(await page.text(), '<p>latest</p>');
+  assert.equal(await (await fetch(`${base}/2026-11-21-a-dive/v1.html`)).text(), '<p>older</p>');
+
+  const bare = await fetch(`${base}/2026-11-21-a-dive`, { redirect: 'manual' });
+  assert.equal(bare.status, 301);
+  assert.equal(bare.headers.get('location'), '2026-11-21-a-dive/');
+  assert.equal((await fetch(`${base}/missing.html`)).status, 404);
+  // Sent raw: fetch would normalise the path before sending it.
+  const req = http.get({ host: '127.0.0.1', port: Number(new URL(base).port), path: '/.//2026-11-21-a-dive' });
+  const [sneaky] = await once(req, 'response') as [http.IncomingMessage];
+  sneaky.resume();
+  assert.equal(sneaky.headers.location, '2026-11-21-a-dive/');
+});
+
+test('the reports server never returns a file outside the reports folder', async (t) => {
+  const outside = mkdtempSync(join(tmpdir(), 'outside-'));
+  writeFileSync(join(outside, 'secret.txt'), 'secret');
+  const root = join(outside, 'Reports');
+  mkdirSync(root);
+  fs.symlinkSync(outside, join(root, 'out'));
+  fs.symlinkSync(join(outside, 'secret.txt'), join(root, 'secret.txt'));
+  const { base } = await reports(t, root);
+  const port = Number(new URL(base).port);
+  // Raw requests, since fetch would normalise the path before sending it.
+  const raw = (path: string) => new Promise<{ status: number; body: string }>((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path }, (res) => {
+      let body = '';
+      res.on('data', (chunk) => { body += chunk; }).on('end', () => resolve({ status: res.statusCode!, body }));
+    });
+    req.on('error', reject).end();
+  });
+  for (const path of ['/../secret.txt', '/..%2fsecret.txt', '/%2e%2e/secret.txt', '/%2E%2E%2Fsecret.txt', '/out/secret.txt', '/secret.txt', '/out/', '/%00']) {
+    const { status, body } = await raw(path);
+    assert.ok(status === 403 || status === 404 || status === 400, `${path} → ${status}`);
+    assert.doesNotMatch(body, /secret/, path);
+  }
+});
+
+test('the reports server is read-only', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'reports-'));
+  writeFileSync(join(root, 'index.html'), 'home');
+  const { base } = await reports(t, root);
+  const head = await fetch(base, { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), '');
+  for (const method of ['POST', 'PUT', 'DELETE', 'PATCH']) {
+    const res = await fetch(base, { method, body: method === 'DELETE' ? undefined : 'x' });
+    assert.equal(res.status, 405, method);
+    assert.equal(res.headers.get('allow'), 'GET, HEAD');
+  }
+  assert.equal(readFileSync(join(root, 'index.html'), 'utf8'), 'home');
+});
+
+test('the reports server answers 404 until the reports folder exists, then serves it', async (t) => {
+  const root = join(mkdtempSync(join(tmpdir(), 'reports-')), 'Reports');
+  const { base } = await reports(t, root);
+  assert.equal((await fetch(`${base}/`)).status, 404);
+  mkdirSync(root);
+  writeFileSync(join(root, 'index.html'), 'now');
+  assert.equal(await (await fetch(`${base}/`)).text(), 'now');
+});
+
+test('a taken reports port is logged and the Runner keeps polling', async (t) => {
+  const blocker = http.createServer().listen(0, '127.0.0.1');
+  t.after(() => blocker.close());
+  await once(blocker, 'listening');
+  const logs: Record<string, string>[] = [];
+  const server = serveReports(tmpdir(), (blocker.address() as AddressInfo).port, (fields) => logs.push(fields));
+  t.after(() => server.close());
+  await once(server, 'error');
+  assert.deepEqual(logs, [{ event: 'reports', outcome: 'port-in-use' }]);
+  const f = fakes();
+  assert.equal(await poll(config, f.deps), true);
+  assert.equal(await poll(config, f.deps), true);
 });

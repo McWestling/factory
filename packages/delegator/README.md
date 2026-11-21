@@ -140,7 +140,7 @@ Logs are in `~/Library/Logs/factory-delegator/`.
 The **Runner** switch stops new claims while allowing current work and PR checks
 to finish. Its setting survives restarts. Turning it on starts the Runner if needed.
 **Start at login** controls the menu bar app's LaunchAgent. The menu also opens
-logs and config. Status shows readiness, current work, PR watches, connection
+logs, config and reports. Status shows readiness, current work, PR watches, connection
 failures or the last failed job; **Off** can also mean the Runner is not running.
 These lines and the Runner controls appear only when a Runner is installed on this Mac;
 **Install Runner** appears only once its config exists.
@@ -150,6 +150,20 @@ offline, then the number of jobs waiting. The app reads Cloud Inbox's `GET /pool
 when the menu opens and at most once a minute otherwise, using the Keychain item
 setup stored, or on a Runner Mac the Runner's own config. When a fetch fails, the
 menu keeps the last result and adds the time it was fetched.
+
+### Reports
+
+While it runs, the Runner serves `~/Reports`, where deep-dive reports live, on
+`http://127.0.0.1:8765/`. A folder answers with its `index.html`, or else a plain
+listing of its entries. The server is read-only (`GET` and `HEAD`), listens on
+localhost only and never returns a file outside the folder, symlinks included.
+It answers 404 until `~/Reports` exists. If the port is taken at start-up, the
+Runner logs `reports` / `port-in-use` and carries on claiming jobs. **Open reports**
+in the menu opens the listing.
+
+Other devices reach it over the tailnet: `tailscale serve --bg 8765`, which
+`do-deep-dive` runs on its first report, publishes the local port at the
+machine's tailnet address, and that config survives restarts.
 
 ### Recovery and PR checks
 
