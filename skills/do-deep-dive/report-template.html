@@ -1,14 +1,14 @@
 <!doctype html>
-<!-- data-report: "<folder name>@v<n>". Flags are stored under it, so each report and version keeps its own. -->
-<html lang="en" data-report="yyyy-mm-dd-slug@v1">
+<!-- Set data-report to "<folder name>@v<n>". Flags are stored under it, so each report and version keeps its own. Left empty, the page address is used. -->
+<html lang="en" data-report="">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>TOPIC</title>
-<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
 <script type="module">
-  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
-  mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral" });
 </script>
 <style>
   .lbl { font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; }
@@ -143,7 +143,7 @@ flowchart LR
     const text = el.tagName === "TR" ? [...c.cells].map((td) => td.textContent).join(" · ") : c.textContent;
     return text.replace(/\s+/g, " ").trim().slice(0, 160);
   };
-  const section = (el) => el.closest("section")?.querySelector("h2")?.textContent.replace(/\s+/g, " ").trim() || "Header";
+  const section = (el) => { const h = el.closest("section")?.querySelector("h2"); return h ? quote(h) : "Header"; };
   const $ = (id) => document.getElementById(id);
   const edit = $("flagedit"), editText = edit.querySelector("textarea");
   let current = -1, flagging = false;

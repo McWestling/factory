@@ -19,7 +19,7 @@ Take these from the user's message; ask for whichever are missing in the framing
 
 ## Rules
 
-1. **Read-only.** Change nothing in any repo, tracker or outside service. The only files you write are in the report folder.
+1. **Read-only.** Change nothing in any repo, tracker or outside service. The only files you write are in the report folder, and the only other change is the report server and `tailscale serve` in [Output and link](#output-and-link).
 2. **Privacy.** Never put project, product, company or person names into outside searches or requests. Search for the generic thing.
 3. **Lightest option first.** Every recommendation starts with the cheapest thing that could work. "Don't do this" and "do nothing yet" are always allowed answers.
 
@@ -69,19 +69,23 @@ Use the user's own terms (the project glossary if there is one). Plain language.
 - The current version is `index.html`. Before a rewrite, save the old one as `v1.html`, `v2.html` and so on.
 - **Always return a Tailscale link.** `~/Reports` is served on localhost and published to the user's tailnet over HTTPS:
 
-  ```sh
-  curl -sf -o /dev/null http://127.0.0.1:8765/ || (nohup python3 -m http.server 8765 --bind 127.0.0.1 --directory "$HOME/Reports" >/dev/null 2>&1 &)
-  tailscale serve status | grep -q 8765 || tailscale serve --bg 8765
-  tailscale status --json | python3 -c "import json,sys; print('https://' + json.load(sys.stdin)['Self']['DNSName'].rstrip('.') + '/')"
-  ```
+  1. Start the local server if it isn't answering, then check it answers. If it still doesn't (port 8765 taken by something else, say), say so and give only the `file://` link.
 
-  Fetch `<that address><folder>/` yourself and confirm it answers 200 before giving it to the user. Never bind the server to the whole local network. If Tailscale isn't available, say so and give the `file://` link instead.
-- The final message gives the Tailscale link first, then the `file://` path.
+     ```sh
+     curl -sf -o /dev/null http://127.0.0.1:8765/ || { (nohup python3 -m http.server 8765 --bind 127.0.0.1 --directory "$HOME/Reports" >/dev/null 2>&1 &); sleep 1; }
+     curl -sf -o /dev/null http://127.0.0.1:8765/
+     ```
+
+  2. Run `tailscale serve status`. If it shows `/ proxy http://127.0.0.1:8765`, it is already published. If it shows anything else at `/`, don't replace it: say so and give only the `file://` link. Otherwise publish it with `tailscale serve --bg 8765`.
+  3. Look up the address: `tailscale status --json | python3 -c "import json,sys; print('https://' + json.load(sys.stdin)['Self']['DNSName'].rstrip('.') + '/')"`.
+  4. Fetch `<that address><folder>/` yourself and confirm it answers 200 before giving it to the user.
+
+  Never bind the server to the whole local network. If Tailscale isn't available, say so and give the `file://` link instead.
 
 ## Review loop
 
-The user flags passages in the page (Option-click, or the Flag button on touch) and pastes the result of "Copy notes" into the chat. When notes arrive: answer each one in chat, grouped by section, and say which are decisions. Fold decisions into the report by editing existing paragraphs and rows in place, so the user's flags stay attached; for a larger change, save the old version and write a new one.
+The user flags passages in the page (Option-click, or the Flag button on touch) and pastes the result of "Copy notes" into the chat. When notes arrive: answer each one in chat, grouped by section, and say which are decisions. Flags are attached by position, so fold decisions in by changing the text of existing paragraphs, bullets, rows and headings only, never adding or removing one. A change that needs more is a new version: save the old one and write a new one, whose new `data-report` starts it with no flags.
 
 ## Final message
 
-Three lines on the verdict, the link, any framing questions still unanswered, and "Which of these would you like to explore?"
+In this order: the Tailscale link, then the `file://` path, then the verdict in up to three lines, any framing questions still unanswered, and "Which of these would you like to explore?"

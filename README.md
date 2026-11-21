@@ -47,7 +47,7 @@ People who plan their work in Linear and want coding agents to do more of the bu
 | `do-deep-dive`  | Researches one big question into a long HTML report you can flag and open anywhere   |
 | `do-repo-setup` | Points a repo at its home repo's tracker doc, writes its rules, installs dev ports   |
 
-Planning (`do-post-its`, `do-triage`, `do-refine`) runs from your home repo’s checkout and reads the other repos’ code. Build work (`do-implement`, `do-review`, `do-closeout`) runs in each product repo.
+Planning (`do-post-its`, `do-triage`, `do-refine`) runs from your home repo’s checkout and reads the other repos’ code. Build work (`do-implement`, `do-review`, `do-closeout`) runs in each product repo. `do-deep-dive` runs from any checkout and changes none of them.
 
 ## Build your own
 
