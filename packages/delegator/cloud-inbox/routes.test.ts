@@ -202,6 +202,15 @@ function fakeWorld() {
 type World = ReturnType<typeof fakeWorld>;
 
 function answer(world: World, query: string, variables: Record<string, any>) {
+  if (query.includes('issues(')) {
+    // Linear's filter: an `or` of a team key with that team's issue numbers.
+    const wanted = new Set<string>(variables.filter.or.flatMap(({ team, number }: any) =>
+      number.in.map((n: number) => `${team.key.eq}-${n}`)));
+    const nodes = Object.values(world.issues).filter((issue) => wanted.has(issue.identifier))
+      .map(({ identifier, stateId }) => ({ identifier, state: { type: world.states.find((s) => s.id === stateId)!.type } }));
+    assert.ok(nodes.length <= 250, 'more than one page');
+    return { issues: { nodes } };
+  }
   if (query.includes('agentSessionCreateOnIssue')) {
     const id = `session-created-${Object.keys(world.sessions).filter((s) => s.startsWith('session-created-')).length + 1}`;
     world.sessions[id] = { creatorId: null, status: 'pending', links: [] };
@@ -1293,6 +1302,85 @@ test('task returns what the Runner checks, read from the job and never from the 
   const task = await (await call(h, 'GET', 'task', h.claimId)).json();
   assert.equal(task.delegated, false);
   assert.equal(task.creatorId, null);
+});
+
+/** A world holding a completed, a canceled and a started issue as `ABC-1`…`ABC-3`. */
+function withStates() {
+  const h = setup();
+  const { issues } = h.linear.world;
+  issues['issue-1']!.stateId = 'state-done';
+  issues['issue-2']!.stateId = 'state-canceled';
+  issues['issue-3'] = { ...issues['issue-1']!, identifier: 'ABC-3', stateId: 'state-progress' };
+  /** Posts `body`, as JSON unless it's already a string. */
+  const states = (body: unknown, bearer = BEARER) => handleRunner(new Request('https://cloud-inbox.example/issues/states', {
+    method: 'POST', headers: { Authorization: `Bearer ${bearer}` }, body: typeof body === 'string' ? body : JSON.stringify(body),
+  }), config, h.inbox());
+  return { ...h, states };
+}
+
+test("a machine gets each issue's state type, and an issue Linear doesn't know is unknown", async () => {
+  const { states, linear, rows } = withStates();
+  const res = await states({ identifiers: ['ABC-1', 'ABC-2', 'ABC-3', 'ABC-404', 'XYZ-1'] });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { 'ABC-1': 'completed', 'ABC-2': 'canceled', 'ABC-3': 'started', 'ABC-404': 'unknown', 'XYZ-1': 'unknown' });
+  assert.equal(linear.requests.length, 1);
+  assert.doesNotMatch(linear.requests[0]!.query, /mutation/);
+  assert.deepEqual(rows(), { jobs: [], seen: [], outbox: [], ended: [] });
+});
+
+test('a few hundred identifiers take a few Linear requests, not one per issue', async () => {
+  const { states, linear } = withStates();
+  const identifiers = Array.from({ length: 600 }, (_, i) => `ABC-${i + 1}`);
+  const res = await states({ identifiers });
+  assert.equal(res.status, 200);
+  const answered = await res.json() as Record<string, string>;
+  assert.equal(Object.keys(answered).length, 600);
+  assert.equal(answered['ABC-3'], 'started');
+  assert.equal(answered['ABC-600'], 'unknown');
+  assert.equal(linear.requests.length, 3);
+});
+
+test('issue states log the machine and counts only', async (t) => {
+  const { states } = withStates();
+  const logged = t.mock.method(console, 'log', () => {});
+  await states({ identifiers: ['ABC-1', 'ABC-404'] });
+  assert.deepEqual(logged.mock.calls.map((call) => JSON.parse(call.arguments[0])),
+    [{ event: 'states', machine: 'example-machine', outcome: 'ok', asked: '2', unknown: '1' }]);
+});
+
+test('issue states refuse a viewer with 403 and a missing token with 401', async () => {
+  const { states, linear } = withStates();
+  assert.equal((await states({ identifiers: ['ABC-1'] }, VIEWER)).status, 403);
+  assert.equal((await states({ identifiers: ['ABC-1'] }, '')).status, 401);
+  assert.equal(linear.requests.length, 0);
+});
+
+for (const [label, body, status] of [
+  ['an oversized body', { identifiers: ['ABC-1'], padding: 'x'.repeat(64 * 1024) }, 413],
+  ['too many identifiers', { identifiers: Array.from({ length: 1001 }, (_, i) => `ABC-${i + 1}`) }, 400],
+  ['a malformed identifier', { identifiers: ['ABC-1', 'abc-2'] }, 400],
+  ['an identifier that is not a string', { identifiers: [12] }, 400],
+  ['no identifiers', { identifiers: [] }, 400],
+  ['no list', { identifier: 'ABC-1' }, 400],
+  ['a body that is not JSON', 'ABC-1', 400],
+] as const) {
+  test(`issue states refuse ${label} without asking Linear`, async () => {
+    const { states, linear } = withStates();
+    assert.equal((await states(body)).status, status);
+    assert.equal(linear.requests.length, 0);
+  });
+}
+
+test('issue states take only POST /issues/states', async () => {
+  const { runner } = withStates();
+  assert.equal((await runner('GET', '/issues/states')).status, 404);
+  assert.equal((await runner('POST', '/issues/other', BEARER, { identifiers: ['ABC-1'] })).status, 404);
+});
+
+test('issue states answer 502 when Linear fails', async () => {
+  const { states, linear } = withStates();
+  linear.failNext = 1;
+  assert.equal((await states({ identifiers: ['ABC-1'] })).status, 502);
 });
 
 test('task and watch answer 502 when Linear fails', async () => {
