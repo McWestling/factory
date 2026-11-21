@@ -61,7 +61,7 @@ const LAUNCH = `query ($issue: String!, $session: String!) {
   issueLabels(filter: { name: { eq: "${DISPATCH_LABEL}" } }) { nodes { id team { id } parent { id } } } }`;
 const DELEGATE = 'query ($issue: String!) { issue(id: $issue) { delegate { id } } }';
 // ponytail: the newest 50 changes; a delegation buried under more than that reads as unknown, so its session is opened.
-const DELEGATED_AT = 'query ($issue: String!) { issue(id: $issue) { history(first: 50) { nodes { updatedAt toDelegate { id } } } } }';
+const DELEGATED_AT = 'query ($issue: String!) { issue(id: $issue) { history(first: 50) { nodes { updatedAt fromDelegate { id } toDelegate { id } } } } }';
 const ISSUE_UPDATE = 'mutation ($issue: String!, $input: IssueUpdateInput!) { issueUpdate(id: $issue, input: $input) { success } }';
 const CREATE_SESSION = `mutation ($issue: String!) {
   agentSessionCreateOnIssue(input: { issueId: $issue }) { success agentSession { id } } }`;
@@ -285,8 +285,7 @@ export class JobQueue {
     if (!fresh.length) return ended ? 'ended' : 'duplicate';
     // Linear made this session before the issue's newest one, so its `created` came late: a
     // newer session already runs the delegation, and this one ends without a job.
-    if (this.#sql.exec('SELECT 1 FROM delegated WHERE issue_id = ? AND coalesce(created_at, at) > ?',
-      event.issueId, event.createdAt ?? null).toArray().length) {
+    if (event.createdAt !== undefined && this.#sessionSince(event.issueId, event.createdAt)) {
       if (!ended) this.#end(event.sessionId, MESSAGES.replaced, now);
       this.#wake();
       return 'covered';
@@ -298,6 +297,12 @@ export class JobQueue {
     this.#queueDelegation(event.sessionId, event.issueId, null, app.appName, now);
     this.#wake();
     return 'queued';
+  }
+
+  /** True when the issue's newest delegation session was made after `time`. */
+  #sessionSince(issueId: string, time: number): boolean {
+    return this.#sql.exec('SELECT 1 FROM delegated WHERE issue_id = ? AND coalesce(created_at, at) > ?',
+      issueId, time).toArray().length > 0;
   }
 
   /**
@@ -390,7 +395,7 @@ export class JobQueue {
     } else {
       seen();
       const { creator } = JSON.parse(String(pending.body)) as Delegation;
-      this.#supersede(event.sessionId, issueId, now);
+      this.#supersede(event.sessionId, issueId, now, event.createdAt);
       this.#queueDelegation(event.sessionId, issueId, creator, app.appName, now);
     }
     this.#wake();
@@ -822,19 +827,20 @@ export class JobQueue {
    * True when the issue's newest session is no older than its last delegation to the app, as
    * Linear's issue history tells it: the notification is that delegation's own, late or sent
    * twice, not a new one. Linear groups nearby changes into one history entry, so the entry's
-   * last update stands for the delegation. A history that can't be read, or names no delegation,
-   * is false: better a second run than a delegation that starts nothing.
+   * last update stands for the delegation. A history that can't be read, names no delegation, or
+   * last shows the delegate cleared (an undelegation merged with the new delegation) is false:
+   * better a second run than a delegation that starts nothing.
    */
   async #hasSession(token: string, issueId: string, appUserId: string): Promise<boolean> {
-    type History = { issue?: { history?: { nodes?: { updatedAt?: string; toDelegate?: Id }[] } } };
+    type History = { issue?: { history?: { nodes?: { updatedAt?: string; fromDelegate?: Id; toDelegate?: Id }[] } } };
     const { issue } = await this.#linear<History>(token, DELEGATED_AT, { issue: issueId }).catch((): History => ({}));
-    const delegatedAt = Date.parse(issue?.history?.nodes?.find((node) => node.toDelegate?.id === appUserId)?.updatedAt ?? '');
+    const last = issue?.history?.nodes?.find((node) => [node.fromDelegate?.id, node.toDelegate?.id].includes(appUserId));
+    const delegatedAt = Date.parse((last?.toDelegate?.id === appUserId && last.updatedAt) || '');
     if (Number.isNaN(delegatedAt)) {
       log({ event: 'delegation', issue: issueId, outcome: 'no-history' });
       return false;
     }
-    return this.#sql.exec('SELECT 1 FROM delegated WHERE issue_id = ? AND coalesce(created_at, at) > ?',
-      issueId, delegatedAt - DELEGATION_WAIT_MS).toArray().length > 0;
+    return this.#sessionSince(issueId, delegatedAt - DELEGATION_WAIT_MS);
   }
 
   /**

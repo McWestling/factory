@@ -2381,3 +2381,21 @@ test("Linear's created event arriving after Cloud Inbox opened the delegation's 
   assert.deepEqual(h.rows().jobs, [{ id: 'session-created-1', issue_id: 'issue-1', state: 'claimed' }]);
   assert.deepEqual(sent(h.posts).filter(([session]) => session === 'session-1'), [['session-1', 'response', MESSAGES.replaced]]);
 });
+
+test('a delegation whose newest history entry only clears the delegate opens its session: Linear merged the undelegation and the new delegation', async (t) => {
+  const h = setup();
+  const made = h.clock.now;
+  await h.created('session-1');
+  await h.claimed();
+  h.clock.now += 60_000;
+  const answer = h.linear.answer;
+  const app = { id: 'app-user-example' };
+  h.linear.answer = (query, variables) => query.includes('history') ? { issue: { history: { nodes: [
+    { updatedAt: new Date(h.clock.now).toISOString(), fromDelegate: app, toDelegate: null },
+    { updatedAt: new Date(made).toISOString(), fromDelegate: null, toDelegate: app },
+  ] } } } : answer(query, variables);
+  const outcomes = delegationLog(t);
+  await delegatedAgain(h);
+  assert.deepEqual(outcomes(), ['waiting', 'no-history', 'queued']);
+  assert.equal(sessionsCreated(h), 1);
+});
