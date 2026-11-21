@@ -135,6 +135,8 @@ function setup(prepare?: (db: DatabaseSync, now: number) => void, githubToken?: 
     const payload = fixture('created');
     payload.agentSession.id = sessionId;
     payload.agentSession.issueId = payload.agentSession.issue.id = issueId;
+    // Linear makes a session as it sends the event.
+    payload.agentSession.createdAt = new Date(clock.now).toISOString();
     return payload;
   };
   const stoppedPayload = (sessionId: string) => {
@@ -176,6 +178,8 @@ function fakeWorld() {
     identifier, description: `Task for ${identifier}`, branchName: `abc-${identifier.split('-')[1]}`,
     stateId: 'state-todo', delegateId: 'app-user-example' as string | null, assigneeId: 'someone-else' as string | null,
     labelIds: ['label-claude', 'label-factory'], attachments: [] as string[], title: identifier,
+    // When the issue was last delegated to the app, as its history tells it. Null: the history says nothing.
+    delegatedAt: null as number | null,
   });
   return {
     issues: { 'issue-1': issue('ABC-1'), 'issue-2': issue('ABC-2') } as Record<string, ReturnType<typeof issue>>,
@@ -243,6 +247,12 @@ function answer(world: World, query: string, variables: Record<string, any>) {
   }
   if (query.includes('attachments')) {
     return { issue: { state: query.includes('state { type }') ? { type: state().type } : undefined, attachments: { nodes: issue.attachments.map((url) => ({ url })) } }, agentSession: { status: session.status } };
+  }
+  if (query.includes('history')) {
+    const nodes = issue.delegatedAt === null ? []
+      : [{ updatedAt: new Date(issue.delegatedAt).toISOString(), toDelegate: { id: 'app-user-example' } }];
+    // Newest first, under a later change of something else.
+    return { issue: { history: { nodes: [{ updatedAt: '2099-01-01T00:00:00.000Z', toDelegate: null }, ...nodes] } } };
   }
   assert.match(query, /delegate/);
   return { issue: { delegate: issue.delegateId && { id: issue.delegateId } } };
@@ -2114,12 +2124,12 @@ test("Linear's created echo arriving before the session create returns adopts th
   const h = setup();
   await h.send(delegatedPayload());
   h.clock.now += WAITED_MS;
-  // Hold the create, the request after the delegate read.
+  // Hold the create, the request after the history read.
   const answer = h.linear.answer;
   let create!: ReturnType<typeof h.linear.hold>;
   const reading = new Promise<void>((resolve) => {
     h.linear.answer = (query, variables) => {
-      if (!query.includes('agentSessionCreateOnIssue')) { create = h.linear.hold(); resolve(); }
+      if (query.includes('history')) { create = h.linear.hold(); resolve(); }
       return answer(query, variables);
     };
   });
@@ -2272,13 +2282,14 @@ test('an ignored webhook is logged with its type and action', async (t) => {
 
 test("a first delegation's notification arriving late, after its job was claimed, opens no second session", async (t) => {
   const h = setup();
+  const made = h.clock.now;
   await h.created('session-1');
   await h.claimed();
   h.clock.now += 60_000;
   const lines = webhookLog(t);
   // Linear made the session and the notification in the same second, whenever each arrived.
   await delegatedAgain(h, undefined, (payload) => {
-    payload.notification.createdAt = new Date(Date.parse(fixture('created').agentSession.createdAt) + 500).toISOString();
+    payload.notification.createdAt = new Date(made + 500).toISOString();
   });
   assert.deepEqual(lines().map((line) => line.outcome), ['covered']);
   assert.equal(sessionsCreated(h), 0);
@@ -2291,4 +2302,82 @@ test('a created event with no creator, on an issue delegated again long ago, is 
   h.clock.now += 60 * 60_000;
   await h.deliver(ownCreated(h, 'session-2'));
   assert.deepEqual(h.rows().jobs, [{ id: 'session-2', issue_id: 'issue-1', state: 'queued' }]);
+});
+
+// One delegation, however far apart Linear's session and its notification land.
+
+const delegationLog = (t: TestContext) => {
+  const logged = t.mock.method(console, 'log', () => {});
+  return () => logged.mock.calls.map((call) => JSON.parse(String(call.arguments[0])).outcome);
+};
+
+test("one delegation's notification, made and arriving long after its session was claimed, opens no second session", async (t) => {
+  const h = setup();
+  // Linear's history: the issue was delegated once, when the session was made.
+  h.linear.world.issues['issue-1']!.delegatedAt = h.clock.now;
+  await h.created('session-1');
+  await h.claimed();
+  h.clock.now += 22_000;
+  const outcomes = delegationLog(t);
+  await delegatedAgain(h, undefined, (payload) => {
+    payload.notification.createdAt = new Date(h.clock.now).toISOString();
+  });
+  assert.deepEqual(outcomes(), ['waiting', 'covered']);
+  assert.equal(sessionsCreated(h), 0);
+  assert.deepEqual(h.rows().jobs, [{ id: 'session-1', issue_id: 'issue-1', state: 'claimed' }]);
+  assert.deepEqual(h.rows().outbox, []);
+});
+
+test('a person undelegating and delegating again, after the first session was claimed, still starts a new run', async () => {
+  const h = setup();
+  await h.created('session-1');
+  await h.claimed();
+  h.clock.now += 60_000;
+  h.linear.world.issues['issue-1']!.delegatedAt = h.clock.now;
+  await delegatedAgain(h);
+  assert.equal(sessionsCreated(h), 1);
+  assert.deepEqual(h.rows().jobs.map((j) => [j.id, j.state]), [['session-1', 'claimed'], ['session-created-1', 'queued']]);
+});
+
+test('a second notification of a delegation whose session Cloud Inbox opened opens no other', async (t) => {
+  const h = setup();
+  h.linear.world.issues['issue-1']!.delegatedAt = h.clock.now;
+  await delegatedAgain(h);
+  await h.claimed();
+  h.clock.now += 60_000;
+  const outcomes = delegationLog(t);
+  await delegatedAgain(h, 'notification-2');
+  assert.deepEqual(outcomes(), ['waiting', 'covered']);
+  assert.equal(sessionsCreated(h), 1);
+  assert.deepEqual(h.rows().jobs, [{ id: 'session-created-1', issue_id: 'issue-1', state: 'claimed' }]);
+});
+
+test("a delegation whose history Linear won't give opens its session all the same", async (t) => {
+  const h = await claimedJob();
+  h.clock.now += 60_000;
+  const answer = h.linear.answer;
+  h.linear.answer = (query, variables) => {
+    if (query.includes('history')) throw new Error('refused');
+    return answer(query, variables);
+  };
+  const outcomes = delegationLog(t);
+  await delegatedAgain(h);
+  assert.deepEqual(outcomes(), ['waiting', 'no-history', 'queued']);
+  assert.equal(sessionsCreated(h), 1);
+});
+
+test("Linear's created event arriving after Cloud Inbox opened the delegation's session queues no second job", async (t) => {
+  const h = setup();
+  const made = h.clock.now;
+  await delegatedAgain(h);
+  await h.claimed();
+  h.clock.now += 20_000;
+  const lines = webhookLog(t);
+  // Linear made its session when the issue was delegated; only its webhook is late.
+  const late = h.createdPayload('session-1');
+  late.agentSession.createdAt = new Date(made).toISOString();
+  await h.deliver(late);
+  assert.deepEqual(lines().map((line) => line.outcome), ['covered']);
+  assert.deepEqual(h.rows().jobs, [{ id: 'session-created-1', issue_id: 'issue-1', state: 'claimed' }]);
+  assert.deepEqual(sent(h.posts).filter(([session]) => session === 'session-1'), [['session-1', 'response', MESSAGES.replaced]]);
 });
