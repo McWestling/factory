@@ -132,6 +132,14 @@ replaces the issue's earlier jobs as any new delegation does. Whoever delegated,
 in the notification, stands in for the session's creator. Each notification starts one
 session at most, and an undelegation notification starts nothing.
 
+One delegation starts one run, however late its notification or its session event
+arrives. Before opening a session, Cloud Inbox reads the issue's history for when it was
+last delegated to the app; if the issue's newest session is no older than that, the
+notification belongs to a delegation already running and is logged as `covered`. A
+session event that arrives after Cloud Inbox opened the session ends as replaced. If the
+history can't be read, Cloud Inbox opens the session: a second run is better than a
+delegation that starts nothing.
+
 This needs the app's **Inbox notifications** webhook category. Setup's registration
 page asks for it. An app registered before this must have it switched on by hand:
 open the app in Linear's API settings, tick Inbox notifications under its webhook

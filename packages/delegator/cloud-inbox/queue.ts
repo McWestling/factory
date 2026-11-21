@@ -15,10 +15,11 @@ const POST_TIMEOUT_MS = 10_000;
  * How long a delegation notification waits for Linear's own `created` event before Cloud Inbox
  * opens the session itself. A first delegation sends both, within a second of each other.
  * A notification also counts as the same delegation as a session Linear made within this long of
- * it, by Linear's own timestamps, however late either arrives.
- * ponytail: a `created` that arrives after the wait still gets a second session, which replaces
- * it; and delegating again within the wait of a session that was then stopped starts nothing.
- * Ask Linear for the issue's sessions if either ever happens.
+ * it, by Linear's own timestamps, however late either arrives. Past that, `#hasSession` asks
+ * Linear when the issue was last delegated, and a `created` that comes after Cloud Inbox opened
+ * the session ends as replaced.
+ * ponytail: delegating again within the wait of the issue's newest session starts nothing.
+ * Match sessions to delegations by id if Linear ever names one in the other.
  */
 export const DELEGATION_WAIT_MS = 5_000;
 /** How long after a delegation notification a `created` with no human creator can be Cloud Inbox's own. */
@@ -60,6 +61,8 @@ const LAUNCH = `query ($issue: String!, $session: String!) {
   agentSession(id: $session) { creator { id } }
   issueLabels(filter: { name: { eq: "${DISPATCH_LABEL}" } }) { nodes { id team { id } parent { id } } } }`;
 const DELEGATE = 'query ($issue: String!) { issue(id: $issue) { delegate { id } } }';
+// ponytail: the newest 50 changes; a delegation buried under more than that reads as unknown, so its session is opened.
+const DELEGATED_AT = 'query ($issue: String!) { issue(id: $issue) { history(first: 50) { nodes { updatedAt fromDelegate { id } toDelegate { id } } } } }';
 const ISSUE_UPDATE = 'mutation ($issue: String!, $input: IssueUpdateInput!) { issueUpdate(id: $issue, input: $input) { success } }';
 /** At most `STATES_PAGE` identifiers per request, so each answer fits one page. */
 const STATES = `query ($filter: IssueFilter!) {
@@ -103,7 +106,10 @@ export type MergeEvent = { action: 'merged'; issueId: string; url: string; repo:
 /** A closeout's outbox body: the launch job it closes out, its issue, machine and PR URL. */
 type Closeout = { launch: string; issue: string; machine: string; pr: string };
 
-/** `waiting`: a delegation notification is waiting for Linear's `created`; `covered`: one already came. */
+/**
+ * `waiting`: a delegation notification is waiting for Linear's `created`. `covered`: the
+ * delegation already has a session, so this notification or late `created` starts nothing.
+ */
 export type WebhookResult = 'queued' | 'duplicate' | 'no-match' | 'own-session' | 'answered' | 'ended' | 'no-issue' | 'app-user'
   | 'waiting' | 'covered';
 /**
@@ -282,6 +288,13 @@ export class JobQueue {
       event.sessionId, now).toArray();
     // A replayed delegation is older than what came after it, so it supersedes nothing.
     if (!fresh.length) return ended ? 'ended' : 'duplicate';
+    // Linear made this session before the issue's newest one, so its `created` came late: a
+    // newer session already runs the delegation, and this one ends without a job.
+    if (event.createdAt !== undefined && this.#sessionSince(event.issueId, event.createdAt)) {
+      if (!ended) this.#end(event.sessionId, MESSAGES.replaced, now);
+      this.#wake();
+      return 'covered';
+    }
     // A new delegation supersedes the issue's older jobs, even if it was stopped before
     // this webhook arrived.
     this.#supersede(event.sessionId, event.issueId, now, event.createdAt);
@@ -289,6 +302,12 @@ export class JobQueue {
     this.#queueDelegation(event.sessionId, event.issueId, null, app.appName, now);
     this.#wake();
     return 'queued';
+  }
+
+  /** True when the issue's newest delegation session was made after `time`. */
+  #sessionSince(issueId: string, time: number): boolean {
+    return this.#sql.exec('SELECT 1 FROM delegated WHERE issue_id = ? AND coalesce(created_at, at) > ?',
+      issueId, time).toArray().length > 0;
   }
 
   /**
@@ -381,7 +400,7 @@ export class JobQueue {
     } else {
       seen();
       const { creator } = JSON.parse(String(pending.body)) as Delegation;
-      this.#supersede(event.sessionId, issueId, now);
+      this.#supersede(event.sessionId, issueId, now, event.createdAt);
       this.#queueDelegation(event.sessionId, issueId, creator, app.appName, now);
     }
     this.#wake();
@@ -815,7 +834,7 @@ export class JobQueue {
       return true;
     };
     if (!app || issue.delegate?.id !== app.appUserId) return done('not-delegated');
-    if (!waiting()) return done('covered');
+    if (!waiting() || await this.#hasSession(token, issueId, app.appUserId)) return done('covered');
     const data = await this.#linear<{ agentSessionCreateOnIssue?: { success?: boolean; agentSession?: Id } }>(
       token, CREATE_SESSION, { issue: issueId });
     const session = data.agentSessionCreateOnIssue?.agentSession?.id;
@@ -831,6 +850,26 @@ export class JobQueue {
     this.#supersede(session, issueId, now);
     this.#queueDelegation(session, issueId, creator, app.appName, now);
     return done('queued', session);
+  }
+
+  /**
+   * True when the issue's newest session is no older than its last delegation to the app, as
+   * Linear's issue history tells it: the notification is that delegation's own, late or sent
+   * twice, not a new one. Linear groups nearby changes into one history entry, so the entry's
+   * last update stands for the delegation. A history that can't be read, names no delegation, or
+   * last shows the delegate cleared (an undelegation merged with the new delegation) is false:
+   * better a second run than a delegation that starts nothing.
+   */
+  async #hasSession(token: string, issueId: string, appUserId: string): Promise<boolean> {
+    type History = { issue?: { history?: { nodes?: { updatedAt?: string; fromDelegate?: Id; toDelegate?: Id }[] } } };
+    const { issue } = await this.#linear<History>(token, DELEGATED_AT, { issue: issueId }).catch((): History => ({}));
+    const last = issue?.history?.nodes?.find((node) => [node.fromDelegate?.id, node.toDelegate?.id].includes(appUserId));
+    const delegatedAt = Date.parse((last?.toDelegate?.id === appUserId && last.updatedAt) || '');
+    if (Number.isNaN(delegatedAt)) {
+      log({ event: 'delegation', issue: issueId, outcome: 'no-history' });
+      return false;
+    }
+    return this.#sessionSince(issueId, delegatedAt - DELEGATION_WAIT_MS);
   }
 
   /**
