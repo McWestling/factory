@@ -44,6 +44,7 @@ People who plan their work in Linear and want coding agents to do more of the bu
 | `do-implement`  | 🛠️ Takes one implementation issue to a verified draft PR                             |
 | `do-review`     | Has an independent reviewer check a draft PR and fixes what it finds until it's happy |
 | `do-closeout`   | 🧹 Checks a thread is good to close and finishes the issue's closeout                |
+| `do-deep-dive`  | Researches one big question into a long HTML report you can flag and open anywhere   |
 | `do-repo-setup` | Points a repo at its home repo's tracker doc, writes its rules, installs dev ports   |
 
 Planning (`do-post-its`, `do-triage`, `do-refine`) runs from your home repo’s checkout and reads the other repos’ code. Build work (`do-implement`, `do-review`, `do-closeout`) runs in each product repo.

@@ -1,0 +1,5 @@
+interface:
+  display_name: "Do Deep Dive"
+  short_description: "Research one big question and deliver a flaggable HTML report"
+policy:
+  allow_implicit_invocation: false

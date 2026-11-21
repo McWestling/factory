@@ -1,0 +1,203 @@
+<!doctype html>
+<!-- data-report: "<folder name>@v<n>". Flags are stored under it, so each report and version keeps its own. -->
+<html lang="en" data-report="yyyy-mm-dd-slug@v1">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TOPIC</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+</script>
+<style>
+  .lbl { font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; }
+  td, th { vertical-align: top; }
+  .tbl th { text-align: left; font-weight: 600; padding: .4rem .6rem; border-bottom: 2px solid #cbd5e1; font-size: .8rem; }
+  .tbl td { padding: .4rem .6rem; border-bottom: 1px solid #e2e8f0; font-size: .85rem; }
+  code { font-size: .82em; background: #f1f5f9; padding: 0 .25em; border-radius: 3px; }
+  .pill { font-size: .7rem; font-weight: 600; padding: .1rem .5rem; border-radius: 999px; white-space: nowrap; }
+  .ran { background: #d1fae5; color: #065f46; } .read { background: #dbeafe; color: #1e40af; }
+  .agent { background: #fef3c7; color: #92400e; } .unverified { background: #e2e8f0; color: #334155; }
+</style>
+</head>
+<body class="bg-stone-50 text-slate-900 font-sans">
+<main class="max-w-5xl mx-auto px-6 py-12 pb-24 space-y-14">
+
+<header class="space-y-4">
+  <p class="lbl text-slate-500">DATE · version N · what was and wasn't touched</p>
+  <h1 class="font-serif text-4xl">TOPIC</h1>
+  <p class="text-sm text-slate-600">On a rewrite: what changed, and which earlier advice is withdrawn.</p>
+  <div class="flex flex-wrap gap-2 text-xs items-center">
+    <span class="pill ran">ran</span><span class="pill read">read by me</span><span class="pill agent">read by sub-agent</span><span class="pill unverified">unverified</span>
+  </div>
+</header>
+
+<section id="verdict" class="rounded-xl border-2 border-slate-900 bg-white p-8 space-y-4">
+  <h2 class="font-serif text-2xl">1. Verdict</h2>
+  <p class="text-lg leading-relaxed">The answer in two or three sentences, and how sure you are.</p>
+</section>
+
+<section id="answers" class="rounded-lg border border-slate-200 bg-white p-5 space-y-3">
+  <h2 class="font-serif text-2xl">2. Your answers, and what each one costs</h2>
+  <!-- If the user was away, title this "Framing I assumed": assumption, why, what changes if wrong. -->
+  <div class="overflow-x-auto"><table class="tbl w-full">
+    <thead><tr><th>You said</th><th>What follows</th></tr></thead>
+    <tbody><tr><td><strong>Answer.</strong></td><td>What it rules in, and what it costs.</td></tr></tbody>
+  </table></div>
+</section>
+
+<!-- One section per part of the brief. Pick the block that fits; delete the rest. -->
+<section id="part-3" class="space-y-4">
+  <h2 class="font-serif text-2xl">3. PART TITLE</h2>
+
+  <!-- Findings table -->
+  <div class="overflow-x-auto rounded-lg border border-slate-200 bg-white"><table class="tbl w-full">
+    <thead><tr><th>Where</th><th>What</th><th>Status</th></tr></thead>
+    <tbody><tr><td><code>path:line</code> or link</td><td>Finding.</td><td><span class="pill read">read by me</span></td></tr></tbody>
+  </table></div>
+
+  <!-- Option comparison, lightest first -->
+  <div class="grid md:grid-cols-3 gap-4 text-sm">
+    <div class="rounded-lg border-2 border-emerald-400 bg-white p-4 space-y-2"><p class="font-semibold">A · Lightest option</p><p>What it is.</p><p class="text-slate-600">What it needs.</p><p class="text-emerald-800 font-semibold">Recommended first.</p></div>
+    <div class="rounded-lg border border-slate-200 bg-white p-4 space-y-2"><p class="font-semibold">B · Next option</p><p>What it is.</p><p class="text-slate-600">What it adds and costs.</p></div>
+  </div>
+
+  <!-- Before / after, only when something changes shape -->
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="rounded-lg border border-slate-200 bg-white p-3"><p class="lbl text-slate-500 mb-1">Today</p>
+      <pre class="mermaid">
+flowchart LR
+  A[one] --> B[two]
+      </pre></div>
+    <div class="rounded-lg border border-slate-200 bg-white p-3"><p class="lbl text-slate-500 mb-1">Proposed</p>
+      <div class="bg-slate-900 text-white rounded-lg p-4 text-sm">Hand-built boxes when emphasis matters.</div></div>
+  </div>
+
+  <!-- Sequence -->
+  <div class="grid md:grid-cols-4 gap-2 text-xs">
+    <div class="bg-emerald-50 border border-emerald-300 p-2"><p class="font-semibold">1 · First step</p>Why it is first.</div>
+    <div class="bg-white border border-slate-300 p-2"><p class="font-semibold">2 · Next step</p>What it depends on.</div>
+  </div>
+</section>
+
+<section id="top-recommendation" class="rounded-xl border-2 border-emerald-700 bg-emerald-50 p-8 space-y-3">
+  <h2 class="font-serif text-2xl">Top recommendation</h2>
+  <p class="text-lg font-semibold">What to do first.</p>
+  <p class="text-sm">Why, with <a href="#part-3" class="underline">links to the parts it rests on</a>.</p>
+</section>
+
+<section id="open" class="rounded-lg border border-slate-200 bg-white p-5 space-y-2">
+  <h2 class="font-serif text-lg">Open questions, and calls I made</h2>
+  <ul class="text-sm list-disc pl-5 space-y-1">
+    <li><strong>Question?</strong> Default used: the default.</li>
+    <li>Calls: sources substituted, research not repeated, checks skipped.</li>
+  </ul>
+</section>
+
+<footer class="text-sm text-slate-500 border-t border-slate-200 pt-6">Which of these would you like to explore?</footer>
+</main>
+
+<!-- ===== Flag layer: copy unchanged ===== -->
+<style>
+  main :is(p, li, tr, h2, h3):hover { outline: 1px dashed #fcd34d; outline-offset: 2px; }
+  body.flagging main :is(p, li, tr, h2, h3) { cursor: copy; }
+  .flagnote { background: #fef3c7; border-left: 4px solid #f59e0b; color: #78350f; font: 600 .8rem/1.4 ui-sans-serif, system-ui; padding: .35rem .6rem; margin-top: .35rem; white-space: pre-wrap; text-transform: none; letter-spacing: 0; }
+  #flagbar { position: fixed; right: 12px; bottom: 12px; z-index: 50; background: #0f172a; color: #fff; font: .85rem ui-sans-serif, system-ui; border-radius: .5rem; padding: .5rem .9rem; display: flex; gap: .8rem; align-items: center; box-shadow: 0 4px 14px rgba(0,0,0,.3); }
+  #flagbar button { text-decoration: underline; }
+  #flagbar button[aria-pressed="true"] { background: #f59e0b; color: #0f172a; text-decoration: none; border-radius: .3rem; padding: 0 .4rem; }
+  dialog.flagdlg { border-radius: .5rem; padding: 1rem; width: 44rem; max-width: 95vw; font: .85rem ui-sans-serif, system-ui; }
+  dialog.flagdlg textarea { width: 100%; border: 1px solid #cbd5e1; padding: .5rem; }
+  dialog.flagdlg menu { display: flex; gap: 1rem; justify-content: flex-end; margin-top: .5rem; }
+  dialog.flagdlg button { text-decoration: underline; }
+</style>
+<div id="flagbar">
+  <span id="flagcount">0 flags</span>
+  <button id="flagmode" aria-pressed="false" title="Or Option-click any paragraph, bullet, row or heading">Flag</button>
+  <button id="flagcopy">Copy notes</button>
+</div>
+<dialog id="flagedit" class="flagdlg">
+  <form method="dialog">
+    <blockquote style="color:#64748b;margin-bottom:.5rem"></blockquote>
+    <textarea rows="5" placeholder="What needs discussion here?"></textarea>
+    <menu><button value="remove">Remove flag</button><button value="cancel">Cancel</button><button value="save">Save</button></menu>
+  </form>
+</dialog>
+<dialog id="flagout" class="flagdlg">
+  <p style="margin-bottom:.5rem">Copied to the clipboard if the browser allowed it. Otherwise copy from here and paste it into the chat.</p>
+  <textarea rows="14" readonly style="font-family:ui-monospace,monospace;font-size:.75rem"></textarea>
+  <form method="dialog"><menu><button>Close</button></menu></form>
+</dialog>
+<script>
+(() => {
+  // Flags live in this browser, per address, under the report's slug and version.
+  const KEY = "flags:" + (document.documentElement.dataset.report || location.pathname);
+  const SPOT = "p, li, tr, h2, h3";
+  const els = [...document.querySelectorAll("main :is(" + SPOT + ")")].filter((e) => !e.closest(".mermaid, footer"));
+  let notes = {};
+  try { notes = JSON.parse(localStorage.getItem(KEY)) || {}; } catch {}
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(notes)); } catch {} };
+  const quote = (el) => {
+    const c = el.cloneNode(true);
+    c.querySelectorAll(".flagnote").forEach((n) => n.remove());
+    const text = el.tagName === "TR" ? [...c.cells].map((td) => td.textContent).join(" · ") : c.textContent;
+    return text.replace(/\s+/g, " ").trim().slice(0, 160);
+  };
+  const section = (el) => el.closest("section")?.querySelector("h2")?.textContent.replace(/\s+/g, " ").trim() || "Header";
+  const $ = (id) => document.getElementById(id);
+  const edit = $("flagedit"), editText = edit.querySelector("textarea");
+  let current = -1, flagging = false;
+
+  const render = () => {
+    document.querySelectorAll(".flagnote").forEach((n) => n.remove());
+    els.forEach((el, i) => {
+      el.style.background = notes[i] ? "#fffbeb" : "";
+      if (!notes[i]) return;
+      const n = document.createElement("div");
+      n.className = "flagnote";
+      n.textContent = "⚑ " + notes[i];
+      (el.tagName === "TR" ? el.lastElementChild : el).appendChild(n);
+    });
+    const count = Object.keys(notes).length;
+    $("flagcount").textContent = count + (count === 1 ? " flag" : " flags");
+  };
+
+  document.addEventListener("click", (e) => {
+    if (!e.altKey && !flagging) return;
+    const i = els.indexOf(e.target.closest(SPOT));
+    if (i < 0) return;
+    e.preventDefault();
+    current = i;
+    edit.returnValue = "";
+    edit.querySelector("blockquote").textContent = quote(els[i]);
+    editText.value = notes[i] || "";
+    edit.showModal();
+    editText.focus();
+  });
+  edit.addEventListener("close", () => {
+    const text = editText.value.trim();
+    if (edit.returnValue === "save" && text) notes[current] = text;
+    else if (edit.returnValue === "remove" || edit.returnValue === "save") delete notes[current];
+    else return;
+    save();
+    render();
+  });
+  $("flagmode").addEventListener("click", () => {
+    flagging = !flagging;
+    $("flagmode").setAttribute("aria-pressed", flagging);
+    document.body.classList.toggle("flagging", flagging);
+  });
+  $("flagcopy").addEventListener("click", () => {
+    const text = Object.keys(notes).map(Number).sort((a, b) => a - b)
+      .map((i) => `- [${section(els[i])}] "${quote(els[i])}"\n  FLAG: ${notes[i]}`).join("\n\n") || "(no flags yet)";
+    const out = $("flagout"), ta = out.querySelector("textarea");
+    ta.value = text;
+    out.showModal();
+    ta.select();
+    navigator.clipboard?.writeText(text).catch(() => {});
+  });
+  render();
+})();
+</script>
+</body>
+</html>
