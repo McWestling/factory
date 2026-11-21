@@ -924,7 +924,10 @@ async function inside(root: string, path: string): Promise<string | null> {
 }
 
 /** One read-only request against the reports folder: a file, a folder's `index.html`, or a folder listing. */
-async function answerReport(root: string, method: string, url: string): Promise<ReportReply> {
+async function answerReport(root: string, method: string, url: string, host: string): Promise<ReportReply> {
+  // Only this Mac's own names, or its tailnet name that `tailscale serve` forwards: a page whose domain was rebound to 127.0.0.1 is refused.
+  const name = host.toLowerCase().replace(/:\d+$/, '');
+  if (name !== '127.0.0.1' && name !== 'localhost' && !name.endsWith('.ts.net')) return { status: 403 };
   if (method !== 'GET' && method !== 'HEAD') return { status: 405, headers: { Allow: 'GET, HEAD' } };
   try {
     const { pathname } = new URL(url, 'http://reports');
@@ -959,7 +962,7 @@ async function answerReport(root: string, method: string, url: string): Promise<
 /** Serves `root` read-only on localhost. A failure to listen, such as a taken port, is only logged. */
 export function serveReports(root: string, port: number, log: Deps['log']): Server {
   const server = createServer((req, res) => {
-    void answerReport(root, req.method ?? '', req.url ?? '/').then(({ status, headers, body }) => res.writeHead(status, headers).end(body));
+    void answerReport(root, req.method ?? '', req.url ?? '/', req.headers.host ?? '').then(({ status, headers, body }) => res.writeHead(status, headers).end(body));
   });
   server.on('error', (error: NodeJS.ErrnoException) =>
     log({ event: 'reports', outcome: error.code === 'EADDRINUSE' ? 'port-in-use' : 'reports-failed' }));

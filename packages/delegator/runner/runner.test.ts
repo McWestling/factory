@@ -1812,3 +1812,24 @@ test('a taken reports port is logged and the Runner keeps polling', async (t) =>
   assert.equal(await poll(config, f.deps), true);
   assert.equal(await poll(config, f.deps), true);
 });
+
+test('the reports server refuses a request for another host name, so a rebound domain reads nothing', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'reports-'));
+  writeFileSync(join(root, 'index.html'), 'private');
+  const { base } = await reports(t, root);
+  const port = Number(new URL(base).port);
+  const get = (host: string) => new Promise<{ status: number; body: string }>((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: '/', headers: { Host: host } }, (res) => {
+      let body = '';
+      res.on('data', (chunk) => { body += chunk; }).on('end', () => resolve({ status: res.statusCode!, body }));
+    }).on('error', reject);
+  });
+  for (const host of ['evil.example:8765', 'evil.example', 'ts.net.evil.example']) {
+    const { status, body } = await get(host);
+    assert.equal(status, 403, host);
+    assert.doesNotMatch(body, /private/, host);
+  }
+  for (const host of [`127.0.0.1:${port}`, `localhost:${port}`, 'mac.tailnet-example.ts.net', 'Mac.Tailnet-Example.TS.NET:443']) {
+    assert.equal((await get(host)).body, 'private', host);
+  }
+});

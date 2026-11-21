@@ -323,7 +323,7 @@ private struct RunnerMenu: View {
         if runner.runnerInstalled || runner.configured {
             Button("Open logs") { runner.open(FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/factory-delegator")) }
             Button("Open config") { runner.open(configFile) }
-            Button("Open reports") { runner.open(URL(string: "http://127.0.0.1:8765/")!) }
+            if runner.runnerInstalled { Button("Open reports") { runner.open(URL(string: "http://127.0.0.1:8765/")!) } }
             Divider()
         }
         Toggle("Start at login", isOn: Binding(

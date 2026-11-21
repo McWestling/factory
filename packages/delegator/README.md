@@ -157,6 +157,8 @@ While it runs, the Runner serves `~/Reports`, where deep-dive reports live, on
 `http://127.0.0.1:8765/`. A folder answers with its `index.html`, or else a plain
 listing of its entries. The server is read-only (`GET` and `HEAD`), listens on
 localhost only and never returns a file outside the folder, symlinks included.
+It answers only requests addressed to `127.0.0.1`, `localhost` or a `*.ts.net`
+name, so a web page whose domain is rebound to localhost can't read reports.
 It answers 404 until `~/Reports` exists. If the port is taken at start-up, the
 Runner logs `reports` / `port-in-use` and carries on claiming jobs. **Open reports**
 in the menu opens the listing.
