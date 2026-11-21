@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writ
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
-import { ENDED_STATUSES, JOB_KINDS, LIVE_STATUSES, PULL_REQUEST, type Outcome as JobOutcome, type Task, type UpdateType, type Watch, type Watching as Recoverable } from '../contract.ts';
+import { ENDED_STATUSES, JOB_KINDS, LIVE_STATUSES, PULL_REQUEST, type Outcome as JobOutcome, type Task, type UpdateType, type Watch, type Watching } from '../contract.ts';
 import { isLaunchEvidence, type Claim, type LaunchEvidence } from '../job.ts';
 import { LEVELS, matchModel, parseIssue, readTag, type DelegatorIssue, type Level } from '../parse-issue.ts';
 
@@ -273,7 +273,7 @@ function inbox(config: RunnerConfig, deps: Deps) {
         && (entry.launch === undefined || isLaunchEvidence(entry.launch)))) {
         throw new Error('cloud-inbox-watching');
       }
-      return value as Recoverable[];
+      return value as Watching[];
     },
     watch: async (claim: Claim) => {
       const value: unknown = await (await call('GET', job(claim, 'watch'))).json();
@@ -483,8 +483,8 @@ function agentsDone(orca: OrcaState, launch: LaunchEvidence): boolean | undefine
   return Array.isArray(agents) ? agents.every((agent: unknown) => isObject(agent) && agent.state === 'done') : undefined;
 }
 
-type Watching = Recoverable & { ready: boolean; identifier?: string };
-type Watches = Record<string, Watching>;
+type SavedWatch = Watching & { ready: boolean; identifier?: string };
+type Watches = Record<string, SavedWatch>;
 
 /** The saved watches, or a throw when the file can't be trusted. Setup checks a stopped Runner's file with it. */
 export function readWatches(deps: Pick<Deps, 'watches'>): Watches {
@@ -541,7 +541,7 @@ export async function watchJobs(config: RunnerConfig, deps: Deps): Promise<void>
   for (const session of since.keys()) if (!watches[session]) since.delete(session);
   let orca: Promise<OrcaState | null> | undefined;
   /** True once the watch's agent has been stopped for STOP_WAIT_MS; unknown leaves the clock alone. */
-  const stoppedLong = async (job: Watching) => {
+  const stoppedLong = async (job: SavedWatch) => {
     if (!job.launch) return false;
     const state = await (orca ??= orcaState(deps));
     const stopped = state ? agentsDone(state, job.launch) : undefined;

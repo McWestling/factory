@@ -20,7 +20,7 @@ export type UpkeepDeps = {
 
 const LABEL = 'com.mcwestling.factory-delegator.runner';
 // Everything the installer bundles from source, checked byte for byte after staging.
-const BUNDLED = ['job.ts', 'parse-issue.ts', 'runner/runner.ts', 'runner/launchd/install.sh',
+export const BUNDLED = ['job.ts', 'parse-issue.ts', 'contract.ts', 'runner/runner.ts', 'runner/launchd/install.sh',
   'runner/launchd/runner.plist', 'menubar/menubar.plist'];
 export type Result = { ok: boolean; line: string };
 export const lastLine = (error: unknown) =>

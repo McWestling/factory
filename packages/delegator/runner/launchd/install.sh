@@ -44,7 +44,7 @@ build_app() {
 	cp "$menubar_dir/Info.plist" "$app/Contents/Info.plist"
 	# The app and the Runner are always built together, so this one time covers both.
 	plutil -replace FactoryBuildTime -string "$(date -u '+%Y-%m-%d %H:%M UTC')" "$app/Contents/Info.plist"
-	cp "$package_dir/job.ts" "$package_dir/parse-issue.ts" "$resources/"
+	cp "$package_dir/job.ts" "$package_dir/parse-issue.ts" "$package_dir/contract.ts" "$resources/"
 	cp "$package_dir/runner/runner.ts" "$resources/runner/"
 	cp "$script_dir/install.sh" "$script_dir/runner.plist" "$resources/runner/launchd/"
 	cp "$menu_template" "$resources/menubar/menubar.plist"
