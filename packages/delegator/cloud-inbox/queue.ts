@@ -2,7 +2,7 @@
 // Cloud Inbox posts, kept in Cloud Inbox's Durable Object. Runs under Node for tests, so SQL goes through `Sql`,
 // which both Cloudflare's SqlStorage and a node:sqlite adapter satisfy.
 
-import { ENDED_STATUSES, LIVE_STATUSES, PULL_REQUEST, type JobKind, type Outcome, type Task, type UpdateType, type Watch, type Watching } from '../contract.ts';
+import { ENDED_STATUSES, LIVE_STATUSES, PULL_REQUEST, type IssueStates, type JobKind, type Outcome, type Task, type UpdateType, type Watch, type Watching } from '../contract.ts';
 import type { Claim, LaunchEvidence } from '../job.ts';
 import type { AppAuth } from './auth.ts';
 import { log } from './routes.ts';
@@ -43,7 +43,8 @@ export const MESSAGES = {
   unreadable: "Can't read the PR; check the GitHub token.",
 };
 
-// Every Linear document Cloud Inbox sends. Variables come only from the job, never the machine.
+// Every Linear document Cloud Inbox sends. Variables come only from the job, never the machine,
+// except STATES, which reads the identifiers the route already checked.
 const ACTIVITY = 'mutation ($input: AgentActivityCreateInput!) { agentActivityCreate(input: $input) { success } }';
 const TASK = `query ($issue: String!, $session: String!) {
   issue(id: $issue) { identifier description branchName state { type } delegate { id } labels { nodes { name } } }
@@ -60,6 +61,10 @@ const LAUNCH = `query ($issue: String!, $session: String!) {
   issueLabels(filter: { name: { eq: "${DISPATCH_LABEL}" } }) { nodes { id team { id } parent { id } } } }`;
 const DELEGATE = 'query ($issue: String!) { issue(id: $issue) { delegate { id } } }';
 const ISSUE_UPDATE = 'mutation ($issue: String!, $input: IssueUpdateInput!) { issueUpdate(id: $issue, input: $input) { success } }';
+/** At most `STATES_PAGE` identifiers per request, so each answer fits one page. */
+const STATES = `query ($filter: IssueFilter!) {
+  issues(filter: $filter, first: 250, includeArchived: true) { nodes { identifier state { type } } } }`;
+const STATES_PAGE = 250;
 const CREATE_SESSION = `mutation ($issue: String!) {
   agentSessionCreateOnIssue(input: { issueId: $issue }) { success agentSession { id } } }`;
 
@@ -572,6 +577,30 @@ export class JobQueue {
       }
     }
     return { found, unreadable };
+  }
+
+  /**
+   * Each identifier's state type, `unknown` if Linear doesn't know it, in one request per 250.
+   * Reads only. Undefined if Linear failed.
+   * ponytail: an issue moved to another team answers to its new identifier only, so its old
+   * one is unknown; look each unknown up with `issue(id:)` if that ever matters.
+   */
+  async states(identifiers: string[]): Promise<IssueStates | undefined> {
+    const states: IssueStates = Object.fromEntries(identifiers.map((id) => [id, 'unknown']));
+    for (let i = 0; i < identifiers.length; i += STATES_PAGE) {
+      const numbers = new Map<string, number[]>();
+      for (const id of identifiers.slice(i, i + STATES_PAGE)) {
+        const [key, number] = id.split('-') as [string, string];
+        numbers.set(key, [...numbers.get(key) ?? [], Number(number)]);
+      }
+      const filter = { or: [...numbers].map(([key, list]) => ({ team: { key: { eq: key } }, number: { in: list } })) };
+      const data = await this.#read<{ issues?: { nodes?: { identifier?: string; state?: { type?: string } }[] } }>(STATES, { filter });
+      if (!data?.issues?.nodes) return undefined;
+      for (const { identifier, state } of data.issues.nodes) {
+        if (identifier && identifier in states && state?.type) states[identifier] = state.type;
+      }
+    }
+    return states;
   }
 
   /** Links the first verified launch pull request on the session as "Pull request". */

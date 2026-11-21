@@ -1,6 +1,6 @@
 // The Cloud Inbox Worker: routes /install, /callback, /status and /disconnect to the one
 // Durable Object, which holds the Delegator app's Linear install, token, shared job
-// queue and pool status. /webhook, the Runner API and /pool are handled in routes.ts.
+// queue and pool status. /webhook, the Runner API, /issues/states and /pool are handled in routes.ts.
 
 import { DurableObject } from 'cloudflare:workers';
 import type { JobKind, Outcome, UpdateType } from '../contract.ts';
@@ -60,9 +60,10 @@ export default {
       linkPullRequest: (machine, id, claimId) => stub.linkPullRequest(machine, id, claimId),
       report: (machine, snapshot) => stub.report(machine, snapshot),
       pool: (names) => stub.pool(names),
+      states: (identifiers) => stub.states(identifiers),
     };
     if (url.pathname === '/webhook' && request.method === 'POST') return handleWebhook(request, config, inbox);
-    if (route === 'jobs' || route === 'pool') return handleRunner(request, config, inbox);
+    if (route === 'jobs' || route === 'pool' || route === 'issues') return handleRunner(request, config, inbox);
 
     if (!rest.length && ((route === 'status' && request.method === 'GET') || (route === 'disconnect' && request.method === 'POST'))) {
       if (!isAdmin(request, config.adminSecret)) return text(401, 'Owner authentication required.');
@@ -156,4 +157,6 @@ export class Machine extends DurableObject<Env> {
   report(machine: string, snapshot: Snapshot) { return this.#jobs.report(machine, snapshot); }
 
   pool(names: string[]) { return this.#jobs.pool(names); }
+
+  states(identifiers: string[]) { return this.#jobs.states(identifiers); }
 }

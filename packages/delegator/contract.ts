@@ -45,5 +45,8 @@ export type Task = {
 /** A launch's completion state: its session, its issue's state, and the launch's own PRs. */
 export type Watch = { sessionStatus: string; issueState?: string; pullRequests: string[] };
 
+/** Each asked issue identifier's Linear state type, or `unknown` for one Linear doesn't know. */
+export type IssueStates = Record<string, string>;
+
 /** A launched job the Runner watches, as Cloud Inbox lists it for recovery. */
 export type Watching = Claim & { at: number; launch?: LaunchEvidence };

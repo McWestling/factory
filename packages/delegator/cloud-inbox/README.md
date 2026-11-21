@@ -112,6 +112,7 @@ accepts a viewer secret.
 | `POST /jobs/<id>/launched` or `/jobs/<id>/failed` | Records outcome and queues field writes. |
 | `GET /jobs/<id>/watch` | Reads session, issue and verified PR status; a GitHub 401, 403 or 404 that isn't a rate limit posts "Can't read the PR; check the GitHub token." once. |
 | `POST /jobs/<id>/pull-request` | Links a verified PR from this launch. |
+| `POST /issues/states` | Reads each issue's Linear state type from `{identifiers: ["ABC-123", …]}` (1–1000 identifiers, at most 32 KiB); returns `{"ABC-123": "completed", …}`, with `unknown` for an issue Linear doesn't know. Changes nothing. |
 | `PUT /pool/snapshot` | Stores this machine's latest `status.json` (JSON object, at most 64 KiB). |
 | `GET /pool` | Lists every machine's latest snapshot, last-seen time and online state, plus queue depth. |
 
