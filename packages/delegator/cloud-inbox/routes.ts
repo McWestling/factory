@@ -13,6 +13,12 @@ export const MAX_WEBHOOK_BYTES = 1024 * 1024;
 const MAX_UPDATE_BYTES = 16 * 1024;
 /** Far above a Runner's `status.json`, which keeps ten recent jobs. */
 const MAX_SNAPSHOT_BYTES = 64 * 1024;
+/** Room for a Mac's few hundred worktrees. */
+const MAX_IDENTIFIERS = 1000;
+/** Room for `MAX_IDENTIFIERS` identifiers in JSON. */
+const MAX_STATES_BYTES = 32 * 1024;
+/** A Linear issue identifier, like `ABC-123`. */
+const IDENTIFIER = /^[A-Z][A-Z0-9]{0,9}-[1-9][0-9]{0,8}$/;
 
 /** Every Cloud Inbox route lives here, so a shared hostname can route `/delegator/*` to this Worker. */
 export const BASE_PATH = '/delegator';
@@ -26,7 +32,7 @@ export function underBasePath(request: Request): Request | null {
 }
 
 /** The shared queue, as the Durable Object exposes it. */
-export type Inbox = Pick<JobQueue, 'webhook' | 'claim' | 'finish' | 'task' | 'update' | 'watch' | 'watching' | 'linkPullRequest' | 'report' | 'pool'>;
+export type Inbox = Pick<JobQueue, 'webhook' | 'claim' | 'finish' | 'task' | 'update' | 'watch' | 'watching' | 'linkPullRequest' | 'report' | 'pool' | 'states'>;
 
 // Logs ids and outcomes only: never bodies, headers, tokens or state.
 export const log = (fields: Record<string, string>) => console.log(JSON.stringify(fields));
@@ -192,8 +198,20 @@ async function readUpdate(request: Request): Promise<{ type: UpdateType; body: s
   return { type: type as UpdateType, body };
 }
 
+/** `{identifiers: [...]}`'s distinct identifiers, or null unless it holds 1 to `MAX_IDENTIFIERS` well-formed ones. */
+async function readIdentifiers(request: Request): Promise<string[] | 'too-large' | null> {
+  const raw = await readBounded(request, MAX_STATES_BYTES);
+  if (!raw) return 'too-large';
+  let parsed: { identifiers?: unknown } | null;
+  try { parsed = JSON.parse(new TextDecoder().decode(raw)); } catch { return null; }
+  const list = parsed?.identifiers;
+  if (!Array.isArray(list) || !list.length || list.length > MAX_IDENTIFIERS) return null;
+  if (!list.every((id) => typeof id === 'string' && IDENTIFIER.test(id))) return null;
+  return [...new Set(list as string[])];
+}
+
 /**
- * `GET /pool` for a viewer or a machine. For a machine only: `PUT /pool/snapshot`,
+ * `GET /pool` for a viewer or a machine. For a machine only: `POST /issues/states`, `PUT /pool/snapshot`,
  * `POST /jobs/claim`, and named operations on a claimed job: `GET /jobs/<id>/task|watch`,
  * `POST /jobs/<id>/updates|pull-request|launched|failed`, each with `?claimId=<claimId>`.
  * The machine comes only from the bearer secret that matched, and the issue and session
@@ -228,6 +246,21 @@ export async function handleRunner(request: Request, config: Config, inbox: Inbo
   if (!machine) {
     log({ event: 'runner', outcome: 'viewer-refused' });
     return text(403, 'Forbidden');
+  }
+
+  if (route === 'issues') {
+    if (method !== 'POST' || id !== 'states' || op !== undefined) return text(404, 'Not found');
+    const identifiers = await readIdentifiers(request);
+    if (identifiers === 'too-large') return text(413, 'Payload too large');
+    if (!identifiers) return text(400, `Expected {identifiers: 1-${MAX_IDENTIFIERS} identifiers like ABC-123}`);
+    const states = await inbox.states(identifiers);
+    if (!states) {
+      log({ event: 'states', machine, outcome: 'linear' });
+      return text(...REFUSED.linear);
+    }
+    const unknown = Object.values(states).filter((state) => state === 'unknown').length;
+    log({ event: 'states', machine, outcome: 'ok', asked: String(identifiers.length), unknown: String(unknown) });
+    return Response.json(states);
   }
 
   if (route === 'pool') {
