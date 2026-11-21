@@ -8,12 +8,11 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writ
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
+import { ENDED_STATUSES, JOB_KINDS, LIVE_STATUSES, PULL_REQUEST, type Outcome as JobOutcome, type Task, type UpdateType, type Watch, type Watching as Recoverable } from '../contract.ts';
 import { isLaunchEvidence, type Claim, type LaunchEvidence } from '../job.ts';
 import { LEVELS, matchModel, parseIssue, readTag, type DelegatorIssue, type Level } from '../parse-issue.ts';
 
 export const CONFIG_PATH = join(homedir(), '.config', 'factory-delegator', 'config.json');
-const ENDED_STATUSES = ['complete', 'error', 'stopped'];
-const LIVE_STATUSES = ['pending', 'active', 'awaitingInput', 'stale'];
 const POLL_MS = 15_000;
 /** Cloud Inbox's history window: a session not reclaimed by then never will be. */
 const LAUNCH_KEEP_MS = 30 * 24 * 60 * 60_000;
@@ -39,20 +38,6 @@ export type RunnerConfig = {
   skill: string;
   /** The planning repo (`owner/name`) every refine launch runs in. */
   refineRepo?: string;
-};
-
-export type Task = {
-  delegated: boolean;
-  creatorId: string | null;
-  identifier: string;
-  description: string;
-  branchName: string;
-  statusType: string;
-  labels?: string[];
-  /** Set by Cloud Inbox for a closeout job, with the launch it closes out and, when there's nothing to close, why. */
-  kind?: 'closeout';
-  launch?: LaunchEvidence;
-  skip?: 'canceled' | 'unreadable' | 'unverified';
 };
 
 export type Exec = (file: string, args: string[], timeoutMs: number) => Promise<{ stdout: string }>;
@@ -268,7 +253,7 @@ function inbox(config: RunnerConfig, deps: Deps) {
     `/jobs/${encodeURIComponent(claim.sessionId)}/${op}?claimId=${encodeURIComponent(claim.claimId)}`;
   return {
     async claim(): Promise<Claim | null> {
-      const response = await call('POST', '/jobs/claim?kinds=delegation,closeout');
+      const response = await call('POST', `/jobs/claim?kinds=${JOB_KINDS.join(',')}`);
       if (response.status === 204) return null;
       const claim = await response.json() as Partial<Claim>;
       if (!isText(claim.issueId) || !isText(claim.sessionId) || !isText(claim.claimId)) throw new Error('cloud-inbox-claim');
@@ -279,8 +264,8 @@ function inbox(config: RunnerConfig, deps: Deps) {
       if (!isObject(task)) throw new Error('cloud-inbox-task');
       return task as Partial<Task>;
     },
-    update: (claim: Claim, type: 'thought' | 'error' | 'response', body: string) => call('POST', job(claim, 'updates'), { type, body }),
-    finish: (claim: Claim, outcome: 'launched' | 'failed', launch?: LaunchEvidence) => call('POST', job(claim, outcome), launch),
+    update: (claim: Claim, type: UpdateType, body: string) => call('POST', job(claim, 'updates'), { type, body }),
+    finish: (claim: Claim, outcome: JobOutcome, launch?: LaunchEvidence) => call('POST', job(claim, outcome), launch),
     watching: async () => {
       const value: unknown = await (await call('GET', '/jobs/watching')).json();
       if (!Array.isArray(value) || !value.every((entry) => isObject(entry) && isText(entry.sessionId)
@@ -288,21 +273,21 @@ function inbox(config: RunnerConfig, deps: Deps) {
         && (entry.launch === undefined || isLaunchEvidence(entry.launch)))) {
         throw new Error('cloud-inbox-watching');
       }
-      return value as (Claim & { at: number; launch?: LaunchEvidence })[];
+      return value as Recoverable[];
     },
     watch: async (claim: Claim) => {
       const value: unknown = await (await call('GET', job(claim, 'watch'))).json();
       if (!isObject(value) || !isText(value.sessionStatus) || (value.issueState !== undefined && !isText(value.issueState)) || !Array.isArray(value.pullRequests)
-        || !value.pullRequests.every((url) => typeof url === 'string' && /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+(?:[/?#]|$)/.test(url))) {
+        || !value.pullRequests.every((url) => typeof url === 'string' && PULL_REQUEST.test(url))) {
         throw new Error('cloud-inbox-watch');
       }
-      return value as { sessionStatus: string; issueState?: string; pullRequests: string[] };
+      return value as Watch;
     },
     report: (snapshot: Status) => call('PUT', '/pool/snapshot', snapshot),
     link: async (claim: Claim) => {
       const value: unknown = await (await call('POST', job(claim, 'pull-request'))).json();
       if (!isObject(value) || typeof value.url !== 'string'
-        || !/^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+(?:[/?#]|$)/.test(value.url)) throw new Error('cloud-inbox-pr');
+        || !PULL_REQUEST.test(value.url)) throw new Error('cloud-inbox-pr');
       return value.url;
     },
   };
@@ -498,7 +483,7 @@ function agentsDone(orca: OrcaState, launch: LaunchEvidence): boolean | undefine
   return Array.isArray(agents) ? agents.every((agent: unknown) => isObject(agent) && agent.state === 'done') : undefined;
 }
 
-type Watching = Claim & { at: number; ready: boolean; launch?: LaunchEvidence; identifier?: string };
+type Watching = Recoverable & { ready: boolean; identifier?: string };
 type Watches = Record<string, Watching>;
 
 /** The saved watches, or a throw when the file can't be trusted. Setup checks a stopped Runner's file with it. */

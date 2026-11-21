@@ -3,9 +3,10 @@
 // queue and pool status. /webhook, the Runner API and /pool are handled in routes.ts.
 
 import { DurableObject } from 'cloudflare:workers';
+import type { JobKind, Outcome, UpdateType } from '../contract.ts';
 import type { LaunchEvidence } from '../job.ts';
 import { AppAuth, isAdmin, readConfig, type InstallResult } from './auth.ts';
-import { JobQueue, type AgentEvent, type DelegatedEvent, type JobKind, type MergeEvent, type Outcome, type Snapshot, type UpdateType } from './queue.ts';
+import { JobQueue, type AgentEvent, type DelegatedEvent, type MergeEvent, type Snapshot } from './queue.ts';
 import { BASE_PATH, handleRunner, handleWebhook, log, text, underBasePath, type Inbox } from './routes.ts';
 
 interface Env {
