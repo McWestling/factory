@@ -26,7 +26,7 @@ Write scripts in TypeScript by default, run directly with Node (no build step). 
 
 Run these before every push; all three must pass.
 
-- **Delegator and setup:** `cd packages/delegator && npm test`. It typechecks, then runs every test. If `tsc` is missing, run `scripts/setup` first.
+- **Delegator, setup and screenshots:** `cd packages/delegator && npm test`. It typechecks, then runs every test in all three packages. If `tsc` is missing, run `scripts/setup` first.
 - **Verifier, Python:** `python3 packages/verifier/factory-verifier.test.py`. It needs Python 3.11 or newer. If `python3` is older, look for a newer one before calling it missing, for example `ls /opt/homebrew/bin | grep python3`.
 - **Verifier, Node:** `node --test packages/verifier/autopilot.test.mjs`.
 
