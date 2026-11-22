@@ -830,7 +830,7 @@ test('recovery posts a lost thought once and remembers it across another reclaim
 for (const contents of ['{broken', 'null', '{"session-1":42}', '{"session-1":{"at":42}}']) {
   test(`a corrupt launch file logs once per read without throwing: ${contents}`, async () => {
     const f = await fakes(null);
-    const logs: Record<string, string>[] = [];
+    const logs: Record<string, string | number>[] = [];
     f.deps.log = (fields) => { logs.push(fields); };
     writeFileSync(f.deps.launches, contents);
     await assert.doesNotReject(() => poll(config, f.deps));
@@ -842,7 +842,7 @@ for (const contents of ['{broken', 'null', '{"session-1":42}', '{"session-1":{"a
 
 test('an unreadable launch file logs without throwing', async () => {
   const f = await fakes(null);
-  const logs: Record<string, string>[] = [];
+  const logs: Record<string, string | number>[] = [];
   f.deps.log = (fields) => { logs.push(fields); };
   mkdirSync(f.deps.launches);
   await assert.doesNotReject(() => poll(config, f.deps));
@@ -920,7 +920,7 @@ test("a config edit changes the next launch's level model without a restart", as
 
 test('an invalid config on reread keeps the last good one and logs once per change, without its value', async () => {
   const path = writeConfig(mkdtempSync(join(tmpdir(), 'runner-')), config);
-  const logs: Record<string, string>[] = [];
+  const logs: Record<string, string | number>[] = [];
   const f = await fakes();
   f.deps.log = (fields) => logs.push(fields);
   const home = dirname(dirname(dirname(path)));
@@ -1078,7 +1078,7 @@ test('reports go out one at a time, so a slow older report never lands after a n
 
 test('a status write failure logs once without stopping polls and later writes recover', async () => {
   const f = await fakes();
-  const logs: Record<string, string>[] = [];
+  const logs: Record<string, string | number>[] = [];
   f.deps.log = (entry) => logs.push(entry);
   await f.inbox.delegate(2);
   await f.inbox.delegate(3);
@@ -1353,7 +1353,7 @@ test("a matching PR completes its watch through Cloud Inbox's Workers fetch", as
 
 test('a watch left open logs its session and why', async () => {
   const f = await watching();
-  const lines: Record<string, string>[] = [];
+  const lines: Record<string, string | number>[] = [];
   f.deps.log = (fields) => lines.push(fields);
   await watchJobs(config, f.deps);
   f.status.pullRequests = ['https://github.com/owner/repo/pull/7'];
@@ -1725,7 +1725,7 @@ test('a closeout whose response was lost after launched is answered by watch rec
 
 /** Starts the reports server on a free port and returns its base URL, closing it after the test. */
 async function reports(t: { after: (fn: () => void) => void }, root: string) {
-  const logs: Record<string, string>[] = [];
+  const logs: Record<string, string | number>[] = [];
   const server = serveReports(root, 0, (fields) => logs.push(fields));
   t.after(() => server.close());
   await once(server, 'listening');
@@ -1816,7 +1816,7 @@ test('a taken reports port is logged and the Runner keeps polling', async (t) =>
   const blocker = http.createServer().listen(0, '127.0.0.1');
   t.after(() => blocker.close());
   await once(blocker, 'listening');
-  const logs: Record<string, string>[] = [];
+  const logs: Record<string, string | number>[] = [];
   const server = serveReports(tmpdir(), (blocker.address() as AddressInfo).port, (fields) => logs.push(fields));
   t.after(() => server.close());
   await once(server, 'error');
@@ -1860,7 +1860,7 @@ const worktreeRow = (branch: string, extra: Record<string, unknown> = {}) => ({
  */
 function worktreeFakes(rows: unknown[], states: Record<string, string>, options: { dirty?: string[]; rm?: Record<string, string>; inbox?: 'down' } = {}) {
   const argv: string[][] = [];
-  const logs: Record<string, string>[] = [];
+  const logs: Record<string, string | number>[] = [];
   const inboxConfig = { orgId: 'org', adminSecret: 'admin',
     app: { clientId: 'client', clientSecret: 'secret', webhookSecret: 'webhook' }, machines: { 'example-machine': config.bearerSecret } };
   const inbox = { states: async (ids: string[]) => Object.fromEntries(ids.map((id) => [id, states[id] ?? 'unknown'])) };
@@ -1923,7 +1923,7 @@ test('remove mode removes each candidate with the archive hook and safe branch d
     ['orca', 'worktree', 'rm', '--worktree', 'path:/worktrees/abc-2', '--run-hooks', '--delete-branch', '--json'],
   ]);
   assert.deepEqual(f.logs.map(({ time, ...fields }) => fields), [
-    { event: 'worktrees', outcome: 'worktrees-cleared', removed: '2', kept: '0', failed: '0' },
+    { event: 'worktrees', outcome: 'worktrees-cleared', removed: 2, kept: 0, failed: 0 },
   ]);
 });
 
@@ -1935,7 +1935,7 @@ test('a failed removal is reported with its reason and the rest are still remove
     ['ABC-1', 'removed', undefined], ['ABC-2', 'failed', 'worktree_archive_hook_failed'], ['ABC-3', 'removed', undefined],
   ]);
   assert.equal(f.removed().length, 3);
-  assert.deepEqual(f.logs.map(({ removed, kept, failed }) => [removed, kept, failed]), [['2', '0', '1']]);
+  assert.deepEqual(f.logs.map(({ removed, kept, failed }) => [removed, kept, failed]), [[2, 0, 1]]);
 });
 
 test('remove mode checks each candidate again right before removing it, and keeps one that no longer qualifies', async () => {
