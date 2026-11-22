@@ -26,6 +26,7 @@ export interface Locator {
   first(): Locator;
   click(): Promise<void>;
   waitFor(options: { state: 'visible' }): Promise<void>;
+  scrollIntoViewIfNeeded(): Promise<void>;
   boundingBox(): Promise<Box | null>;
 }
 
@@ -104,6 +105,8 @@ async function visible(locator: Locator, what: string, shot: Shot): Promise<Loca
 /** The crop region's box plus padding, in page coordinates, kept on the page and no taller than cropHeight. */
 async function cropBox(page: Page, shot: Shot, padding: number): Promise<Box> {
   const region = await visible(page.locator(`[data-help-crop="${shot.crop}"]`), `crop region data-help-crop="${shot.crop}"`, shot);
+  // A full-page shot doesn't scroll a panel inside the page, so bring the region into view first.
+  await region.scrollIntoViewIfNeeded();
   const box = await region.boundingBox();
   if (!box) throw new Error(`${shot.page}: crop region data-help-crop="${shot.crop}" has no box`);
   // boundingBox() is relative to the viewport; the full-page clip wants page coordinates.

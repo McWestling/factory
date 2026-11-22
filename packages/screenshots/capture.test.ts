@@ -20,7 +20,11 @@ function fakeBrowser(page: { status?: number; scroll?: { x: number; y: number };
       if (!found?.visible) throw new Error(`Timeout waiting for ${key}`);
       log.push(`click ${key}`);
     },
+    async scrollIntoViewIfNeeded() {
+      log.push(`scroll ${key}`);
+    },
     async boundingBox() {
+      log.push(`box ${key}`);
       return found?.box ?? null;
     },
     key,
@@ -137,6 +141,13 @@ test('a crop shoots the marked region plus padding, in page coordinates, no tall
   assert.deepEqual(await screenshot('tiles', undefined, { x: 10, y: 1500 }), { x: 94, y: 1684, width: 332, height: 432 });
   // Taller than the 844px mobile viewport, and kept whole.
   assert.deepEqual(await screenshot('table'), { x: 0, y: 34, width: 406, height: 2032 });
+});
+
+test('a crop scrolls its region into view before measuring it, so a region inside a scrolling panel is shown', async () => {
+  const { browser, log } = fakeBrowser({ selectors: { '[data-help-crop="panel"]': { visible: true, box: { x: 0, y: 0, width: 10, height: 10 } } } });
+  await takeShot(browser, { page: '/', viewport: 'desktop', crop: 'panel', out: out() }, options);
+  const steps = log.map((line) => line.split(' ')[0]).filter((step) => ['scroll', 'box', 'screenshot'].includes(step));
+  assert.deepEqual(steps, ['scroll', 'box', 'screenshot']);
 });
 
 test('a 404 fails the shot', async () => {
