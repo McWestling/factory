@@ -1,17 +1,7 @@
 import { join } from 'node:path';
+import type { Shot, Target } from './capture.ts';
 
-export type Viewport = 'desktop' | 'mobile';
-export type Target = { role: string; name: string };
-export type Shot = {
-  page: string;
-  as?: string;
-  click?: Target[];
-  wait?: Target[];
-  crop?: string;
-  cropHeight?: number;
-  viewport: Viewport;
-  out: string;
-};
+export type Viewport = Shot['viewport'];
 export type Defaults = { defaultPerson?: string; imageRoot: string };
 export type Skipped = { article: string; line: number };
 
