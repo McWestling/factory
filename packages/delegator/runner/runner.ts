@@ -4,13 +4,13 @@
 // It holds no Linear credential. Everything Cloud Inbox sends is untrusted input.
 
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { homedir } from 'node:os';
 import { dirname, extname, isAbsolute, join, sep } from 'node:path';
 import { promisify } from 'node:util';
-import { ENDED_STATUSES, JOB_KINDS, LIVE_STATUSES, PULL_REQUEST, type Outcome as JobOutcome, type Task, type UpdateType, type Watch, type Watching } from '../contract.ts';
+import { ENDED_STATUSES, JOB_KINDS, LIVE_STATUSES, PULL_REQUEST, type IssueStates, type Outcome as JobOutcome, type Task, type UpdateType, type Watch, type Watching } from '../contract.ts';
 import { isLaunchEvidence, type Claim, type LaunchEvidence } from '../job.ts';
 import { LEVELS, matchModel, parseIssue, readTag, type DelegatorIssue, type Level } from '../parse-issue.ts';
 
@@ -286,6 +286,11 @@ function inbox(config: RunnerConfig, deps: Deps) {
       return value as Watch;
     },
     report: (snapshot: Status) => call('PUT', '/pool/snapshot', snapshot),
+    states: async (identifiers: string[]) => {
+      const value: unknown = await (await call('POST', '/issues/states', { identifiers })).json();
+      if (!isObject(value) || !Object.values(value).every(isText)) throw new Error('cloud-inbox-states');
+      return value as IssueStates;
+    },
     link: async (claim: Claim) => {
       const value: unknown = await (await call('POST', job(claim, 'pull-request'))).json();
       if (!isObject(value) || typeof value.url !== 'string'
@@ -890,6 +895,79 @@ async function runJob(config: RunnerConfig, deps: Deps, claim: Claim, job: { sta
   return outcome;
 }
 
+export type FinishedWorktree = { name: string; repo: string; branch: string; path: string; identifier: string };
+export type Removal = FinishedWorktree & { outcome: 'removed' | 'kept' | 'failed'; reason?: string };
+/** Cloud Inbox's limit on identifiers per `/issues/states` request. */
+const STATES_BATCH = 1000;
+/** An issue id at the start of a branch's last segment, as Linear names branches; Cloud Inbox's own bounds. */
+const BRANCH_ISSUE = /^([a-z][a-z0-9]{0,9}-[1-9][0-9]{0,8})(?:-|$)/i;
+
+/**
+ * This Mac's Orca worktrees whose issue is completed or canceled, with every agent done and a clean
+ * working tree; never a main checkout or a branch without an issue id. `only` narrows it to one path.
+ * Throws a reason when Orca or Cloud Inbox can't answer, so nothing is acted on.
+ */
+export async function finishedWorktrees(config: RunnerConfig, deps: Deps, only?: string): Promise<FinishedWorktree[]> {
+  let rows: unknown;
+  try {
+    const ps = JSON.parse((await deps.exec('orca', ['worktree', 'ps', '--limit', '10000', '--json'], 30_000)).stdout);
+    if (ps?.ok !== true || !Array.isArray(ps.result?.worktrees)) throw new Error('invalid worktree list');
+    rows = ps.result.worktrees;
+  } catch { throw new Error('orca-unreachable'); }
+  const found: FinishedWorktree[] = [];
+  for (const row of rows as unknown[]) {
+    if (!isObject(row) || row.hostId !== 'local' || row.isMainWorktree !== false || row.isArchived === true) continue;
+    const { path, branch, agents } = row;
+    if (!isText(path) || !isAbsolute(path) || path.includes('\0') || (only !== undefined && path !== only)) continue;
+    if (typeof branch !== 'string' || !branch.startsWith('refs/heads/')) continue;
+    if (!Array.isArray(agents) || !agents.every((agent) => isObject(agent) && agent.state === 'done')) continue;
+    const name = branch.slice('refs/heads/'.length);
+    const identifier = BRANCH_ISSUE.exec(name.split('/').pop()!)?.[1]?.toUpperCase();
+    if (!identifier) continue;
+    found.push({ name: isText(row.displayName) ? row.displayName : path.split('/').pop()!,
+      repo: isText(row.repo) ? row.repo : '', branch: name, path, identifier });
+  }
+  const ids = [...new Set(found.map((worktree) => worktree.identifier))];
+  const states: IssueStates = {};
+  for (let i = 0; i < ids.length; i += STATES_BATCH) {
+    try { Object.assign(states, await inbox(config, deps).states(ids.slice(i, i + STATES_BATCH))); }
+    catch (error) {
+      const message = (error as Error).message;
+      throw new Error(message.startsWith('cloud-inbox-') ? message : 'cloud-inbox-unreachable');
+    }
+  }
+  const finished: FinishedWorktree[] = [];
+  for (const worktree of found) {
+    if (!['completed', 'canceled'].includes(states[worktree.identifier]!)) continue;
+    // Ignored files, like node_modules, don't count; anything git can't answer for does.
+    const clean = await deps.exec('git', ['-C', worktree.path, 'status', '--porcelain', '--untracked-files=normal'], 30_000)
+      .then(({ stdout }) => stdout.trim() === '', () => false);
+    if (clean) finished.push(worktree);
+  }
+  return finished;
+}
+
+/**
+ * Removes each finished worktree after checking it again, with Orca's archive hook and its safe branch
+ * deletion; one failure never stops the rest. Logs one entry with the counts.
+ * ponytail: each re-check lists every Orca worktree again; fine for a few hundred.
+ */
+export async function removeFinishedWorktrees(config: RunnerConfig, deps: Deps): Promise<Removal[]> {
+  const results: Removal[] = [];
+  for (const worktree of await finishedWorktrees(config, deps)) {
+    let still: boolean;
+    try { still = (await finishedWorktrees(config, deps, worktree.path)).length === 1; }
+    catch (error) { results.push({ ...worktree, outcome: 'failed', reason: (error as Error).message }); continue; }
+    if (!still) { results.push({ ...worktree, outcome: 'kept', reason: 'no-longer-finished' }); continue; }
+    // Never --force or --allow-failed-archive-hook: a failed archive hook keeps the worktree.
+    const code = await orca(deps.exec, ['worktree', 'rm', '--worktree', `path:${worktree.path}`, '--run-hooks', '--delete-branch', '--json']);
+    results.push(code ? { ...worktree, outcome: 'failed', reason: code } : { ...worktree, outcome: 'removed' });
+  }
+  const count = (outcome: Removal['outcome']) => String(results.filter((result) => result.outcome === outcome).length);
+  deps.log({ event: 'worktrees', outcome: 'worktrees-cleared', removed: count('removed'), kept: count('kept'), failed: count('failed'), time: time(deps) });
+  return results;
+}
+
 const REPORTS = join(homedir(), 'Reports');
 const REPORTS_PORT = 8765;
 const TYPES: Record<string, string> = {
@@ -1002,6 +1080,22 @@ if (import.meta.main) {
     paused: join(stateDir, 'paused'),
     drain: join(stateDir, 'drain.json'),
   };
+  // Clears finished worktrees without the LaunchAgent: it claims nothing and writes no Runner state.
+  const mode = process.argv[2];
+  if (mode === '--list-finished-worktrees' || mode === '--remove-finished-worktrees') {
+    // The entry goes to the Runner's own log, where install.sh points the LaunchAgent; stdout is the result.
+    const log = (fields: Record<string, string>) => {
+      try { appendFileSync(join(homedir(), 'Library', 'Logs', 'factory-delegator', 'runner.log'), `${JSON.stringify(fields)}\n`); } catch {}
+    };
+    // Exits once the write lands: a pipe on macOS is asynchronous, so exiting first could cut the JSON short.
+    try {
+      const result = mode === '--list-finished-worktrees' ? await finishedWorktrees(config, deps) : await removeFinishedWorktrees(config, { ...deps, log });
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`, () => process.exit(0));
+    } catch (error) {
+      process.stderr.write(`factory-runner: ${(error as Error).message}; nothing removed\n`, () => process.exit(1));
+    }
+    await new Promise(() => {});
+  }
   startStatusHeartbeat(deps);
   serveReports(REPORTS, REPORTS_PORT, deps.log);
   deps.log({ event: 'start', outcome: 'ok' });

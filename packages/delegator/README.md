@@ -167,6 +167,39 @@ Other devices reach it over the tailnet: `tailscale serve --bg 8765`, which
 `do-deep-dive` runs on its first report, publishes the local port at the
 machine's tailnet address, and that config survives restarts.
 
+### Clear finished worktrees
+
+The Runner can remove the Orca worktrees of finished issues, so they stop piling up:
+
+```sh
+node packages/delegator/runner/runner.ts --list-finished-worktrees
+node packages/delegator/runner/runner.ts --remove-finished-worktrees
+```
+
+The list mode changes nothing. It prints the candidates as JSON, each with its
+display name, repo, branch, path and issue id. A worktree is a candidate only when:
+
+- it's on this Mac and isn't a repo's main checkout;
+- its branch's last segment starts with an issue id, as Linear names branches;
+- Cloud Inbox says the issue is completed or canceled (`🧹 Closing out` is started,
+  so a worktree stays until `do-closeout` sets `Done`);
+- every agent in it is `done`;
+- its working tree is clean: no uncommitted changes and no untracked files.
+  Ignored files such as `node_modules` don't count.
+
+The remove mode checks each candidate again right before it runs
+`orca worktree rm --run-hooks --delete-branch`. That runs the repo's archive
+script, and a failed one keeps the worktree. Orca deletes the local branch only
+when it can prove the branch merged. Nothing is forced. It prints each
+candidate's outcome, `removed`, `kept` or `failed`, with the reason, and one
+failure never stops the rest. It adds one `worktrees` / `worktrees-cleared` entry
+with the counts to `runner.log`; it isn't a job, so it never shows as the last
+failed job. When Orca or Cloud Inbox can't be reached, it removes nothing, says
+why and exits 1.
+
+Both modes use the Runner's config and work whether or not the Runner is running.
+They claim no jobs.
+
 ### Recovery and PR checks
 
 Before creating a worktree, the Runner saves launch intent in `launches.json`

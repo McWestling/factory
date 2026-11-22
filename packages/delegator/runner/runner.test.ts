@@ -13,7 +13,7 @@ import { test } from 'node:test';
 import type { AppAuth } from '../cloud-inbox/auth.ts';
 import { JobQueue } from '../cloud-inbox/queue.ts';
 import { handleRunner } from '../cloud-inbox/routes.ts';
-import { acknowledgeDrain, checkWatches, readWatches, startStatusHeartbeat, handleJob, launchArgs, loadConfig, NOT_ALLOWED, poll, rereadConfig, resumeWatches, serveReports, watchJobs, type Deps, type RunnerConfig } from './runner.ts';
+import { acknowledgeDrain, checkWatches, finishedWorktrees, removeFinishedWorktrees, readWatches, startStatusHeartbeat, handleJob, launchArgs, loadConfig, NOT_ALLOWED, poll, rereadConfig, resumeWatches, serveReports, watchJobs, type Deps, type RunnerConfig } from './runner.ts';
 import { JOB_KINDS, type Task } from '../contract.ts';
 
 const example = new URL('../config.example.json', import.meta.url);
@@ -1846,4 +1846,126 @@ test('the reports server refuses a request for another host name, so a rebound d
   for (const host of [`127.0.0.1:${port}`, `localhost:${port}`, 'mac.tailnet-example.ts.net', 'Mac.Tailnet-Example.TS.NET:443']) {
     assert.equal((await get(host)).body, 'private', host);
   }
+});
+
+/** An Orca `worktree ps` row on this Mac, at `branch`, with every agent done and nothing else running. */
+const worktreeRow = (branch: string, extra: Record<string, unknown> = {}) => ({
+  hostId: 'local', repo: 'repo', path: `/worktrees/${branch.split('/').pop()}`, branch: `refs/heads/${branch}`,
+  displayName: branch.split('/').pop(), isMainWorktree: false, isArchived: false, agents: [{ state: 'done' }], ...extra,
+});
+
+/**
+ * Deps for the finished-worktrees command: Orca lists `rows`, Cloud Inbox's real route answers `states`
+ * (anything else is unknown), `dirty` paths have changes, and `rm` maps a path to the Orca error its removal gets.
+ */
+function worktreeFakes(rows: unknown[], states: Record<string, string>, options: { dirty?: string[]; rm?: Record<string, string>; inbox?: 'down' } = {}) {
+  const argv: string[][] = [];
+  const logs: Record<string, string>[] = [];
+  const inboxConfig = { orgId: 'org', adminSecret: 'admin',
+    app: { clientId: 'client', clientSecret: 'secret', webhookSecret: 'webhook' }, machines: { 'example-machine': config.bearerSecret } };
+  const inbox = { states: async (ids: string[]) => Object.fromEntries(ids.map((id) => [id, states[id] ?? 'unknown'])) };
+  const deps: Deps = {
+    async fetch(input, init) {
+      if (options.inbox === 'down') throw new TypeError('fetch failed');
+      const url = new URL(String(input));
+      url.pathname = url.pathname.replace('/delegator', '');
+      return handleRunner(new Request(url, init), inboxConfig, inbox as never);
+    },
+    async exec(file, args) {
+      argv.push([file, ...args]);
+      if (file === 'git') return { stdout: options.dirty?.includes(args[1]!) ? '?? notes.txt\n' : '' };
+      if (args[1] === 'ps') return { stdout: JSON.stringify({ ok: true, result: { worktrees: rows } }) };
+      if (args[1] === 'rm') {
+        const code = options.rm?.[args[3]!.replace(/^path:/, '')];
+        if (code) throw orcaError(code);
+        return { stdout: ok };
+      }
+      throw new Error(`unexpected ${file} ${args.join(' ')}`);
+    },
+    log: (fields) => logs.push(fields),
+    launches: '/nonexistent/launches.json', watches: '/nonexistent/watching.json',
+    status: '/nonexistent/status.json', paused: '/nonexistent/paused',
+  };
+  return { deps, argv, logs, removed: () => argv.filter((args) => args[2] === 'rm') };
+}
+
+test('list mode returns worktrees of completed and canceled issues, and leaves out started, unknown and unnamed ones', async () => {
+  const rows = [
+    worktreeRow('someone/abc-1-done-thing'), worktreeRow('abc-2'), worktreeRow('someone/abc-3-in-flight'),
+    worktreeRow('someone/abc-4-never-heard-of'), worktreeRow('someone/tidy-up'), worktreeRow('main', { isMainWorktree: true }),
+  ];
+  const f = worktreeFakes(rows, { 'ABC-1': 'completed', 'ABC-2': 'canceled', 'ABC-3': 'started' });
+  assert.deepEqual(await finishedWorktrees(config, f.deps), [
+    { name: 'abc-1-done-thing', repo: 'repo', branch: 'someone/abc-1-done-thing', path: '/worktrees/abc-1-done-thing', identifier: 'ABC-1' },
+    { name: 'abc-2', repo: 'repo', branch: 'abc-2', path: '/worktrees/abc-2', identifier: 'ABC-2' },
+  ]);
+  assert.deepEqual(f.removed(), []);
+});
+
+test('a worktree with an agent not done, or with uncommitted or untracked files, is left out', async () => {
+  const rows = [
+    worktreeRow('abc-1-working', { agents: [{ state: 'done' }, { state: 'working' }] }),
+    worktreeRow('abc-2-edited'), worktreeRow('abc-3-new-file'), worktreeRow('abc-4-clean', { agents: [] }),
+  ];
+  const f = worktreeFakes(rows, { 'ABC-1': 'completed', 'ABC-2': 'completed', 'ABC-3': 'canceled', 'ABC-4': 'completed' },
+    { dirty: ['/worktrees/abc-2-edited', '/worktrees/abc-3-new-file'] });
+  assert.deepEqual((await finishedWorktrees(config, f.deps)).map((worktree) => worktree.identifier), ['ABC-4']);
+  assert.ok(f.argv.some((args) => args.join(' ') === 'git -C /worktrees/abc-4-clean status --porcelain --untracked-files=normal'));
+});
+
+test('remove mode removes each candidate with the archive hook and safe branch deletion, never forced, and logs the counts', async () => {
+  const f = worktreeFakes([worktreeRow('abc-1'), worktreeRow('abc-2'), worktreeRow('abc-3')],
+    { 'ABC-1': 'completed', 'ABC-2': 'canceled' });
+  const results = await removeFinishedWorktrees(config, f.deps);
+  assert.deepEqual(results.map(({ identifier, outcome }) => [identifier, outcome]), [['ABC-1', 'removed'], ['ABC-2', 'removed']]);
+  assert.deepEqual(f.removed(), [
+    ['orca', 'worktree', 'rm', '--worktree', 'path:/worktrees/abc-1', '--run-hooks', '--delete-branch', '--json'],
+    ['orca', 'worktree', 'rm', '--worktree', 'path:/worktrees/abc-2', '--run-hooks', '--delete-branch', '--json'],
+  ]);
+  assert.deepEqual(f.logs.map(({ time, ...fields }) => fields), [
+    { event: 'worktrees', outcome: 'worktrees-cleared', removed: '2', kept: '0', failed: '0' },
+  ]);
+});
+
+test('a failed removal is reported with its reason and the rest are still removed', async () => {
+  const f = worktreeFakes([worktreeRow('abc-1'), worktreeRow('abc-2'), worktreeRow('abc-3')],
+    { 'ABC-1': 'completed', 'ABC-2': 'completed', 'ABC-3': 'completed' }, { rm: { '/worktrees/abc-2': 'worktree_archive_hook_failed' } });
+  const results = await removeFinishedWorktrees(config, f.deps);
+  assert.deepEqual(results.map(({ identifier, outcome, reason }) => [identifier, outcome, reason]), [
+    ['ABC-1', 'removed', undefined], ['ABC-2', 'failed', 'worktree_archive_hook_failed'], ['ABC-3', 'removed', undefined],
+  ]);
+  assert.equal(f.removed().length, 3);
+  assert.deepEqual(f.logs.map(({ removed, kept, failed }) => [removed, kept, failed]), [['2', '0', '1']]);
+});
+
+test('remove mode checks each candidate again right before removing it, and keeps one that no longer qualifies', async () => {
+  const rows = [worktreeRow('abc-1'), worktreeRow('abc-2')];
+  const f = worktreeFakes(rows, { 'ABC-1': 'completed', 'ABC-2': 'completed' });
+  const exec = f.deps.exec;
+  // An agent starts in abc-2 while abc-1 is being removed.
+  f.deps.exec = async (file, args, timeout) => {
+    if (args[1] === 'rm') (rows[1] as { agents: unknown[] }).agents = [{ state: 'working' }];
+    return exec(file, args, timeout);
+  };
+  const results = await removeFinishedWorktrees(config, f.deps);
+  assert.deepEqual(results.map(({ identifier, outcome, reason }) => [identifier, outcome, reason]), [
+    ['ABC-1', 'removed', undefined], ['ABC-2', 'kept', 'no-longer-finished'],
+  ]);
+  assert.deepEqual(f.removed().map((args) => args[4]), ['path:/worktrees/abc-1']);
+});
+
+test('nothing is removed, and the reason is given, when Cloud Inbox or Orca is unreachable', async () => {
+  const down = worktreeFakes([worktreeRow('abc-1')], { 'ABC-1': 'completed' }, { inbox: 'down' });
+  await assert.rejects(removeFinishedWorktrees(config, down.deps), { message: 'cloud-inbox-unreachable' });
+  assert.deepEqual(down.removed(), []);
+  const orcaDown = worktreeFakes([], {});
+  orcaDown.deps.exec = async () => { throw Object.assign(new Error('spawn orca ENOENT'), { code: 'ENOENT' }); };
+  await assert.rejects(removeFinishedWorktrees(config, orcaDown.deps), { message: 'orca-unreachable' });
+});
+
+test('list mode never removes anything', async () => {
+  const f = worktreeFakes([worktreeRow('abc-1'), worktreeRow('abc-2')], { 'ABC-1': 'completed', 'ABC-2': 'canceled' });
+  assert.equal((await finishedWorktrees(config, f.deps)).length, 2);
+  assert.deepEqual(f.argv.filter(([file, ...args]) => file === 'orca' && args[1] !== 'ps'), []);
+  assert.deepEqual(f.logs, []);
 });
