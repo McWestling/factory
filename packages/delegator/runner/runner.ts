@@ -46,7 +46,7 @@ export type Exec = (file: string, args: string[], timeoutMs: number) => Promise<
 export type Deps = {
   fetch: typeof fetch;
   exec: Exec;
-  log: (fields: Record<string, string>) => void;
+  log: (fields: Record<string, string | number>) => void;
   /** Private file of launch intents and outcomes, keyed by session id. */
   launches: string;
   watches: string;
@@ -963,7 +963,7 @@ export async function removeFinishedWorktrees(config: RunnerConfig, deps: Deps):
     const code = await orca(deps.exec, ['worktree', 'rm', '--worktree', `path:${worktree.path}`, '--run-hooks', '--delete-branch', '--json']);
     results.push(code ? { ...worktree, outcome: 'failed', reason: code } : { ...worktree, outcome: 'removed' });
   }
-  const count = (outcome: Removal['outcome']) => String(results.filter((result) => result.outcome === outcome).length);
+  const count = (outcome: Removal['outcome']) => results.filter((result) => result.outcome === outcome).length;
   deps.log({ event: 'worktrees', outcome: 'worktrees-cleared', removed: count('removed'), kept: count('kept'), failed: count('failed'), time: time(deps) });
   return results;
 }
@@ -1084,7 +1084,7 @@ if (import.meta.main) {
   const mode = process.argv[2];
   if (mode === '--list-finished-worktrees' || mode === '--remove-finished-worktrees') {
     // The entry goes to the Runner's own log, where install.sh points the LaunchAgent; stdout is the result.
-    const log = (fields: Record<string, string>) => {
+    const log = (fields: Record<string, string | number>) => {
       try { appendFileSync(join(homedir(), 'Library', 'Logs', 'factory-delegator', 'runner.log'), `${JSON.stringify(fields)}\n`); } catch {}
     };
     // Exits once the write lands: a pipe on macOS is asynchronous, so exiting first could cut the JSON short.
