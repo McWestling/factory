@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -8,7 +8,7 @@ import { takeShot, type Box, type Browser, type Shot } from './capture.ts';
 type Element = { visible?: boolean; box?: Box };
 
 /** A fake browser serving one page: its status, the elements found by role and name or selector, and a log of every call. */
-function fakeBrowser(page: { status?: number; roles?: Record<string, Element>; selectors?: Record<string, Element> } = {}) {
+function fakeBrowser(page: { status?: number; scroll?: { x: number; y: number }; closeFails?: boolean; roles?: Record<string, Element>; selectors?: Record<string, Element> } = {}) {
   const log: string[] = [];
   const locator = (key: string, found?: Element): any => ({
     first: () => locator(key, found),
@@ -20,7 +20,6 @@ function fakeBrowser(page: { status?: number; roles?: Record<string, Element>; s
       if (!found?.visible) throw new Error(`Timeout waiting for ${key}`);
       log.push(`click ${key}`);
     },
-    async scrollIntoViewIfNeeded() {},
     async boundingBox() {
       return found?.box ?? null;
     },
@@ -38,8 +37,12 @@ function fakeBrowser(page: { status?: number; roles?: Record<string, Element>; s
             },
             getByRole: (role, { name }) => locator(`${role} "${name}"`, page.roles?.[`${role} "${name}"`]),
             locator: (selector) => locator(selector, page.selectors?.[selector] ?? { visible: true }),
+            async evaluate(expression) {
+              assert.equal(expression, '({ x: scrollX, y: scrollY })');
+              return (page.scroll ?? { x: 0, y: 0 }) as any;
+            },
             async screenshot(options) {
-              const shot = JSON.stringify({ clip: options.clip, mask: options.mask.map((m: any) => m.key) });
+              const shot = JSON.stringify({ clip: options.clip, fullPage: options.fullPage, mask: options.mask.map((m: any) => m.key) });
               log.push(`screenshot ${shot}`);
               return Buffer.from(shot);
             },
@@ -47,6 +50,7 @@ function fakeBrowser(page: { status?: number; roles?: Record<string, Element>; s
         },
         async close() {
           log.push('close');
+          if (page.closeFails) throw new Error('browser crashed');
         },
       };
     },
@@ -113,19 +117,26 @@ test('clicks run in order, each waiting for its target, then the wait target mus
   ]);
 });
 
-test('a crop shoots the marked region plus padding, no taller than the cap and never past the page edge', async () => {
+test('a crop shoots the marked region plus padding, in page coordinates, no taller than the cap and never past the page edge', async () => {
   const selectors = {
     '[data-help-crop="tiles"]': { visible: true, box: { x: 100, y: 200, width: 300, height: 400 } },
     '[data-help-crop="nav"]': { visible: true, box: { x: 4, y: 0, width: 200, height: 100 } },
+    '[data-help-crop="table"]': { visible: true, box: { x: 0, y: 50, width: 390, height: 2000 } },
   };
-  const clip = async (crop: string, cropHeight?: number) => {
-    const { browser, log } = fakeBrowser({ selectors });
-    await takeShot(browser, { page: '/', viewport: 'desktop', crop, cropHeight, out: out() }, options);
-    return JSON.parse(log.find((line) => line.startsWith('screenshot'))!.slice('screenshot '.length)).clip;
+  const screenshot = async (crop: string, cropHeight?: number, scroll?: { x: number; y: number }) => {
+    const { browser, log } = fakeBrowser({ selectors, scroll });
+    await takeShot(browser, { page: '/', viewport: 'mobile', crop, cropHeight, out: out() }, options);
+    const { clip, fullPage } = JSON.parse(log.find((line) => line.startsWith('screenshot'))!.slice('screenshot '.length));
+    assert.equal(fullPage, true, 'a viewport screenshot would trim the clip to the viewport');
+    return clip;
   };
-  assert.deepEqual(await clip('tiles'), { x: 84, y: 184, width: 332, height: 432 });
-  assert.deepEqual(await clip('tiles', 300), { x: 84, y: 184, width: 332, height: 300 });
-  assert.deepEqual(await clip('nav'), { x: 0, y: 0, width: 220, height: 116 });
+  assert.deepEqual(await screenshot('tiles'), { x: 84, y: 184, width: 332, height: 432 });
+  assert.deepEqual(await screenshot('tiles', 300), { x: 84, y: 184, width: 332, height: 300 });
+  assert.deepEqual(await screenshot('nav'), { x: 0, y: 0, width: 220, height: 116 });
+  // Scrolled down 1500px and across 10px: the clip moves with the page, not the viewport.
+  assert.deepEqual(await screenshot('tiles', undefined, { x: 10, y: 1500 }), { x: 94, y: 1684, width: 332, height: 432 });
+  // Taller than the 844px mobile viewport, and kept whole.
+  assert.deepEqual(await screenshot('table'), { x: 0, y: 34, width: 406, height: 2032 });
 });
 
 test('a 404 fails the shot', async () => {
@@ -161,4 +172,20 @@ test('a failed sign-in fails the shot and writes nothing', async () => {
   const shot: Shot = { page: '/', viewport: 'desktop', as: 'Nobody Known', out: out() };
   await assert.rejects(takeShot(browser, shot, { ...options, signIn }), /unknown person Nobody Known/);
   assert.equal(existsSync(shot.out), false);
+});
+
+test('a failed browser close fails the shot and leaves the existing image untouched', async () => {
+  const shot: Shot = { page: '/', viewport: 'desktop', out: out() };
+  mkdirSync(join(shot.out, '..'), { recursive: true });
+  writeFileSync(shot.out, 'old image');
+  const { browser } = fakeBrowser({ closeFails: true });
+  await assert.rejects(takeShot(browser, shot, options), /browser crashed/);
+  assert.equal(readFileSync(shot.out, 'utf8'), 'old image');
+});
+
+test('a failed write leaves no temporary file behind', async () => {
+  const shot: Shot = { page: '/', viewport: 'desktop', out: out() };
+  mkdirSync(shot.out, { recursive: true }); // a folder where the image should go: the rename fails
+  await assert.rejects(takeShot(fakeBrowser().browser, shot, options));
+  assert.equal(existsSync(`${shot.out}.tmp`), false);
 });
