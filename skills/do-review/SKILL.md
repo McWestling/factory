@@ -20,11 +20,11 @@ Reach the tracker only through the doc's **Tracker** access, and probe it once w
 
 This is the one place that names it; a fork changes it here.
 
-- **Agent:** `claude`
-- **Model:** `fable`
+- **Agent:** `codex`
+- **Model:** `gpt-6-astra` (GPT-6 Astra)
 - **Effort:** `medium`
 
-A reviewer in the arguments overrides it: an agent, a model, an effort, or any of them together, such as `codex gpt-6.1-sol high`. A part it leaves out keeps the default when the agent is the same, and otherwise uses that agent's own default. Orca takes an effort only with a model, so an effort named without a model for another agent is dropped, and the report says so.
+A reviewer in the arguments overrides it: an agent, a model, an effort, or any of them together, such as `codex gpt-6.1-sol high`. A part it leaves out keeps the default when the agent is the same, and otherwise uses that agent's own default: `claude` alone runs Claude's default model, not Astra. Orca takes an effort only with a model, so an effort named without a model for another agent is dropped, and the report says so.
 
 ## Who is in the session
 
