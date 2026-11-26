@@ -35,12 +35,12 @@ A small, clear idea never needs a map. It becomes a single issue with no project
 
 ```mermaid
 flowchart TD
-    capture["1. Capture<br/>🧑 you jot it down or file it yourself<br/>🤖 an agent files your notes"]
-    triage["2. Triage<br/>🤖 an agent proposes a route<br/>🧑 you choose"]
-    refine["3. Refine<br/>🤖 an agent asks<br/>🧑 you decide"]
-    implement["4. Implement<br/>🤖 an agent builds it"]
-    review["5. Review<br/>🤖 checks and a reviewer agent<br/>🧑 then you merge"]
-    closeout["6. Closeout<br/>🤖 an agent finishes the ticket"]
+    capture["1. Capture<br/>you file an idea, or an agent files your notes"]
+    triage["2. Triage<br/>an agent proposes a route, you choose"]
+    refine["3. 🗺️ Refine<br/>an agent asks, you decide"]
+    implement["4. 🛠️ Implement<br/>an agent builds it"]
+    review["5. Review<br/>checks and a reviewer agent, then you merge"]
+    closeout["6. 🧹 Closeout<br/>an agent finishes the ticket"]
 
     capture -- "Triage issue" --> triage
     triage -- "map" --> refine
@@ -52,12 +52,14 @@ flowchart TD
 
 ## The six steps
 
+Three steps carry an emoji: 🗺️ Refine, 🛠️ Implement and 🧹 Closeout. Factory marks an agent's workspace and its messages in Linear with the same emoji, so you can see at a glance which step a piece of work is in.
+
 1. **Capture.** Every idea starts as an issue in Triage. You can file one yourself, straight into the tracker. Or you can jot ideas on sticky notes, or say them out loud, and hand the pile to an agent: it writes each one up in your own words, asks about anything it can't read, and decides nothing.
 2. **Triage.** An agent goes through the queue with you. It looks up related tickets and code, and proposes a route for each idea; you make the call. An idea you want leaves one of two ways. If it is small and clear, it becomes a ready issue an agent can build straight away. If it needs planning, it goes into a map, to be planned in the next step.
-3. **Refine.** An agent works a map with you. You settle its decision tickets one per session: the agent does the reading and recommends an answer, and you decide. Once the decisions behind a piece of work are settled, the agent slices it into implementation issues and shows you the list before filing them.
-4. **Implement.** You hand one implementation issue to an agent. It writes a failing test first where it can, builds the change, runs the repo's checks, and opens a draft pull request.
-5. **Review.** The repo's checks run on the draft. A reviewer agent, a second agent that can read but not edit, can check the draft too: the agent that built it fixes what the reviewer finds, for up to three rounds. In a repo with PR autopilot, the pull request is marked ready automatically once the checks pass. Then you review it and merge it. No agent ever merges.
-6. **Closeout.** After the merge, an agent marks the issue done, ticks off what landed, runs the after-merge steps it can, and tells you what is still open. It ends with a verdict, "Good to close" or "Not yet", and suggests the next ticket.
+3. **🗺️ Refine.** An agent works a map with you. You settle its decision tickets one per session: the agent does the reading and recommends an answer, and you decide. Once the decisions behind a piece of work are settled, the agent slices it into implementation issues and shows you the list before filing them.
+4. **🛠️ Implement.** You hand one implementation issue to an agent. It writes a failing test first where it can, builds the change, runs the repo's checks, and opens a draft pull request.
+5. **Review.** The repo's checks run on the draft. A reviewer agent, a second agent that can read but not edit, can check the draft too: the agent that built it fixes what the reviewer finds, for up to three rounds. Today someone has to start that review by hand; see [what isn't here yet](#what-isnt-here-yet). In a repo with PR autopilot, the pull request is marked ready automatically once the checks pass. Then you review it and merge it. No agent ever merges.
+6. **🧹 Closeout.** After the merge, an agent marks the issue done, ticks off what landed, runs the after-merge steps it can, and tells you what is still open. It ends with a verdict, "Good to close" or "Not yet", and suggests the next ticket.
 
 ## A worked example
 
@@ -73,7 +75,7 @@ The agent files it in Triage as `ABC-101 Remind guests before a dinner`, with th
 
 > 2026-03-02 — Triage: New map. Reminding guests needs a decision about how and when, and more than one PR. Map: Dinner reminders.
 
-**3. Refine.** The map gets one decision ticket, `ABC-103 Decide how guests are reminded`. The agent asks: email or push notification, and how long before? It recommends email, since Potluck already sends invitations that way. You answer:
+**3. 🗺️ Refine.** The map gets one decision ticket, `ABC-103 Decide how guests are reminded`. The agent asks: email or push notification, and how long before? It recommends email, since Potluck already sends invitations that way. You answer:
 
 > Email only, at 9am the day before. The host can turn it off for a dinner.
 
@@ -82,17 +84,26 @@ With that settled, the agent slices the work in two:
 - `ABC-104 Let a host turn reminders on or off for a dinner`
 - `ABC-105 Email guests a reminder the day before a dinner`, which waits for `ABC-104`
 
-**4. Implement.** You hand `ABC-104` to an agent. It opens a draft pull request titled `Let a host turn reminders on or off for a dinner (ABC-104)`.
+**4. 🛠️ Implement.** You hand `ABC-104` to an agent. It opens a draft pull request titled `Let a host turn reminders on or off for a dinner (ABC-104)`.
 
 **5. Review.** The checks pass. The reviewer agent finds that turning reminders off doesn't survive editing the dinner; the building agent fixes it and adds a test. The reviewer's second verdict is `happy`. You read the pull request and merge it.
 
-**6. Closeout.** The agent marks `ABC-104` done and reports:
+**6. 🧹 Closeout.** The agent marks `ABC-104` done and reports:
 
 > **Verdict:** Good to close
 >
 > **Suggested next ticket:** ABC-105 Email guests a reminder the day before a dinner
 
 You hand over `ABC-105`, and steps 4 to 6 run again.
+
+## What isn't here yet
+
+Factory covers the path from an idea to a merged change. These parts are missing or unfinished:
+
+- **Review doesn't start by itself.** The reviewer agent exists, but a pull request gets one only when someone asks. Nothing waits for its verdict either: PR autopilot marks a pull request ready on the checks alone. Making review an automatic step is planned as part of Verifier, the part of Factory that runs a repo's checks.
+- **Factory doesn't improve itself.** It learns nothing from its own runs. When a skill gives an agent poor instructions, a person has to notice and file an idea, like any other.
+- **Nothing watches the running app.** Every idea starts with a person noticing something. Factory doesn't read an app's performance or metrics to spot problems before you do.
+- **Help content is only starting.** A shipped feature often needs a help article and fresh screenshots. Factory has the beginnings of a tool that takes an article's screenshots from the running app, but writing help content isn't a step in the flow yet.
 
 ## Where each step lives
 
