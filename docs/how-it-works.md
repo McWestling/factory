@@ -2,9 +2,23 @@
 
 Factory takes an idea from a jotted note to a merged change in six steps. You, the human, make every decision. Coding agents do the legwork in between.
 
+## Words to know
+
+- **Issue** or **ticket:** one item in the issue tracker. Factory uses the two words for the same thing.
+- **Triage:** the queue of new issues nobody has reviewed yet. Also the step that works through it.
+- **Map:** a project in the tracker for one goal that is too big or too unclear to build straight away. It holds the goal, the questions still open on the way to it, and the work once those are settled.
+- **Decision ticket:** one open question on a map. Nothing gets built from it; answering it is the work.
+- **Implementation issue:** one piece of build work, written clearly enough for an agent to pick up and small enough for one pull request. It is a **ready issue** once nothing blocks it.
+- **Slice:** to cut settled work into implementation issues. Each one is also called a slice.
+- **Draft PR:** a pull request marked as not yet ready to merge. Agents always open theirs as drafts.
+- **Closeout:** the tidying after a merge: marking the issue done and checking nothing is left over.
+- **Skill:** a set of written instructions an agent follows. Each step below has one.
+
+## The flow
+
 ```mermaid
 flowchart TD
-    capture["1. Capture<br/>🧑 you jot it down<br/>🤖 an agent files it"]
+    capture["1. Capture<br/>🧑 you jot it down or file it yourself<br/>🤖 an agent files your notes"]
     triage["2. Triage<br/>🤖 an agent proposes a route<br/>🧑 you choose"]
     refine["3. Refine<br/>🤖 an agent asks<br/>🧑 you decide"]
     implement["4. Implement<br/>🤖 an agent builds it"]
@@ -21,18 +35,18 @@ flowchart TD
 
 ## The six steps
 
-1. **Capture.** You jot ideas down on sticky notes or say them out loud. An agent writes each one up in your own words as a ticket in Triage, the queue of things nobody has reviewed yet. It asks about anything it can't read, and decides nothing.
-2. **Triage.** An agent goes through the queue with you. It looks up related tickets and code, and proposes a route for each idea; you make the call. An idea you want leaves one of two ways. If it is small and clear, it becomes a ready issue an agent can build straight away. If it needs planning, it goes into a **map**: a project that holds one goal, the questions still open on the way to it, and the work once it is settled.
-3. **Refine.** An agent works a map with you. Each open question is a **decision ticket**, and you settle them one per session: the agent does the reading and recommends an answer, and you decide. Once the decisions behind a piece of work are settled, the agent **slices** it: it cuts the work into implementation issues, each small enough for one pull request, and shows you the list before filing them.
+1. **Capture.** Every idea starts as an issue in Triage. You can file one yourself, straight into the tracker. Or you can jot ideas on sticky notes, or say them out loud, and hand the pile to an agent: it writes each one up in your own words, asks about anything it can't read, and decides nothing.
+2. **Triage.** An agent goes through the queue with you. It looks up related tickets and code, and proposes a route for each idea; you make the call. An idea you want leaves one of two ways. If it is small and clear, it becomes a ready issue an agent can build straight away. If it needs planning, it goes into a map, to be planned in the next step.
+3. **Refine.** An agent works a map with you. You settle its decision tickets one per session: the agent does the reading and recommends an answer, and you decide. Once the decisions behind a piece of work are settled, the agent slices it into implementation issues and shows you the list before filing them.
 4. **Implement.** You hand one implementation issue to an agent. It writes a failing test first where it can, builds the change, runs the repo's checks, and opens a draft pull request.
 5. **Review.** The repo's checks run on the draft. A reviewer agent, a second agent that can read but not edit, can check the draft too: the agent that built it fixes what the reviewer finds, for up to three rounds. In a repo with PR autopilot, the pull request is marked ready automatically once the checks pass. Then you review it and merge it. No agent ever merges.
-6. **Closeout.** After the merge, an agent marks the issue done, ticks off what landed, runs the after-merge steps it can, and tells you what is still open. That is **closeout**. It ends with a verdict, "Good to close" or "Not yet", and suggests the next ticket.
+6. **Closeout.** After the merge, an agent marks the issue done, ticks off what landed, runs the after-merge steps it can, and tells you what is still open. It ends with a verdict, "Good to close" or "Not yet", and suggests the next ticket.
 
 ## A worked example
 
 Potluck is a made-up app for planning shared dinners. Here is one idea going all the way through.
 
-**1. Capture.** A sticky note says:
+**1. Capture.** You could type this one into the tracker yourself. This time it is a sticky note, which says:
 
 > remind people before the dinner!!
 
@@ -65,4 +79,4 @@ You hand over `ABC-105`, and steps 4 to 6 run again.
 
 ## Where each step lives
 
-Each step is a skill, a set of written instructions an agent follows: [`do-post-its`](../skills/do-post-its/SKILL.md), [`do-triage`](../skills/do-triage/SKILL.md), [`do-refine`](../skills/do-refine/SKILL.md), [`do-implement`](../skills/do-implement/SKILL.md), [`do-review`](../skills/do-review/SKILL.md) and [`do-closeout`](../skills/do-closeout/SKILL.md). PR autopilot is described in [autopilot.md](autopilot.md).
+Each step has a skill: [`do-post-its`](../skills/do-post-its/SKILL.md), [`do-triage`](../skills/do-triage/SKILL.md), [`do-refine`](../skills/do-refine/SKILL.md), [`do-implement`](../skills/do-implement/SKILL.md), [`do-review`](../skills/do-review/SKILL.md) and [`do-closeout`](../skills/do-closeout/SKILL.md). PR autopilot is described in [autopilot.md](autopilot.md).
