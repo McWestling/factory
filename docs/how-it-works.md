@@ -2,17 +2,34 @@
 
 Factory takes an idea from a jotted note to a merged change in six steps. You, the human, make every decision. Coding agents do the legwork in between.
 
+## What a map is
+
+Factory keeps its plans in [Linear](https://linear.app), an issue tracker, and adds no tool of its own. Its main idea is the **map**, and a map is a Linear project used in a particular way.
+
+Some goals are too big or too unclear to hand to an agent: you can say where you want to end up, but not how to get there. A map holds one of those goals. It is incomplete on purpose. It starts as a destination and a few open questions, and fills in as you answer them.
+
+- **The project's description is the map.** It names the destination, lists each decision made so far with a link, sketches the work nobody can pin down yet, and says what is out of scope.
+- **The project's issues are the map's tickets.** There are two kinds, below. They are flat: no sub-issues.
+- **Blocking relations set the order.** Linear's "blocks" and "blocked by" links between issues say what has to happen first.
+- **The project's status says how far along the map is:** just created, planned out, being worked, or done.
+
+A small, clear idea never needs a map. It becomes a single issue with no project.
+
 ## Words to know
 
-- **Issue** or **ticket:** one item in the issue tracker. Factory uses the two words for the same thing.
-- **Triage:** the queue of new issues nobody has reviewed yet. Also the step that works through it.
-- **Map:** a project in the tracker for one goal that is too big or too unclear to build straight away. It holds the goal, the questions still open on the way to it, and the work once those are settled.
-- **Decision ticket:** one open question on a map. Nothing gets built from it; answering it is the work.
-- **Implementation issue:** one piece of build work, written clearly enough for an agent to pick up and small enough for one pull request. It is a **ready issue** once nothing blocks it.
-- **Slice:** to cut settled work into implementation issues. Each one is also called a slice.
-- **Draft PR:** a pull request marked as not yet ready to merge. Agents always open theirs as drafts.
-- **Closeout:** the tidying after a merge: marking the issue done and checking nothing is left over.
-- **Skill:** a set of written instructions an agent follows. Each step below has one.
+| Word | What it means | In Linear |
+| --- | --- | --- |
+| **Triage** | New ideas nobody has reviewed yet. Also the step that reviews them. | Issues in the `Triage` status |
+| **Map** | The plan for one goal, as above | A project |
+| **Decision ticket** | One open question on a map. Nothing gets built from it; answering it is the work. | An issue in the project with a `wayfinder:` label. The answer is a comment on it. |
+| **Implementation issue** | One piece of build work, written clearly enough for an agent to pick up, and small enough for one pull request | An issue with no `wayfinder:` label, in a map's project or on its own |
+| **Ready issue** | An implementation issue an agent can start now | In the `Todo` status, with nothing blocking it |
+| **Slice** | To cut settled work into implementation issues. Each one is also called a slice. | New issues in the project |
+| **Product** | The app or site an issue belongs to | A label on the issue, and an initiative that holds the product's maps |
+| **Delegate** | To hand an issue to an agent | Linear's delegate field on the issue, or a command you type to an agent yourself |
+| **Closeout** | The tidying after a merge: marking the issue done and checking nothing is left over | The issue moves to `Done` |
+
+"Issue" and "ticket" mean the same thing. A **skill** is a set of written instructions an agent follows; each step below has one. The status and label names are the ones this repo uses, set in its [settings file](issue-tracker.md).
 
 ## The flow
 
