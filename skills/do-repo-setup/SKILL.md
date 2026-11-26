@@ -161,7 +161,7 @@ Check each part by structure, never by judging the wording:
 - **What it does** and **Who it's for:** a `##` heading with that text, ignoring case and straight or curly apostrophes.
 - **Links:** a `##` heading, before any setup or code, whose section is only a list of links.
 
-Skip this step if the README has the title, pitch, What it does and Who it's for. Otherwise write the missing parts, Links included if it has none, in the shape's order, above any developer sections. Keep the parts already there as they are, and leave developer sections alone. With no `README.md`, write the whole intro.
+Skip the README edits if the README has the title, pitch, What it does and Who it's for; the [`PUBLIC.md` check](#first-publicmd) below runs either way. Otherwise write the missing parts, Links included if it has none, in the shape's order, above any developer sections. Keep the parts already there as they are, and leave developer sections alone. With no `README.md`, write the whole intro.
 
 Draft it from the repo itself (code, existing docs, the product's initiative description). If you can't tell what the product does or who it's for, ask in step 3.
 
