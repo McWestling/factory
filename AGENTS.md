@@ -43,6 +43,7 @@ The repo is organised by kind of thing. Add a folder only when its first file la
 - **Stack packs:** `packs/<name>/`.
 - **Tool configs:** `tools/<name>/`.
 - **Prose contracts:** `docs/<contract>.md`.
+- **Public page:** `PUBLIC.md` at the root, per [`docs/public-page.md`](docs/public-page.md). Keep it current when a change alters what Factory does or who it's for.
 - **Glossary:** `GLOSSARY.md` at the root. Add or change a term in the PR that brings it in.
 - **Example config and schemas:** `*.example` files and machine-readable schemas sit beside the code that reads them. The real config is gitignored: add its path to `.gitignore` in the same PR.
 
