@@ -16,12 +16,13 @@ const lucide = [
   `<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>`,
   `<path d="m16 22-1-4"/><path d="M19 14a1 1 0 0 0 1-1v-1a2 2 0 0 0-2-2h-3a1 1 0 0 1-1-1V4a2 2 0 0 0-4 0v5a1 1 0 0 1-1 1H6a2 2 0 0 0-2 2v1a1 1 0 0 0 1 1"/><path d="M19 14H5l-1.973 6.767A1 1 0 0 0 4 22h16a1 1 0 0 0 .973-1.233z"/><path d="m8 22 1-4"/>`,
 ];
-// The steps where a person is brought in to decide.
+// The steps where a human is brought in to decide.
 const lit = [false, true, true, false, true, false];
 
 const css = `.fd{--ink:#17130f;--acc:#8f8372;--on:#17130f;color:var(--ink)}
 @media(prefers-color-scheme:dark){.fd{--ink:#eee6d6;--acc:#a99f8e}}
 .fd text{fill:var(--ink);font-family:Georgia,"Times New Roman",serif;stroke:none}
+.fd text.num{font:bold 13px system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif}
 .fd .n{fill:none}.fd .k{fill:none}.fd .i{fill:var(--ink)}.fd .a{fill:var(--acc)}.fd text.on{fill:var(--on)}.fd .s-on{stroke:var(--on)}
 .fd .hum{stroke:#e0632a}.fd .hum-t{fill:#e0632a}
 .fd .lamp{fill:#e0632a;animation:fd-lamp 2s steps(1,end) infinite}
@@ -96,7 +97,7 @@ const lamp = (x: number, top: number, on: boolean) =>
   }`;
 // A point on the timeline, a 45° leader and a numbered circle.
 const callout = (x: number, y: number, n: number) =>
-  `<circle class="i" cx="${x}" cy="${y}" r="2.5" stroke="none"/><line x1="${x}" y1="${y}" x2="${x + 23.6}" y2="${y + 23.6}" stroke-width="0.8"/><circle class="n" cx="${x + 30}" cy="${y + 30}" r="9" stroke-width="0.8"/><text x="${x + 30}" y="${y + 33.5}" font-size="10.5" text-anchor="middle">${n}</text>`;
+  `<circle class="i" cx="${x}" cy="${y}" r="2.5" stroke="none"/><line x1="${x}" y1="${y}" x2="${x + 23.2}" y2="${y + 23.2}" stroke-width="0.8"/><circle class="n" cx="${x + 31}" cy="${y + 31}" r="11" stroke-width="0.8"/><text class="num" x="${x + 31}" y="${y + 35.6}" text-anchor="middle">${n}</text>`;
 const line = (from: number, to: number, y: number) =>
   `<line x1="${from}" y1="${y}" x2="${to - 8}" y2="${y}"/><polygon class="i" points="${to},${y} ${to - 9},${y - 4.5} ${to - 9},${y + 4.5}" stroke="none"/>`;
 const at = (x: number, y: number, s: string) => `<g transform="translate(${x} ${y})">${s}</g>`;
@@ -134,7 +135,7 @@ const pile = `${tilt(30, 80, -8, mail(22, 15))}${tilt(36, 60, -14, issue(20, 16)
 const behind = (i: number) => `${lamp(shapes[i].lamp, shapes[i].top, lit[i])}${back(i)}`;
 const station = (i: number) => `${front(i)}${plaque(i, shapes[i].icon, 17, 0.9, 1.6)}${callout(0, -SINK, i + 1)}`;
 
-const stripLabel = "An idea's journey: a sticky note travels along a timeline through six stations, each marked with its icon on a round plaque, and ends as a finished change. An orange lamp is lit on the second, third and fifth stations, where a person decides.";
+const stripLabel = "An idea's journey: a sticky note travels along a timeline through six stations, each marked with its icon on a round plaque, and ends as a finished change. An orange lamp is lit on the second, third and fifth stations, where a human decides.";
 // One layout: where the six stations stand, where the still items sit, and the legs a moving item travels.
 type Leg = { f: number; x: number; y: number; a: number[]; b: number[]; pass?: 1; i?: 0; o?: 0; end?: 1 };
 type Layout = { w: number; h: number; label: string; lines: string; at: number[][]; still: [number, number, number][]; legs: Leg[] };
@@ -188,13 +189,16 @@ ${stations}
 const S = 1.9; // stations are drawn larger here
 const BASE = 240;
 const t = (x: number, y: number, s: string, extra = "") => `<text x="${x}" y="${y}" font-size="7"${extra}>${s}</text>`;
+// Potluck's mark, a lidded pot, centred on x,y. It is stamped on the things that belong to the example.
+const pot = (x: number, y: number, k = 0.6, cls = "n") =>
+  `<g class="${cls}" transform="translate(${x} ${y}) scale(${k})" stroke-width="${r1(0.9 / k)}"><path d="M-5,-2 H5 V2 Q5,5 2,5 H-2 Q-5,5 -5,2 Z M-5,0 H-7 M5,0 H7 M-6,-2 H6 M-4,-2 Q0,-6.5 4,-2"/></g>`;
 const note = (x: number, lines: string[], hand: boolean) =>
-  `<rect class="a" x="${x}" y="${BASE - 52}" width="52" height="52"/>${lines.map((l, n) => t(x + 5, BASE - (lines.length > 3 ? 40 : 35) + n * (lines.length > 3 ? 10 : 11), l, ` class="on"${hand ? ' font-style="italic"' : ""}`)).join("")}`;
+  `<rect class="a" x="${x}" y="${BASE - 52}" width="52" height="52"/>${lines.map((l, n) => t(x + 5, BASE - (lines.length > 3 ? 40 : 35) + n * (lines.length > 3 ? 10 : 11), l, ` class="on"${hand ? ' font-style="italic"' : ""}`)).join("")}${hand ? "" : pot(x + 43, BASE - 45, 0.6, "n s-on")}`;
 const card = (x: number, top: number, id: string, lines: string[], brown: boolean) =>
-  `<rect class="k" x="${x}" y="${top}" width="70" height="58"/><line x1="${x}" y1="${top + 18}" x2="${x + 70}" y2="${top + 18}"/><circle class="${brown ? "a" : "n"}" cx="${x + 61}" cy="${top + 9}" r="3"${brown ? ' stroke="none"' : ""}/>${t(x + 5, top + 12, id, ' font-weight="bold"')}${lines.map((l, n) => t(x + 5, top + 30 + n * 11, l)).join("")}`;
+  `<rect class="k" x="${x}" y="${top}" width="70" height="58"/><line x1="${x}" y1="${top + 18}" x2="${x + 70}" y2="${top + 18}"/><circle class="${brown ? "a" : "n"}" cx="${x + 61}" cy="${top + 9}" r="3"${brown ? ' stroke="none"' : ""}/>${t(x + 5, top + 12, id, ' font-weight="bold"')}${pot(x + 49, top + 9)}${lines.map((l, n) => t(x + 5, top + 30 + n * 11, l)).join("")}`;
 // A map: a folded sheet with the idea at one end, a flag at the destination, and the way between unknown.
 const map = (x: number, top: number, name: string) =>
-  `<path class="k" d="M${x},${top + 5} L${x + 25},${top} L${x + 51},${top + 5} L${x + 76},${top} V${top + 59} L${x + 51},${top + 64} L${x + 25},${top + 59} L${x},${top + 64} Z"/><path class="n" d="M${x + 25},${top} V${top + 59} M${x + 51},${top + 5} V${top + 64}" stroke-width="0.5"/>${t(x + 6, top + 18, name, ' font-weight="bold"')}<rect class="a" x="${x + 7}" y="${top + 42}" width="11" height="11" stroke="none"/><path class="n" d="M${x + 21},${top + 47} C${x + 32},${top + 28} ${x + 44},${top + 58} ${x + 61},${top + 43}" stroke-dasharray="2.5 2.5"/><line x1="${x + 63}" y1="${top + 44}" x2="${x + 63}" y2="${top + 26}"/><path class="a" d="M${x + 63},${top + 26} L${x + 72},${top + 29.5} L${x + 63},${top + 33} Z"/><text x="${x + 31}" y="${top + 35}" font-size="9" font-weight="bold">?</text><text x="${x + 47}" y="${top + 59}" font-size="9" font-weight="bold">?</text>`;
+  `<path class="k" d="M${x},${top + 5} L${x + 25},${top} L${x + 51},${top + 5} L${x + 76},${top} V${top + 59} L${x + 51},${top + 64} L${x + 25},${top + 59} L${x},${top + 64} Z"/><path class="n" d="M${x + 25},${top} V${top + 59} M${x + 51},${top + 5} V${top + 64}" stroke-width="0.5"/>${t(x + 6, top + 18, name, ' font-weight="bold"')}<rect class="a" x="${x + 7}" y="${top + 42}" width="11" height="11" stroke="none"/><path class="n" d="M${x + 21},${top + 47} C${x + 32},${top + 28} ${x + 44},${top + 58} ${x + 61},${top + 43}" stroke-dasharray="2.5 2.5"/><line x1="${x + 63}" y1="${top + 44}" x2="${x + 63}" y2="${top + 26}"/><path class="a" d="M${x + 63},${top + 26} L${x + 72},${top + 29.5} L${x + 63},${top + 33} Z"/><text x="${x + 31}" y="${top + 35}" font-size="9" font-weight="bold">?</text><text x="${x + 47}" y="${top + 59}" font-size="9" font-weight="bold">?</text>${pot(x + 66, top + 52)}`;
 const block = (x: number, mark: string) =>
   `<path class="a" d="M${x},${BASE - 44} L${x + 12},${BASE - 54} H${x + 56} L${x + 44},${BASE - 44} Z"/><path class="a" d="M${x + 44},${BASE - 44} L${x + 56},${BASE - 54} V${BASE - 10} L${x + 44},${BASE} Z"/><rect class="a" x="${x}" y="${BASE - 44}" width="44" height="44"/>${mark}`;
 const pr = (x: number) => block(x, `<text class="on" x="${x + 22}" y="${BASE - 18}" font-size="11" text-anchor="middle">PR</text>`);
@@ -213,7 +217,7 @@ const handwritten = ["remind", "people before", "the dinner!!"];
 // ---- Where ideas come from ----
 // A heap, not a row on a line: these have no order and aren't going anywhere yet.
 const mark = (x: number, y: number, cx: number, cy: number, n: number) =>
-  `<circle class="i" cx="${x}" cy="${y}" r="2.5" stroke="none"/><line x1="${x}" y1="${y}" x2="${cx}" y2="${cy}" stroke-width="0.8"/><circle class="n" cx="${cx}" cy="${cy}" r="9" stroke-width="0.8"/><text x="${cx}" y="${cy + 3.5}" font-size="10.5" text-anchor="middle">${n}</text>`;
+  `<circle class="i" cx="${x}" cy="${y}" r="2.5" stroke="none"/><line x1="${x}" y1="${y}" x2="${cx}" y2="${cy}" stroke-width="0.8"/><circle class="k" cx="${cx}" cy="${cy}" r="11" stroke-width="0.8"/><text class="num" x="${cx}" y="${cy + 4.6}" text-anchor="middle">${n}</text>`;
 const inputsLabel = "Where ideas come from: a loose heap of five things. A handwritten sticky note that says remind people before the dinner, a voice note, a task typed into the tracker that says RSVP count is wrong, a chat message that asks could guests bring a plus one, and an email.";
 const inputs = svg(
   400, 200, inputsLabel,
@@ -227,7 +231,7 @@ ${mark(207, 154, 240, 184, 1)}${mark(252, 72, 288, 46, 2)}${mark(166, 72, 130, 4
 // The same five as a heap, small, for the start of the Capture drawing. The sticky note goes on top.
 const heap5 = `${tilt(102, BASE, 0, mail(34, 24))}${tilt(20, BASE - 18, -8, bubble(34, 28))}${tilt(46, BASE - 46, 5, issue(36, 28))}${tilt(52, BASE - 76, -7, voice(40, 16))}`;
 
-const ask = "Speech, question and thought bubbles rise from the station one at a time, showing that a person decides here.";
+const ask = "Speech, question and thought bubbles rise from the station one at a time, showing that a human decides here.";
 const steps: { label: string; into: string; out: string; xs: number[] }[] = [
   {
     label: "Capture: a handwritten sticky note that says remind people before the dinner, on a heap with a voice note, a task, a chat message and an email, is dropped into a station shaped like a hopper, and leaves as a typed note.",
@@ -242,25 +246,25 @@ const steps: { label: string; into: string; out: string; xs: number[] }[] = [
     xs: [56, 265],
   },
   {
-    label: `Refine: the map named Dinner reminders, its route still marked with question marks, enters a station with a wide base and leaves as two smaller task cards, ABC-104 and ABC-105. ${ask}`,
+    label: `Refine: the map named Dinner reminders, its route still marked with question marks, enters a station with a wide base and leaves as two smaller task cards, POT-104 and POT-105. ${ask}`,
     into: map(18, BASE - 64, "Dinner reminders"),
-    out: card(216, BASE - 98, "ABC-104", ["Host on or off"], false) + card(228, BASE - 58, "ABC-105", ["Email guests", "the day before"], true),
+    out: card(216, BASE - 98, "POT-104", ["Host on or off"], false) + card(228, BASE - 58, "POT-105", ["Email guests", "the day before"], true),
     xs: [57, 263],
   },
   {
-    label: "Implement: the small task card ABC-105 enters a station with a sloped roof and leaves as a solid block marked PR, a pull request.",
-    into: card(22, BASE - 58, "ABC-105", ["Email guests", "the day before"], true),
+    label: "Implement: the small task card POT-105 enters a station with a sloped roof and leaves as a solid block marked PR, a pull request.",
+    into: card(22, BASE - 58, "POT-105", ["Email guests", "the day before"], true),
     out: pr(240),
     xs: [57, 262],
   },
   {
-    label: `Review: the block marked PR enters a domed station and leaves with a tick on it. ${ask}`,
+    label: `Review: the block marked PR enters a domed station and leaves with a check mark on it. ${ask}`,
     into: pr(30),
     out: passed(240),
     xs: [52, 262],
   },
   {
-    label: "Closeout: the ticked block enters a square station and leaves as a round seal with a tick, the finished change.",
+    label: "Closeout: the checked block enters a square station and leaves as a round seal with a check mark, the finished change.",
     into: passed(30),
     out: `<circle class="a" cx="264" cy="${BASE - 26}" r="26"/><polyline class="n s-on" points="252,${BASE - 26} 260,${BASE - 18} 277,${BASE - 37}" stroke-width="3"/>`,
     xs: [52, 264],
@@ -287,7 +291,7 @@ const decide = (x: number, y: number) => `${person(x, y)}${at(x + 30, y, lamp(0,
 // The person, head tilted and hand on chin, under a lit lamp, with the bubbles rising above.
 const thinker = (x: number, y: number) =>
   `<path class="n" d="M${x - 14},${y} L${x - 9},${y - 34} H${x + 9} L${x + 14},${y} Z"/><circle class="n" cx="${x + 2}" cy="${y - 45}" r="9"/><polyline class="n" points="${x + 10},${y - 29} ${x + 17},${y - 16} ${x + 8},${y - 33}" stroke-width="1.6"/><circle class="k" cx="${x + 7}" cy="${y - 35.5}" r="2.6"/>${at(x + 34, y, lamp(0, -17, true))}${bubbles(y - 56, x, 1.1)}`;
-const sortLabel = "Sorting the work: a line of plain squares runs into a station and comes out as built blocks. One square marked with a question mark, a decision, has been lifted off the line to a person, who thinks it over, hand on chin, under a lit orange lamp while speech and thought bubbles rise. A square with a tick, a decision already settled, is back on the line.";
+const sortLabel = "Sorting the work: a line of plain squares runs into a station and comes out as built blocks. One square marked with a question mark, a decision, has been lifted off the line to a human, who thinks it over, hand on chin, under a lit orange lamp while speech and thought bubbles rise. A square with a check mark, a decision already settled, is back on the line.";
 const sorting = svg(
   392, 202, sortLabel,
   `${at(204, 182 + SINK, behind(3))}${line(16, 380, 182)}${[34, 60, 112, 138].map((x, n) => pc(x, 182, " ?v "[n].trim())).join("")}
@@ -312,7 +316,7 @@ const parts: [string, string, boolean][] = [
   ["GitHub", "pull request", false],
 ];
 const skills: [string, string, boolean] = ["Skills", "the instructions", true];
-const mapLabel = "What Factory is made of: a task in Linear goes to Delegator, which starts coding agents in Orca. The agents follow Factory's skills. Verifier runs the checks, and the change goes up to GitHub as a pull request. A person under a lit orange lamp reviews and merges it, and the result goes back to Linear. Factory's own parts, Skills, Delegator and Verifier, are filled brown.";
+const mapLabel = "What Factory is made of: a task in Linear goes to Delegator, which starts coding agents in Orca. The agents follow Factory's skills. Verifier runs the checks, and the change goes up to GitHub as a pull request. A human under a lit orange lamp reviews and merges it, and the result goes back to Linear. Factory's own parts, Skills, Delegator and Verifier, are filled brown.";
 const mapWide = svg(
   824, 250, mapLabel,
   `${parts.map(([n, r, own], i) => plate(92 + i * 160, 110, n, r, own)).join("")}
@@ -331,10 +335,19 @@ ${arrow("M210,524 H44 V42 H108", [108, 42], "r")}
 ${decide(160, 524)}<text x="222" y="504" font-size="10">You decide,</text><text x="222" y="517" font-size="10">review and merge</text>`,
 );
 
+// ---- The example's splash ----
+const potluck = svg(
+  392, 132, "Potluck, the made-up product used as the example: a pot with a lid as its logo, the name Potluck, and the line dinners with friends, hosted in turns.",
+  `<rect class="a" stroke="none" x="54" y="22" width="300" height="92"/><rect class="k" x="46" y="28" width="300" height="92"/>
+<circle class="n" cx="100" cy="84" r="27"/>${pot(100, 86, 2.6)}<path class="n" d="M94,68 q-2.5,-3 0,-6 M100,68 q-2.5,-3 0,-6 M106,68 q-2.5,-3 0,-6" stroke-width="1"/>
+<text x="140" y="88" font-size="34" font-style="italic">Potluck</text><text x="141" y="106" font-size="10.5">Dinners with friends, hosted in turns.</text>`,
+);
+
 // ---- Write ----
 mkdirSync(out, { recursive: true });
 const files: Record<string, string> = {
   "inputs.svg": inputs,
+  "potluck.svg": potluck,
   "journey-wide.svg": strip(wide, false),
   "journey-tall.svg": strip(tall, false),
   "journey-wide-live.svg": strip(wide, true),
@@ -345,7 +358,7 @@ const files: Record<string, string> = {
 };
 names.forEach((name, i) => {
   files[`step-${name}.svg`] = step(i);
-  files[`icon-${name}.svg`] = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#17130f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><style>@media(prefers-color-scheme:dark){svg{stroke:#eee6d6}}</style>${lucide[i]}</svg>\n`;
+  files[`icon-${name}.svg`] = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 31 24" fill="none" stroke="#17130f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><style>@media(prefers-color-scheme:dark){svg{stroke:#eee6d6}}</style>${lucide[i]}</svg>\n`;
 });
 for (const [name, text] of Object.entries(files)) writeFileSync(`${out}/${name}`, text);
 console.log(`Wrote ${Object.keys(files).length} files to ${out}`);

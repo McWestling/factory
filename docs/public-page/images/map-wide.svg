@@ -1,7 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" class="fd" viewBox="0 0 824 250" role="img" aria-label="What Factory is made of: a task in Linear goes to Delegator, which starts coding agents in Orca. The agents follow Factory's skills. Verifier runs the checks, and the change goes up to GitHub as a pull request. A person under a lit orange lamp reviews and merges it, and the result goes back to Linear. Factory's own parts, Skills, Delegator and Verifier, are filled brown." stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+<svg xmlns="http://www.w3.org/2000/svg" class="fd" viewBox="0 0 824 250" role="img" aria-label="What Factory is made of: a task in Linear goes to Delegator, which starts coding agents in Orca. The agents follow Factory's skills. Verifier runs the checks, and the change goes up to GitHub as a pull request. A human under a lit orange lamp reviews and merges it, and the result goes back to Linear. Factory's own parts, Skills, Delegator and Verifier, are filled brown." stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
 <style>.fd{--ink:#17130f;--acc:#8f8372;--on:#17130f;color:var(--ink)}
 @media(prefers-color-scheme:dark){.fd{--ink:#eee6d6;--acc:#a99f8e}}
 .fd text{fill:var(--ink);font-family:Georgia,"Times New Roman",serif;stroke:none}
+.fd text.num{font:bold 13px system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif}
 .fd .n{fill:none}.fd .k{fill:none}.fd .i{fill:var(--ink)}.fd .a{fill:var(--acc)}.fd text.on{fill:var(--on)}.fd .s-on{stroke:var(--on)}
 .fd .hum{stroke:#e0632a}.fd .hum-t{fill:#e0632a}
 .fd .lamp{fill:#e0632a;animation:fd-lamp 2s steps(1,end) infinite}
