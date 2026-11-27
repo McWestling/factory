@@ -22,6 +22,7 @@ const lit = [false, true, true, false, true, false];
 const css = `.fd{--ink:#17130f;--acc:#8f8372;--on:#17130f;color:var(--ink)}
 @media(prefers-color-scheme:dark){.fd{--ink:#eee6d6;--acc:#a99f8e}}
 .fd text{fill:var(--ink);font-family:Georgia,"Times New Roman",serif;stroke:none}
+.fd text.hand{font-family:"Bradley Hand","Segoe Print","Chalkboard SE","Comic Sans MS",cursive}
 .fd text.num{font:bold 13px system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif}
 .fd .n{fill:none}.fd .k{fill:none}.fd .i{fill:var(--ink)}.fd .a{fill:var(--acc)}.fd text.on{fill:var(--on)}.fd .s-on{stroke:var(--on)}
 .fd .hum{stroke:#e0632a}.fd .hum-t{fill:#e0632a}
@@ -193,7 +194,7 @@ const t = (x: number, y: number, s: string, extra = "") => `<text x="${x}" y="${
 const pot = (x: number, y: number, k = 0.6, cls = "n") =>
   `<g class="${cls}" transform="translate(${x} ${y}) scale(${k})" stroke-width="${r1(0.9 / k)}"><path d="M-5,-2 H5 V2 Q5,5 2,5 H-2 Q-5,5 -5,2 Z M-5,0 H-7 M5,0 H7 M-6,-2 H6 M-4,-2 Q0,-6.5 4,-2"/></g>`;
 const note = (x: number, lines: string[], hand: boolean) =>
-  `<rect class="a" x="${x}" y="${BASE - 52}" width="52" height="52"/>${lines.map((l, n) => t(x + 5, BASE - (lines.length > 3 ? 40 : 35) + n * (lines.length > 3 ? 10 : 11), l, ` class="on"${hand ? ' font-style="italic"' : ""}`)).join("")}${hand ? "" : pot(x + 43, BASE - 45, 0.6, "n s-on")}`;
+  `<rect class="a" x="${x}" y="${BASE - 52}" width="52" height="52"/>${lines.map((l, n) => t(x + 5, BASE - (lines.length > 3 ? 40 : 35) + n * (lines.length > 3 ? 10 : 11), l, ` class="on${hand ? " hand" : ""}"`)).join("")}${hand ? "" : pot(x + 43, BASE - 45, 0.6, "n s-on")}`;
 const card = (x: number, top: number, id: string, lines: string[], brown: boolean) =>
   `<rect class="k" x="${x}" y="${top}" width="70" height="58"/><line x1="${x}" y1="${top + 18}" x2="${x + 70}" y2="${top + 18}"/><circle class="${brown ? "a" : "n"}" cx="${x + 61}" cy="${top + 9}" r="3"${brown ? ' stroke="none"' : ""}/>${t(x + 5, top + 12, id, ' font-weight="bold"')}${pot(x + 49, top + 9)}${lines.map((l, n) => t(x + 5, top + 30 + n * 11, l)).join("")}`;
 // A map: a folded sheet with the idea at one end, a flag at the destination, and the way between unknown.
@@ -336,6 +337,12 @@ ${decide(160, 524)}<text x="222" y="504" font-size="10">You decide,</text><text 
 );
 
 // ---- The example's splash ----
+// The sticky note at full size, in whatever handwriting font the reader's device has.
+const stickyLabel = "The sticky note, in handwriting: remind people before the dinner, with two exclamation marks, underlined.";
+const sticky = svg(
+  392, 208, stickyLabel,
+  tilt(196, 104, -4, `<rect class="a" x="-84" y="-84" width="168" height="168"/>${handwritten.map((l, n) => `<text class="on hand" x="-70" y="${-30 + n * 30}" font-size="20">${l}</text>`).join("")}<path class="n s-on" d="M-70,42 q32,-6 62,0 t56,-3" stroke-width="1.5"/>`),
+);
 const potluck = svg(
   392, 132, "Potluck, the made-up product used as the example: a pot with a lid as its logo, the name Potluck, and the line dinners with friends, hosted in turns.",
   `<rect class="a" stroke="none" x="54" y="22" width="300" height="92"/><rect class="k" x="46" y="28" width="300" height="92"/>
@@ -348,6 +355,7 @@ mkdirSync(out, { recursive: true });
 const files: Record<string, string> = {
   "inputs.svg": inputs,
   "potluck.svg": potluck,
+  "sticky.svg": sticky,
   "journey-wide.svg": strip(wide, false),
   "journey-tall.svg": strip(tall, false),
   "journey-wide-live.svg": strip(wide, true),

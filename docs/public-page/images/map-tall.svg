@@ -2,6 +2,7 @@
 <style>.fd{--ink:#17130f;--acc:#8f8372;--on:#17130f;color:var(--ink)}
 @media(prefers-color-scheme:dark){.fd{--ink:#eee6d6;--acc:#a99f8e}}
 .fd text{fill:var(--ink);font-family:Georgia,"Times New Roman",serif;stroke:none}
+.fd text.hand{font-family:"Bradley Hand","Segoe Print","Chalkboard SE","Comic Sans MS",cursive}
 .fd text.num{font:bold 13px system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif}
 .fd .n{fill:none}.fd .k{fill:none}.fd .i{fill:var(--ink)}.fd .a{fill:var(--acc)}.fd text.on{fill:var(--on)}.fd .s-on{stroke:var(--on)}
 .fd .hum{stroke:#e0632a}.fd .hum-t{fill:#e0632a}

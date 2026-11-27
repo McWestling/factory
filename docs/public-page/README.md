@@ -24,6 +24,10 @@ Imagine we run Potluck, an app for friends who take turns hosting dinner.
 
 Guests use it to say whether they’re coming and what they’ll bring. Tonight two of them forgot the date. While it’s still on our minds, we scribble “remind people before the dinner!!” on a sticky note.
 
+<figure>
+<img src="images/sticky.svg" width="392" alt="The sticky note, in handwriting: remind people before the dinner, with two exclamation marks, underlined.">
+</figure>
+
 Here’s how that note makes its way into the app. You can also skip ahead to [the checks](#how-the-work-gets-checked), [the tools](#what-its-made-of), or [what we’re working on next](#where-its-going).
 
 <figure>
@@ -31,7 +35,18 @@ Here’s how that note makes its way into the app. You can also skip ahead to [t
 <source media="(max-width: 40rem)" srcset="images/journey-tall.svg">
 <img src="images/journey-wide.svg" width="824" alt="An idea's journey: a sticky note travels along a timeline through six stations, each marked with its icon on a round plaque, and ends as a smiling face, a happy user. An orange lamp is lit on the second, third and fifth stations, where a human decides.">
 </picture>
-<figcaption>The lamps mark the three times we weigh in.</figcaption>
+<figcaption>
+
+The lamps mark the three times we weigh in.
+
+1. Capture: a note.
+2. Triage: a map of what’s still to decide.
+3. Refine: a stack of small tasks.
+4. Implement: a built change.
+5. Review: a checked change.
+6. Closeout: a happy user.
+
+</figcaption>
 </figure>
 
 ### <img src="images/icon-capture.svg" alt="" width="26" height="20">Capture
@@ -40,14 +55,32 @@ A photo of the note will do. We could also leave a voice note, send a message or
 
 <figure>
 <img src="images/inputs.svg" width="480" alt="Where ideas come from: a loose heap of five things. A handwritten sticky note that says remind people before the dinner, a voice note, a task typed into the tracker that says RSVP count is wrong, a chat message that asks could guests bring a plus one, and an email.">
-<figcaption>Five ways an idea can reach us.</figcaption>
+<figcaption>
+
+Five ways an idea can reach us.
+
+1. Our sticky note.
+2. A voice note.
+3. A flaw someone spotted, typed straight into the task tracker.
+4. A question in a message.
+5. An email.
+
+</figcaption>
 </figure>
 
 An agent files the idea in [Linear](https://linear.app), where we keep track of the work. Our note gets a number, POT-101, and a title, *Send reminders to guests before dinner events*. If we’d typed it into Linear ourselves, it would already be there.
 
 <figure>
 <img src="images/step-capture.svg" width="352" alt="Capture: a handwritten sticky note that says remind people before the dinner, on a heap with a voice note, a task, a chat message and an email, is dropped into a station shaped like a hopper, and leaves as a typed note.">
-<figcaption>The sticky note becomes POT-101.</figcaption>
+<figcaption>
+
+The sticky note becomes POT-101.
+
+1. Our sticky note, on the heap.
+2. An agent reads it.
+3. The same idea, typed up and filed as POT-101.
+
+</figcaption>
 </figure>
 
 ### <img src="images/icon-triage.svg" alt="" width="26" height="20">Triage
@@ -58,7 +91,15 @@ The agent opens a Linear project called *Dinner reminders* and puts POT-101 in i
 
 <figure>
 <img src="images/step-triage.svg" width="352" alt="Triage: the typed note enters a station with a peaked top and leaves as a folded map named Dinner reminders. On the map, a dashed route with question marks along it runs from the idea to a flag at the destination. Speech, question and thought bubbles rise from the station one at a time, showing that a human decides here.">
-<figcaption>The reminder gets its own map.</figcaption>
+<figcaption>
+
+The reminder gets its own map.
+
+1. POT-101, as it was captured.
+2. We decide, with the agent, what happens to it.
+3. A new map, <i>Dinner reminders</i>: the idea at one end, the goal at the other, the way between unknown.
+
+</figcaption>
 </figure>
 
 ### <img src="images/icon-refine.svg" alt="" width="26" height="20">Refine
@@ -71,7 +112,15 @@ Now the agent can make two tasks. POT-103 gives the host the switch. POT-104 sen
 
 <figure>
 <img src="images/step-refine.svg" width="352" alt="Refine: the map named Dinner reminders, its route still marked with question marks, enters a station with a wide base and leaves as two smaller task cards, POT-103 and POT-104. Speech, question and thought bubbles rise from the station one at a time, showing that a human decides here.">
-<figcaption>One decision gives us two build tasks.</figcaption>
+<figcaption>
+
+One decision gives us two build tasks.
+
+1. The map, with the way still unknown.
+2. We settle its open question with the agent.
+3. Two small tasks, ready to build.
+
+</figcaption>
 </figure>
 
 ### <img src="images/icon-implement.svg" alt="" width="26" height="20">Implement
@@ -80,7 +129,15 @@ An agent picks up the host’s switch, builds it, runs the checks, and opens a p
 
 <figure>
 <img src="images/step-implement.svg" width="352" alt="Implement: the small task card POT-104 enters a station with a sloped roof and leaves as a solid block marked PR, a pull request.">
-<figcaption>The email change is ready for review.</figcaption>
+<figcaption>
+
+The email change is ready for review.
+
+1. POT-104, a small, clear task.
+2. An agent builds it.
+3. A pull request (PR).
+
+</figcaption>
 </figure>
 
 ### <img src="images/icon-review.svg" alt="" width="26" height="20">Review
@@ -91,7 +148,15 @@ For the email task, we can finally read the reminder as someone who’s just bee
 
 <figure>
 <img src="images/step-review.svg" width="352" alt="Review: the block marked PR enters a domed station and leaves with a check mark on it. Speech, question and thought bubbles rise from the station one at a time, showing that a human decides here.">
-<figcaption>A second agent reviews the change before we do.</figcaption>
+<figcaption>
+
+A second agent reviews the change before we do.
+
+1. A pull request.
+2. A reviewer agent goes through it, then we do.
+3. A change that has been checked and merged.
+
+</figcaption>
 </figure>
 
 ### <img src="images/icon-closeout.svg" alt="" width="26" height="20">Closeout
@@ -100,7 +165,15 @@ An agent checks what we actually delivered, runs anything that had to wait for t
 
 <figure>
 <img src="images/step-closeout.svg" width="352" alt="Closeout: the checked block enters a square station and leaves as a round smiling face, a happy user.">
-<figcaption>Both changes are in. We can close the original idea.</figcaption>
+<figcaption>
+
+Both changes are in. We can close the original idea.
+
+1. A merged change.
+2. An agent confirms everything was delivered.
+3. A happy user.
+
+</figcaption>
 </figure>
 
 ## How the work gets checked

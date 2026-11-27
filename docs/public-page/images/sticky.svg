@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="fd" viewBox="0 0 392 208" role="img" aria-label="The sticky note, in handwriting: remind people before the dinner, with two exclamation marks, underlined." stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+<style>.fd{--ink:#17130f;--acc:#8f8372;--on:#17130f;color:var(--ink)}
+@media(prefers-color-scheme:dark){.fd{--ink:#eee6d6;--acc:#a99f8e}}
+.fd text{fill:var(--ink);font-family:Georgia,"Times New Roman",serif;stroke:none}
+.fd text.hand{font-family:"Bradley Hand","Segoe Print","Chalkboard SE","Comic Sans MS",cursive}
+.fd text.num{font:bold 13px system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif}
+.fd .n{fill:none}.fd .k{fill:none}.fd .i{fill:var(--ink)}.fd .a{fill:var(--acc)}.fd text.on{fill:var(--on)}.fd .s-on{stroke:var(--on)}
+.fd .hum{stroke:#e0632a}.fd .hum-t{fill:#e0632a}
+.fd .lamp{fill:#e0632a;animation:fd-lamp 2s steps(1,end) infinite}
+.fd .rays{stroke:#e0632a;animation:fd-rays 2s steps(1,end) infinite}
+@keyframes fd-lamp{0%{fill-opacity:1}50%{fill-opacity:.12}}
+@keyframes fd-rays{0%{opacity:1}50%{opacity:0}}
+.fd .bub{opacity:0;transform-box:fill-box;transform-origin:50% 100%;animation:fd-bub 12s ease-in-out infinite}
+@keyframes fd-bub{0%{opacity:0;transform:translateY(4px) scale(.6)}8%,24%{opacity:1;transform:none}31%,100%{opacity:0;transform:translateY(-4px) scale(.8)}}</style>
+<defs></defs><g transform="translate(196 104) rotate(-4)"><rect class="a" x="-84" y="-84" width="168" height="168"/><text class="on hand" x="-70" y="-30" font-size="20">remind</text><text class="on hand" x="-70" y="0" font-size="20">people before</text><text class="on hand" x="-70" y="30" font-size="20">the dinner!!</text><path class="n s-on" d="M-70,42 q32,-6 62,0 t56,-3" stroke-width="1.5"/></g>
+</svg>

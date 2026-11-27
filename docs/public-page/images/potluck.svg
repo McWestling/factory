@@ -2,6 +2,7 @@
 <style>.fd{--ink:#17130f;--acc:#8f8372;--on:#17130f;color:var(--ink)}
 @media(prefers-color-scheme:dark){.fd{--ink:#eee6d6;--acc:#a99f8e}}
 .fd text{fill:var(--ink);font-family:Georgia,"Times New Roman",serif;stroke:none}
+.fd text.hand{font-family:"Bradley Hand","Segoe Print","Chalkboard SE","Comic Sans MS",cursive}
 .fd text.num{font:bold 13px system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif}
 .fd .n{fill:none}.fd .k{fill:none}.fd .i{fill:var(--ink)}.fd .a{fill:var(--acc)}.fd text.on{fill:var(--on)}.fd .s-on{stroke:var(--on)}
 .fd .hum{stroke:#e0632a}.fd .hum-t{fill:#e0632a}
@@ -11,7 +12,7 @@
 @keyframes fd-rays{0%{opacity:1}50%{opacity:0}}
 .fd .bub{opacity:0;transform-box:fill-box;transform-origin:50% 100%;animation:fd-bub 12s ease-in-out infinite}
 @keyframes fd-bub{0%{opacity:0;transform:translateY(4px) scale(.6)}8%,24%{opacity:1;transform:none}31%,100%{opacity:0;transform:translateY(-4px) scale(.8)}}</style>
-<defs><mask id="k4-0" maskUnits="userSpaceOnUse" x="0" y="0" width="392" height="132"><rect width="392" height="132" fill="#fff" stroke="none"/><rect fill="#000" stroke="none" x="46" y="28" width="300" height="92"/></mask></defs><g mask="url(#k4-0)"><rect class="a" stroke="none" x="54" y="22" width="300" height="92"/></g><rect class="k" x="46" y="28" width="300" height="92"/>
+<defs><mask id="k5-0" maskUnits="userSpaceOnUse" x="0" y="0" width="392" height="132"><rect width="392" height="132" fill="#fff" stroke="none"/><rect fill="#000" stroke="none" x="46" y="28" width="300" height="92"/></mask></defs><g mask="url(#k5-0)"><rect class="a" stroke="none" x="54" y="22" width="300" height="92"/></g><rect class="k" x="46" y="28" width="300" height="92"/>
 <circle class="n" cx="100" cy="84" r="27"/><g class="n" transform="translate(100 86) scale(2.6)" stroke-width="0.3"><path d="M-5,-2 H5 V2 Q5,5 2,5 H-2 Q-5,5 -5,2 Z M-5,0 H-7 M5,0 H7 M-6,-2 H6 M-4,-2 Q0,-6.5 4,-2"/></g><path class="n" d="M94,68 q-2.5,-3 0,-6 M100,68 q-2.5,-3 0,-6 M106,68 q-2.5,-3 0,-6" stroke-width="1"/>
 <text x="140" y="88" font-size="34" font-style="italic">Potluck</text><text x="141" y="106" font-size="10.5">Dinners with friends, hosted in turns.</text>
 </svg>
