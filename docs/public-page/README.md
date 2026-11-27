@@ -19,7 +19,7 @@ Here is what it covers:
 
 ## Why we built it
 
-Building software takes two kinds of work. A small part is deciding: what to build, how it should behave, how the pieces fit together. The rest is wiring and plumbing: connecting those pieces, following the patterns already in place, getting the details right. Both matter. Only the first needs a human.
+Building software takes two kinds of work. The first is deciding: what to build, how it should behave, how the pieces fit together. The second is wiring and plumbing: connecting those pieces, following the patterns already in place, getting the details right. Deciding is the smaller part, and the only one that needs a human.
 
 Coding agents are now good at the second kind, as long as someone tells them clearly what to do and checks what comes back. So we wanted to spend our own thinking on the deciding, and hand over the rest.
 
