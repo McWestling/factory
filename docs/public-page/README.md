@@ -2,6 +2,8 @@
 name: Factory
 pitch: The Factory turns ideas into finished software changes, with coding agents we can work with wherever we are.
 url: https://github.com/mcwestling/factory
+created: 2026-11-26
+updated: 2026-11-27
 ---
 
 At McWestling we build software with coding agents, programs that can read a project’s code, change it, and run it. The Factory is how we work with them.

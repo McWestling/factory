@@ -169,7 +169,7 @@ Draft it from the repo itself (code, existing docs, the product's initiative des
 
 ### First public page
 
-The public page is the folder `docs/public-page/`, which the product's page on a site is published from; its contract is [`docs/public-page-contract.md`](https://github.com/mcwestling/factory/blob/main/docs/public-page-contract.md). If the repo already has `docs/public-page/README.md`, leave it alone, whatever it says. Otherwise write that file, to the contract: frontmatter with `name`, `pitch` and, when the product has its own address, `url`, then What it does, Who it's for and How to get it.
+The public page is the folder `docs/public-page/`, which the product's page on a site is published from; its contract is [`docs/public-page-contract.md`](https://github.com/mcwestling/factory/blob/main/docs/public-page-contract.md). If the repo already has `docs/public-page/README.md`, leave it alone, whatever it says. Otherwise write that file, to the contract: frontmatter with `name`, `pitch`, `url` when the product has its own address, and `created` and `updated` both set to today's date (`YYYY-MM-DD`), then What it does, Who it's for and How to get it.
 
 Draft it from the README intro (as it stands after the step above) and the repo itself, for someone who has never seen the repo: no install steps and no links into the repo. The public-safety rule above applies in full, even in a private repo, because the file is published.
 

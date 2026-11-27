@@ -43,7 +43,7 @@ The repo is organised by kind of thing. Add a folder only when its first file la
 - **Stack packs:** `packs/<name>/`.
 - **Tool configs:** `tools/<name>/`.
 - **Prose contracts:** `docs/<contract>.md`.
-- **Public page:** `docs/public-page/`, per [`docs/public-page-contract.md`](docs/public-page-contract.md). Keep it current when a change alters what Factory does or who it's for.
+- **Public page:** `docs/public-page/`, per [`docs/public-page-contract.md`](docs/public-page-contract.md). Keep it current when a change alters what Factory does or who it's for, and set its `updated` date to today in any change to it.
 - **Public page drawings:** `docs/public-page/images/`, written by `node docs/public-page/draw.ts`. Change the script and rerun it; never edit the SVGs by hand.
 - **Glossary:** `GLOSSARY.md` at the root. Add or change a term in the PR that brings it in.
 - **Example config and schemas:** `*.example` files and machine-readable schemas sit beside the code that reads them. The real config is gitignored: add its path to `.gitignore` in the same PR.

@@ -21,6 +21,8 @@ A page with no images still lives in the folder.
 name: Example
 pitch: One sentence on what it is.
 url: https://example.com
+created: 2026-01-15
+updated: 2026-03-02
 ---
 
 ## What it does
@@ -33,6 +35,10 @@ url: https://example.com
 - **`name`:** the product's name.
 - **`pitch`:** one sentence on what it is.
 - **`url`:** optional. The product's own address.
+- **`created`:** the day the page was first written, as `YYYY-MM-DD`. Set once, never changed.
+- **`updated`:** the day the page last changed, as `YYYY-MM-DD`. Set it to today's date in every change to the page's text or images. A new page starts with both dates the same.
+
+A site shows both dates, so a reader can tell how fresh the page is.
 
 The headings are suggestions; use the ones the product needs.
 
@@ -67,4 +73,4 @@ A site copies `README.md` and `images/` in through a pull request to the site's 
 
 ## Upkeep
 
-The public page is what agents keep current as the product changes. The short intro in the repo's root README is an input to it, never rendered on the site, and only fixed when it becomes wrong.
+The public page is what agents keep current as the product changes. Every change to it sets `updated` to that day's date. The short intro in the repo's root README is an input to it, never rendered on the site, and only fixed when it becomes wrong.
