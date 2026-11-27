@@ -1,6 +1,6 @@
 ---
 name: do-repo-setup
-description: Set up a repo for the factory skills. Points AGENTS.md at the home repo's tracker doc when the values live in another repo, removing any local copy; otherwise writes the repo's values-only tracker doc (`docs/issue-tracker.md`) from Linear and a fixed template, asking only what neither settles, and links it from AGENTS.md. It writes the repo's own Review rule into AGENTS.md, copies the Tool Stack's scripts-language rule into AGENTS.md, offers to run the Adding a repo blocks on the Tool Stack's service pages, fills in any missing parts of the README's non-developer intro, writes a first `PUBLIC.md` when the repo has none, moves the repo's setup into `scripts/setup` when it has any, and installs the dev-port convention in a repo with a dev server. Re-running fills gaps and offers each template line the doc has drifted from. It ends by offering a draft PR of what it wrote.
+description: Set up a repo for the factory skills. Points AGENTS.md at the home repo's tracker doc when the values live in another repo, removing any local copy; otherwise writes the repo's values-only tracker doc (`docs/issue-tracker.md`) from Linear and a fixed template, asking only what neither settles, and links it from AGENTS.md. It writes the repo's own Review rule into AGENTS.md, copies the Tool Stack's scripts-language rule into AGENTS.md, offers to run the Adding a repo blocks on the Tool Stack's service pages, fills in any missing parts of the README's non-developer intro, writes a first public page when the repo has none, moves the repo's setup into `scripts/setup` when it has any, and installs the dev-port convention in a repo with a dev server. Re-running fills gaps and offers each template line the doc has drifted from. It ends by offering a draft PR of what it wrote.
 disable-model-invocation: true
 ---
 
@@ -57,7 +57,7 @@ After the step 3 answer, run only the approved route, then recheck the current a
    - **Otherwise:** list the candidate home repos for [step 3](#3-ask-once): each repo in `orca repo list --json`, other than this one, whose checkout holds a tracker doc and whose `AGENTS.md` doesn't point elsewhere. Without Orca there are none.
 2. **Existing doc:** if it exists, read it. Every value already in it is settled: you never overwrite it, only fill gaps. A **gap** is a template heading that is missing or empty, or a line starting `TODO:`.
 3. **AGENTS.md:** note whether it links the tracker doc, any other links to a local doc, whether it has a `## Scripts` section, and whether it says how PRs are reviewed (a **Review** line under `## Pull requests`).
-4. **README:** read `README.md`, if any, and note which parts of the intro it has, using [step 6](#6-readme-intro)'s check, and whether `PUBLIC.md` exists at the root.
+4. **README:** read `README.md`, if any, and note which parts of the intro it has, using [step 6](#6-readme-intro)'s check, and whether `docs/public-page/README.md` exists.
 5. **Setup and dev server:** read `scripts/setup`, the CI workflows, the `dev` script in the root `package.json` (the workspace root's, in a monorepo), `scripts/dev-port`, and `orca.yaml`. No `package.json` or no `dev` script means no dev server: skip [Dev ports](#8-dev-ports).
    When writing or checking `orca.yaml` setup, recommend setting Orca's setup policy to off by default in the repo settings. This lets Linear-only sessions start without installing dependencies; delegated `do-implement` runs still get setup from the Runner when they request it.
 6. **Working tree:** note the current branch and which files `git status` already shows as changed, so [Finish](#9-finish) can tell setup's changes from the user's.
@@ -161,15 +161,15 @@ Check each part by structure, never by judging the wording:
 - **What it does** and **Who it's for:** a `##` heading with that text, ignoring case and straight or curly apostrophes.
 - **Links:** a `##` heading, before any setup or code, whose section is only a list of links.
 
-Skip the README edits if the README has the title, pitch, What it does and Who it's for; the [`PUBLIC.md` check](#first-publicmd) below runs either way. Otherwise write the missing parts, Links included if it has none, in the shape's order, above any developer sections. Keep the parts already there as they are, and leave developer sections alone. With no `README.md`, write the whole intro.
+Skip the README edits if the README has the title, pitch, What it does and Who it's for; the [public page check](#first-public-page) below runs either way. Otherwise write the missing parts, Links included if it has none, in the shape's order, above any developer sections. Keep the parts already there as they are, and leave developer sections alone. With no `README.md`, write the whole intro.
 
 Draft it from the repo itself (code, existing docs, the product's initiative description). If you can't tell what the product does or who it's for, ask in step 3.
 
 **Public safety:** say what it does and who it's for. Never include secrets, internal URLs, workspace or machine ids, personal data, or client details, unless the client is already public about it.
 
-### First `PUBLIC.md`
+### First public page
 
-`PUBLIC.md` is the text the product's public page is published from; its contract is [`docs/public-page.md`](https://github.com/mcwestling/factory/blob/main/docs/public-page.md). If the repo already has one, leave it alone, whatever it says. Otherwise write it at the root, to the contract: frontmatter with `name`, `pitch` and, when the product has its own address, `url`, then What it does, Who it's for and How to get it.
+The public page is the folder `docs/public-page/`, which the product's page on a site is published from; its contract is [`docs/public-page-contract.md`](https://github.com/mcwestling/factory/blob/main/docs/public-page-contract.md). If the repo already has `docs/public-page/README.md`, leave it alone, whatever it says. Otherwise write that file, to the contract: frontmatter with `name`, `pitch`, `url` when the product has its own address, and `created` and `updated` both set to today's date (`YYYY-MM-DD`), then What it does, Who it's for and How to get it.
 
 Draft it from the README intro (as it stands after the step above) and the repo itself, for someone who has never seen the repo: no install steps and no links into the repo. The public-safety rule above applies in full, even in a private repo, because the file is published.
 
@@ -207,7 +207,7 @@ Skip this step if step 1 found no dev server. Otherwise do each part that isn't 
 
 ## 9. Finish
 
-If all dependencies are advertised and usable, say "Looks good, we're set up!". Otherwise say "Repo setup finished; supporting skills are still pending", name the missing skills or failed install, and give the fresh-session instruction above when needed. Add a few words if the setup script was skipped for having nothing to set up, if dev ports were skipped for having no dev server, or if you replaced a `scripts/dev-port` that had drifted. If an Adding a repo block ran, failed or was skipped for want of Python, add one line naming the maintainer steps left to do and any page that failed, with its failed step and exit code. In a pointer repo whose home repo doc couldn't be read, add one line saying why (no checkout in `orca repo list`, no Orca, or no doc at that path). If the [machine check](#machine-check) didn't find Orca, add one line recommending it, with the link <https://onorca.dev/download>. If you wrote a first `PUBLIC.md`, add one line saying so and that the maintainer should read it before it's published. If you wrote nothing, stop there.
+If all dependencies are advertised and usable, say "Looks good, we're set up!". Otherwise say "Repo setup finished; supporting skills are still pending", name the missing skills or failed install, and give the fresh-session instruction above when needed. Add a few words if the setup script was skipped for having nothing to set up, if dev ports were skipped for having no dev server, or if you replaced a `scripts/dev-port` that had drifted. If an Adding a repo block ran, failed or was skipped for want of Python, add one line naming the maintainer steps left to do and any page that failed, with its failed step and exit code. In a pointer repo whose home repo doc couldn't be read, add one line saying why (no checkout in `orca repo list`, no Orca, or no doc at that path). If the [machine check](#machine-check) didn't find Orca, add one line recommending it, with the link <https://onorca.dev/download>. If you wrote a first public page, add one line saying so and that the maintainer should read it before it's published. If you wrote nothing, stop there.
 
 If you wrote files, name them in one line, then ask once (AskUserQuestion): **Open a draft PR** (recommended) or **Leave the changes for me**. Leaving them ends the run with the working tree as it is, for the user to review with `git diff`.
 

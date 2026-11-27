@@ -117,8 +117,8 @@ _Avoid_: preflight, which is Factory Verifier's term
 The first `toml` code block under an exact `## Adding a repo` heading on a service page linked from a workspace's Tool Stack document. It lists the commands and maintainer steps that set a repo up for that service; `do-repo-setup` runs it through `adopt.py`. Format: `skills/do-repo-setup/adding-a-repo.example.toml`.
 _Avoid_: setup script, onboarding steps
 
-**`PUBLIC.md`**:
-The file at a product repo's root that its public page is published from: frontmatter with `name`, `pitch` and an optional `url`, then markdown for someone who has never seen the repo. Agents keep it current; the README intro is only an input to it. Contract: [`docs/public-page.md`](docs/public-page.md).
+**Public page**:
+The text a product's page on a site is published from. It lives in the folder `docs/public-page/` in the product repo, as `README.md`: frontmatter with `name`, `pitch`, an optional `url`, and the `created` and `updated` dates, then markdown for someone who has never seen the repo, with any images in `images/` beside it. Agents keep it current; the root README's intro is only an input to it. Contract: [`docs/public-page-contract.md`](docs/public-page-contract.md).
 _Avoid_: product page source, README intro, marketing copy
 
 **Work view**:
