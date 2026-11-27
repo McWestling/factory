@@ -69,9 +69,9 @@ To make the steps concrete, we'll follow one idea through all six, in a made-up 
 <img src="images/potluck.svg" width="392" alt="Potluck, the made-up product used as the example: a pot with a lid as its logo, the name Potluck, and the line dinners with friends, hosted in turns.">
 </figure>
 
-Potluck is a small app for friends who take turns hosting dinners. A host invites guests, and each guest says whether they're coming and what they'll bring. Its tasks are kept in Linear, a task tracker, where each one gets a number like POT-101.
+Potluck is a small app for friends who take turns hosting dinners. A host invites guests, and each guest says whether they're coming and what they'll bring. The team building Potluck tracks its work in Linear, a task tracker, where each task gets a number like POT-101.
 
-One evening a host notices that two guests forgot the date. That's the idea we'll follow.
+One evening a host notices that two guests forgot the date. That's the feature we'll follow in this example.
 
 ### <img src="images/icon-capture.svg" alt="" width="26" height="20">Capture
 
