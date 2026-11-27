@@ -141,7 +141,7 @@ The agent then slices the work into small tasks on the map, each clear enough to
 
 ### <img src="images/icon-implement.svg" alt="" width="26" height="20">Implement
 
-Each small task goes to an agent, which builds it, checks its own work and opens a pull request: a proposed change to the code, ready for someone to look at. Nobody has to watch. In our example, an agent takes POT-103; once that is merged, another takes POT-104.
+Each small task goes to an agent, which builds it, checks its own work and opens a pull request: a proposed change to the code, ready for someone to look at. Nobody has to watch. In our example, an agent takes POT-103; once that is finished, another takes POT-104.
 
 <figure>
 <img src="images/step-implement.svg" width="352" alt="Implement: the small task card POT-104 enters a station with a sloped roof and leaves as a solid block marked PR, a pull request.">
