@@ -316,7 +316,7 @@ const parts: [string, string, boolean][] = [
   ["GitHub", "pull request", false],
 ];
 const skills: [string, string, boolean] = ["Skills", "the instructions", true];
-const mapLabel = "What Factory is made of: a task in Linear goes to Delegator, which starts coding agents in Orca. The agents follow Factory's skills. Verifier runs the checks, and the change goes up to GitHub as a pull request. A human under a lit orange lamp reviews and merges it, and the result goes back to Linear. Factory's own parts, Skills, Delegator and Verifier, are filled brown.";
+const mapLabel = "What the Factory is made of: a task in Linear goes to Delegator, which starts coding agents in Orca. The agents follow the Factory's skills. Verifier runs the checks, and the change goes up to GitHub as a pull request. A human under a lit orange lamp reviews and merges it, and the result goes back to Linear. The Factory's own parts, Skills, Delegator and Verifier, are filled brown.";
 const mapWide = svg(
   824, 250, mapLabel,
   `${parts.map(([n, r, own], i) => plate(92 + i * 160, 110, n, r, own)).join("")}
