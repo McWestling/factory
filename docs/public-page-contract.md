@@ -48,7 +48,7 @@ A page may show images: drawings, screenshots or photos. They sit in `images/` b
 ```
 
 - **Format:** SVG for drawings, each file complete in itself: its own colours, dark mode and motion, and nothing loaded from elsewhere. PNG, JPEG or WebP for screenshots and photos.
-- **Alt text:** every image has `alt` text that says what it shows.
+- **Alt text:** every image has `alt` text that says what it shows. A purely decorative image, such as an icon beside a heading, takes `alt=""`.
 - **Two widths:** when one image can't serve both a phone and a desktop, wrap two in a `<picture>` and give the narrow one a `<source media="(max-width: 40rem)" srcset="images/example-tall.svg">`.
 - **Live drawings:** a `<picture data-live>` tells the site it may swap each still for the file of the same name ending `-live.svg` and animate it. The still must make sense when the site leaves it as it is.
 - **Nothing else:** the page shows only files in its own `images/` folder. A site refuses to copy a page that shows an image the folder doesn't have.

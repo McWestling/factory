@@ -118,7 +118,7 @@ The first `toml` code block under an exact `## Adding a repo` heading on a servi
 _Avoid_: setup script, onboarding steps
 
 **Public page**:
-The folder `docs/public-page/` in a product repo, which the product's page on a site is published from. Its `README.md` is the page: frontmatter with `name`, `pitch` and an optional `url`, then markdown for someone who has never seen the repo, with any images in `images/` beside it. Agents keep it current; the root README's intro is only an input to it. Contract: [`docs/public-page-contract.md`](docs/public-page-contract.md).
+The text a product's page on a site is published from. It lives in the folder `docs/public-page/` in the product repo, as `README.md`: frontmatter with `name`, `pitch` and an optional `url`, then markdown for someone who has never seen the repo, with any images in `images/` beside it. Agents keep it current; the root README's intro is only an input to it. Contract: [`docs/public-page-contract.md`](docs/public-page-contract.md).
 _Avoid_: product page source, README intro, marketing copy
 
 **Work view**:

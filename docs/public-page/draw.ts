@@ -246,14 +246,14 @@ const steps: { label: string; into: string; out: string; xs: number[] }[] = [
     xs: [56, 265],
   },
   {
-    label: `Refine: the map named Dinner reminders, its route still marked with question marks, enters a station with a wide base and leaves as two smaller task cards, POT-104 and POT-105. ${ask}`,
+    label: `Refine: the map named Dinner reminders, its route still marked with question marks, enters a station with a wide base and leaves as two smaller task cards, POT-103 and POT-104. ${ask}`,
     into: map(18, BASE - 64, "Dinner reminders"),
-    out: card(216, BASE - 98, "POT-104", ["Host on or off"], false) + card(228, BASE - 58, "POT-105", ["Email guests", "the day before"], true),
+    out: card(216, BASE - 98, "POT-103", ["Host can turn", "reminders off"], false) + card(228, BASE - 58, "POT-104", ["Email guests", "the day before"], true),
     xs: [57, 263],
   },
   {
-    label: "Implement: the small task card POT-105 enters a station with a sloped roof and leaves as a solid block marked PR, a pull request.",
-    into: card(22, BASE - 58, "POT-105", ["Email guests", "the day before"], true),
+    label: "Implement: the small task card POT-104 enters a station with a sloped roof and leaves as a solid block marked PR, a pull request.",
+    into: card(22, BASE - 58, "POT-104", ["Email guests", "the day before"], true),
     out: pr(240),
     xs: [57, 262],
   },
@@ -291,7 +291,7 @@ const decide = (x: number, y: number) => `${person(x, y)}${at(x + 30, y, lamp(0,
 // The person, head tilted and hand on chin, under a lit lamp, with the bubbles rising above.
 const thinker = (x: number, y: number) =>
   `<path class="n" d="M${x - 14},${y} L${x - 9},${y - 34} H${x + 9} L${x + 14},${y} Z"/><circle class="n" cx="${x + 2}" cy="${y - 45}" r="9"/><polyline class="n" points="${x + 10},${y - 29} ${x + 17},${y - 16} ${x + 8},${y - 33}" stroke-width="1.6"/><circle class="k" cx="${x + 7}" cy="${y - 35.5}" r="2.6"/>${at(x + 34, y, lamp(0, -17, true))}${bubbles(y - 56, x, 1.1)}`;
-const sortLabel = "Sorting the work: a line of plain squares runs into a station and comes out as built blocks. One square marked with a question mark, a decision, has been lifted off the line to a human, who thinks it over, hand on chin, under a lit orange lamp while speech and thought bubbles rise. A square with a check mark, a decision already settled, is back on the line.";
+const sortLabel = "Sorting the work: a line of plain squares runs into a station and comes out as built blocks. One square marked with a question mark, a decision, is still on the line; another has been lifted off to a human, who thinks it over, hand on chin, under a lit orange lamp while speech and thought bubbles rise. A square with a check mark, a decision already settled, is back on the line.";
 const sorting = svg(
   392, 202, sortLabel,
   `${at(204, 182 + SINK, behind(3))}${line(16, 380, 182)}${[34, 60, 112, 138].map((x, n) => pc(x, 182, " ?v "[n].trim())).join("")}
