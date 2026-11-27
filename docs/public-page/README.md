@@ -68,7 +68,7 @@ Five ways an idea can reach us.
 </figcaption>
 </figure>
 
-An agent files the idea in [Linear](https://linear.app), where we keep track of the work. Our note gets a number, POT-101, and a title, *Send reminders to guests before dinner events*. If we’d typed it into Linear ourselves, it would already be there.
+An agent files the idea in [Linear](https://linear.app), where we keep track of the work. The idea is assigned a number to refer to it by in Linear, POT-101, and a title, *Send reminders to guests before dinner events*. An idea typed straight into Linear is already filed, so it skips this step.
 
 <figure>
 <img src="images/step-capture.svg" width="352" alt="Capture: a handwritten sticky note that says remind people before the dinner, on a heap with a voice note, a task, a chat message and an email, is dropped into a station shaped like a hopper, and leaves as a typed note.">

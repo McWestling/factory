@@ -267,7 +267,7 @@ const steps: { label: string; into: string; out: string; xs: number[] }[] = [
   {
     label: "Closeout: the checked block enters a square station and leaves as a round smiling face, a happy user.",
     into: passed(30),
-    out: `<circle class="a" cx="264" cy="${BASE - 26}" r="26"/><polyline class="n s-on" points="252,${BASE - 26} 260,${BASE - 18} 277,${BASE - 37}" stroke-width="3"/>`,
+    out: at(264, BASE - 26, `<circle class="a" r="26"/><path class="n s-on" d="M-9,-11 v6 M9,-11 v6 M-13,5 Q0,18 13,5" stroke-width="3" stroke-linecap="round"/>`),
     xs: [52, 264],
   },
 ];
