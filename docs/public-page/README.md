@@ -16,7 +16,13 @@ We want to be able to give that input wherever we are. A question that seemed tr
 
 ## How an idea becomes a finished change
 
-Imagine we run Potluck, an app for friends who take turns hosting dinner. Guests use it to say whether they’re coming and what they’ll bring. Tonight two of them forgot the date. While it’s still on our minds, we scribble “remind people before the dinner!!” on a sticky note.
+Imagine we run Potluck, an app for friends who take turns hosting dinner.
+
+<figure>
+<img src="images/potluck.svg" width="392" alt="Potluck, the made-up product used as the example: a pot with a lid as its logo, the name Potluck, and the line dinners with friends, hosted in turns.">
+</figure>
+
+Guests use it to say whether they’re coming and what they’ll bring. Tonight two of them forgot the date. While it’s still on our minds, we scribble “remind people before the dinner!!” on a sticky note.
 
 Here’s how that note makes its way into the app. You can also skip ahead to [the checks](#how-the-work-gets-checked), [the tools](#what-its-made-of), or [what we’re working on next](#where-its-going).
 
@@ -26,10 +32,6 @@ Here’s how that note makes its way into the app. You can also skip ahead to [t
 <img src="images/journey-wide.svg" width="824" alt="An idea's journey: a sticky note travels along a timeline through six stations, each marked with its icon on a round plaque, and ends as a smiling face, a happy user. An orange lamp is lit on the second, third and fifth stations, where a human decides.">
 </picture>
 <figcaption>The lamps mark the three times we weigh in.</figcaption>
-</figure>
-
-<figure>
-<img src="images/potluck.svg" width="392" alt="Potluck, the made-up product used as the example: a pot with a lid as its logo, the name Potluck, and the line dinners with friends, hosted in turns.">
 </figure>
 
 ### <img src="images/icon-capture.svg" alt="" width="26" height="20">Capture
