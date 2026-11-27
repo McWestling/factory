@@ -107,7 +107,7 @@ End with a bold verdict line, then two short bullet lists, as plain Markdown. It
 
 - <what's left, and who acts on it>
 
-**Public page.** When the merged PR changed `PUBLIC.md` (`gh pr view <n> --json files`), add one line after the lists: `**Public page:** out of date until it is republished.` It doesn't change the verdict, and you change nothing for it. A delegated run adds the same line to its completion comment.
+**Public page.** When the merged PR changed anything under `docs/public-page/` (`gh pr view <n> --json files`), add one line after the lists: `**Public page:** out of date until it is republished.` It doesn't change the verdict, and you change nothing for it. A delegated run adds the same line to its completion comment.
 
 The verdict is **Good to close** only when nothing is left under **Still open**. Anything open (an unmerged PR, uncommitted or unpushed work, a loose end the user wants kept) makes it **Not yet**. A loose end the user dismisses isn't open.
 

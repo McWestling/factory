@@ -30,7 +30,7 @@ People who plan their work in Linear and want coding agents to do more of the bu
 - [Build your own](#build-your-own)
 - [Delegator architecture and Cloud Inbox setup](packages/delegator/README.md#where-it-runs)
 - [McWestling's settings file, a worked example](docs/issue-tracker.md)
-- [How a product's public page is written](docs/public-page.md)
+- [How a product's public page is written](docs/public-page-contract.md)
 - [License](LICENSE)
 
 ---

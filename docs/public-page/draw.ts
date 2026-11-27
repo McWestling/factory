@@ -1,9 +1,9 @@
-// Draws the figures for Factory's public page. Run `node scripts/draw-public-page.ts` from the repo root; it rewrites `public-page/`.
+// Draws the figures for Factory's public page. Run `node docs/public-page/draw.ts`; it rewrites the `images/` folder beside it.
 // Every figure is one SVG file that carries its own colours, dark mode and motion, so it works as a plain image.
 // The `-live` strips are the same drawing with no items on it, plus what a site's belt script needs to move items along it.
 import { mkdirSync, writeFileSync } from "node:fs";
 
-const out = process.argv[2] ?? "public-page";
+const out = process.argv[2] ?? `${import.meta.dirname}/images`;
 const r1 = (n: number) => +n.toFixed(1);
 
 // Icons from Lucide (ISC licence), in step order.

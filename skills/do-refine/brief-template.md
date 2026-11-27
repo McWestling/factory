@@ -38,7 +38,7 @@ See the [issue format contract](../../docs/issue-format.md).
 
 <What must be true when it's done, and the boundaries of the change.>
 
-**PUBLIC.md:** <one line saying what to change in the product's `PUBLIC.md`, per [public-page.md](https://github.com/mcwestling/factory/blob/main/docs/public-page.md). Only when this issue completes a major, user-visible feature; otherwise leave the line out.>
+**Public page:** <one line saying what to change in the product's public page, `docs/public-page/`, per [public-page-contract.md](https://github.com/mcwestling/factory/blob/main/docs/public-page-contract.md). Only when this issue completes a major, user-visible feature; otherwise leave the line out.>
 
 **Out of scope:** <explicit limits>
 
