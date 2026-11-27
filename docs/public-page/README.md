@@ -19,7 +19,7 @@ Here is what it covers:
 
 ## Why we built it
 
-Building software is part decisions and part wiring and plumbing. The decisions are what to build, how it should behave and how the pieces fit together. The wiring and plumbing is the rest: connecting the pieces, following the patterns already in place, getting the details right. They are different kinds of work, and only the decisions need human judgment.
+Building software is part decisions and part wiring and plumbing. The decisions are what to build, how it should behave and how the pieces fit together. The wiring and plumbing is the rest: connecting the pieces, following the patterns already in place, getting the details right. They are different kinds of work, and they need a human in different ways: to make the decisions, and to check the wiring and plumbing.
 
 Coding agents are now good at the wiring and plumbing, as long as someone tells them clearly what to do and checks what comes back. So we wanted to spend our own thinking on the decisions, and hand over the rest.
 
