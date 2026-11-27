@@ -161,7 +161,7 @@ A second agent reviews the change before we do.
 
 ### <img src="images/icon-closeout.svg" alt="" width="26" height="20">Closeout
 
-An agent checks what we actually delivered, runs anything that had to wait for the merge, and gives us a verdict of “Good to close” or “Not yet.” It also suggests what to pick up next. Once both changes are in and accounted for, we can close the original sticky-note idea. Next time dinner rolls around, the guests get an email.
+As soon as a change is merged, an agent automatically starts cleaning up. It checks what we actually delivered, runs anything that had to wait for the merge, and gives us a verdict of “Good to close” or “Not yet.” It also suggests what to pick up next. Once both changes are in and accounted for, we can close the original sticky-note idea. Next time dinner rolls around, the guests get an email.
 
 <figure>
 <img src="images/step-closeout.svg" width="352" alt="Closeout: the checked block enters a square station and leaves as a round smiling face, a happy user.">
