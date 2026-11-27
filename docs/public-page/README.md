@@ -188,7 +188,7 @@ After the merge, an agent tidies up. It marks the task done, confirms that each 
 
 Handing work to agents only makes sense if you can trust what comes back, and an agent saying "done" is not enough.
 
-Each product declares its own checks: the tests and other commands that have to pass. A part of Factory called Verifier, which is still rolling out, runs them at every point where a mistake could slip through:
+Each product declares its own checks: the tests and other commands that have to pass. A part of Factory called Verifier runs them at every point where a mistake could slip through:
 
 - while the agent works, on the computer it is working on;
 - before a pull request can be opened: the change is refused unless it carries proof that the checks passed;
@@ -217,7 +217,7 @@ Factory's own parts:
 
 - **[Skills](https://github.com/mcwestling/factory#skills):** written instructions for a coding agent, one for each step above. They are the heart of Factory, and you can use them without the other two parts.
 - **[Delegator](https://github.com/mcwestling/factory/tree/main/packages/delegator#readme):** starts the work. When a task in Linear is ready, Delegator opens a workspace on your own computer and puts an agent to work in it.
-- **[Verifier](https://github.com/mcwestling/factory/tree/main/packages/verifier#readme)** <small>Rolling out</small>**:** runs each product's checks, as described above.
+- **[Verifier](https://github.com/mcwestling/factory/tree/main/packages/verifier#readme):** runs each product's checks, as described above.
 
 The tools it connects:
 
@@ -230,7 +230,7 @@ The tools it connects:
 Factory changes every week. Three things are ahead, from nearest to furthest:
 
 - **Rolling out now:** when a problem gets past the checks, Factory files a task against itself to close the gap, so the same mistake can't get through twice.
-- **Planned:** review starts by itself as soon as the checks pass. Today a human asks for it.
+- **Planned:** review starts by itself as soon as the checks pass, with nobody having to ask for it.
 - **Still being weighed:** letting small, low-risk changes merge with very little human involvement. We haven't decided whether to do this.
 
 ## Takeaways
