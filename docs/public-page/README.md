@@ -19,9 +19,9 @@ Here is what it covers:
 
 ## Why we built it
 
-Building software takes two kinds of work: deciding, and what we call wiring and plumbing. Deciding is choosing what to build, how it should behave and how the pieces fit together. Wiring and plumbing is everything after that: connecting the pieces, following the patterns already in place and getting the details right. Deciding is the smaller part, and the only one that needs a human.
+Building software is part decisions and part wiring and plumbing. The decisions are what to build, how it should behave and how the pieces fit together. The wiring and plumbing is the rest: connecting the pieces, following the patterns already in place, getting the details right. They are different kinds of work, and only the decisions need human judgment.
 
-Coding agents are now good at the wiring and plumbing, as long as someone tells them clearly what to do and checks what comes back. So we wanted to spend our own thinking on the deciding, and hand over the rest.
+Coding agents are now good at the wiring and plumbing, as long as someone tells them clearly what to do and checks what comes back. So we wanted to spend our own thinking on the decisions, and hand over the rest.
 
 Factory is how we do that. Every idea starts down the same steps. At the steps that need judgment, Factory stops and asks a human. At the others, it keeps going.
 
