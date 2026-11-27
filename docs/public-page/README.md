@@ -69,13 +69,13 @@ To make the steps concrete, we'll follow one idea through all six, in a made-up 
 <img src="images/potluck.svg" width="392" alt="Potluck, the made-up product used as the example: a pot with a lid as its logo, the name Potluck, and the line dinners with friends, hosted in turns.">
 </figure>
 
-Potluck is a small app for friends who take turns hosting dinners. A host invites guests, and each guest says whether they're coming and what they'll bring. The team building Potluck tracks its work in Linear, a task tracker, where each task gets a number like POT-101.
+Potluck is a small app for friends who take turns hosting dinners. A host invites guests, and each guest says whether they're coming and what they'll bring.
 
 One evening, someone on the Potluck team hosts a dinner, notices that two guests forgot the date, and wishes the app had reminded them. They scribble a sticky note. Reminders are the feature we'll follow in this example.
 
 ### <img src="images/icon-capture.svg" alt="" width="26" height="20">Capture
 
-Ideas turn up at bad moments, so getting one down has to cost nothing. An idea might be a flaw in the software, a new feature, or a question to explore. It might arrive as a photo of a sticky note, a voice note, a chat message, an email, or a task typed straight into Linear.
+Ideas turn up at bad moments, so getting one down has to cost nothing. An idea might be a flaw in the software, a new feature, or a question to explore. It might arrive as a photo of a sticky note, a voice note, a chat message, an email, or a task typed straight into the task management tool.
 
 <figure>
 <img src="images/inputs.svg" width="480" alt="Where ideas come from: a loose heap of five things. A handwritten sticky note that says remind people before the dinner, a voice note, a task typed into the tracker that says RSVP count is wrong, a chat message that asks could guests bring a plus one, and an email.">
@@ -83,14 +83,14 @@ Ideas turn up at bad moments, so getting one down has to cost nothing. An idea m
 
 1. A sticky note with a feature idea.
 2. A voice note.
-3. A flaw someone noticed, typed straight into Linear.
+3. A flaw someone noticed, typed straight into the task management tool.
 4. A question in a chat message.
 5. An email.
 
 </figcaption>
 </figure>
 
-Whatever the form, it ends up in the same place: an agent reads it and files it in Linear, unless it was typed there to begin with. That sticky note says "remind people before the dinner!!". Capture files it as POT-101, *Send reminders to guests before dinner events*, in a pile of new ideas waiting to be sorted.
+Whatever the form, it ends up in the same place. The Potluck team tracks its work in [Linear](https://linear.app), a task management tool where each task gets a number like POT-101. An agent reads the idea and files it there, unless it was typed there to begin with. That sticky note says "remind people before the dinner!!". Capture files it as POT-101, *Send reminders to guests before dinner events*, in a pile of new ideas waiting to be sorted.
 
 <figure>
 <img src="images/step-capture.svg" width="352" alt="Capture: a handwritten sticky note that says remind people before the dinner, on a heap with a voice note, a task, a chat message and an email, is dropped into a station shaped like a hopper, and leaves as a typed note.">
@@ -107,7 +107,7 @@ Whatever the form, it ends up in the same place: an agent reads it and files it 
 
 Next, an agent goes through the pile with a human. From here on, picture that human as you. For each idea, the agent says what it thinks should happen, and you choose: build it now, plan it further, or drop it. POT-101 sounds simple, but nobody has said how guests are reminded, or when. So you choose to plan it further.
 
-An idea that needs planning gets a map: a project in Linear that holds one goal, the questions still open on the way to it and, later, the tasks to build. We borrowed maps from Matt Pocock's [wayfinder skill](https://github.com/mattpocock/skills/tree/main/skills/engineering/wayfinder). A skill is a set of written instructions for an agent, and Factory's planning is built on this one. The agent starts a map called *Dinner reminders* and moves POT-101 into it. For now the map says where you want to end up, but not yet how to get there.
+An idea that needs planning gets a map: a project in [Linear](https://linear.app) that holds one goal, the questions still open on the way to it and, later, the tasks to build. We borrowed maps from Matt Pocock's [wayfinder skill](https://github.com/mattpocock/skills/tree/main/skills/engineering/wayfinder). A skill is a set of written instructions for an agent, and Factory's planning is built on this one. The agent starts a map called *Dinner reminders* and moves POT-101 into it. For now the map says where you want to end up, but not yet how to get there.
 
 <figure>
 <img src="images/step-triage.svg" width="352" alt="Triage: the typed note enters a station with a peaked top and leaves as a folded map named Dinner reminders. On the map, a dashed route with question marks along it runs from the idea to a flag at the destination. Speech, question and thought bubbles rise from the station one at a time, showing that a human decides here.">
@@ -124,7 +124,7 @@ An idea that needs planning gets a map: a project in Linear that holds one goal,
 
 This is where most of the thinking happens. The agent turns the unknown part of the map into questions, and you settle them one at a time. This map has only one question: POT-102, *Decide how guests are reminded*. The agent recommends email, since Potluck already sends invitations that way. You answer: "Email only, at 9am the day before. The host can turn it off for a dinner."
 
-Refine is built on Matt Pocock's [grilling skill](https://github.com/mattpocock/skills/tree/main/skills/productivity/grilling). The agent interviews you about each question on the map. Every time it asks something, it offers the answer it would pick, so often you only have to say yes. It keeps asking until nothing is left assumed. Factory adds the record-keeping: each question on the map is a task in Linear, and each answer is written down where the agents doing the building will find it.
+Refine is built on Matt Pocock's [grilling skill](https://github.com/mattpocock/skills/tree/main/skills/productivity/grilling). The agent interviews you about each question on the map. Every time it asks something, it offers the answer it would pick, so often you only have to say yes. It keeps asking until nothing is left assumed. Factory adds the record-keeping: each question on the map is a task in [Linear](https://linear.app), and each answer is written down where the agents doing the building will find it.
 
 The agent then slices the work into small tasks on the map, each clear enough to build without asking anything more. POT-103 is to let a host turn reminders off for a dinner. POT-104 is to email the guests at 9am the day before; it can't start until POT-103 is done.
 
@@ -141,7 +141,7 @@ The agent then slices the work into small tasks on the map, each clear enough to
 
 ### <img src="images/icon-implement.svg" alt="" width="26" height="20">Implement
 
-Each small task goes to an agent, which builds it, checks its own work and opens a pull request: a proposed change to the code, ready for someone to look at. Nobody has to watch. In our example, an agent takes POT-103; once that is finished, another takes POT-104.
+Each small task goes to an agent, which builds it, checks its own work and opens a pull request on [GitHub](https://github.com): a proposed change to the code, ready for someone to look at. Nobody has to watch. In our example, an agent takes POT-103; once that is finished, another takes POT-104.
 
 <figure>
 <img src="images/step-implement.svg" width="352" alt="Implement: the small task card POT-104 enters a station with a sloped roof and leaves as a solid block marked PR, a pull request.">
@@ -216,12 +216,12 @@ Filled parts are Factory's own. Outlined parts are tools it connects. The loop c
 Factory's own parts:
 
 - **[Skills](https://github.com/mcwestling/factory#skills):** written instructions for a coding agent, one for each step above. They are the heart of Factory, and you can use them without the other two parts.
-- **[Delegator](https://github.com/mcwestling/factory/tree/main/packages/delegator#readme):** starts the work. When a task in Linear is ready, Delegator opens a workspace on your own computer and puts an agent to work in it.
+- **[Delegator](https://github.com/mcwestling/factory/tree/main/packages/delegator#readme):** starts the work. When a task in [Linear](https://linear.app) is ready, Delegator opens a workspace in [Orca](https://onorca.dev) on your own computer and puts an agent to work in it.
 - **[Verifier](https://github.com/mcwestling/factory/tree/main/packages/verifier#readme):** runs each product's checks, as described above.
 
 The tools it connects:
 
-- **[Linear](https://linear.app):** a task tracker. Every idea and task lives here.
+- **[Linear](https://linear.app):** a task management tool. Every idea and task lives here.
 - **[Orca](https://onorca.dev):** an app that runs several coding agents side by side, each in its own copy of the code.
 - **[GitHub](https://github.com):** where the code is kept, and where pull requests are reviewed and merged.
 
