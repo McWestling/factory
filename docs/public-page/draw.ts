@@ -121,21 +121,21 @@ const issue = (w: number, h: number) =>
 const tilt = (x: number, y: number, r: number, s: string) => `<g transform="translate(${x} ${y}) rotate(${r})">${s}</g>`;
 
 // ---- Journey strip ----
-// What each station hands on: a note, a map (a folded sheet), a stack of smaller tasks, a built block, a checked block, a finished seal.
+// What each station hands on: a note, a map (a folded sheet), a stack of smaller tasks, a built block, a checked block, a smiling face.
 // Each stands on y=0, centred on x=0.
 const sq = `<rect class="a" x="-8" y="-16" width="16" height="16"/>`;
 const task = `<path class="a" d="M-11,-13 L-4,-15 L4,-13 L11,-15 V-2 L4,0 L-4,-2 L-11,0 Z"/><path class="n s-on" d="M-4,-15 V-2 M4,-13 V0" stroke-width="0.8"/>`;
 const stack = `<rect class="n" x="-11" y="-27" width="15" height="9"/><line x1="-11" y1="-24" x2="4" y2="-24" stroke-width="0.8"/><rect class="n" x="-7.5" y="-18" width="15" height="9"/><line x1="-7.5" y1="-15" x2="7.5" y2="-15" stroke-width="0.8"/><rect class="a" x="-4" y="-9" width="15" height="9"/><line class="s-on" x1="-4" y1="-6" x2="11" y2="-6" stroke-width="0.8"/>`;
 const built = `<path class="a" d="M-9,-16 L-4,-21 H12 L7,-16 Z"/><path class="a" d="M7,-16 L12,-21 V-5 L7,0 Z"/><rect class="a" x="-9" y="-16" width="16" height="16"/>`;
 const checked = `${built}<polyline class="n s-on" points="-5.5,-8 -2,-4.500 3.5,-12" stroke-width="1.6"/>`;
-const seal = `<circle class="a" cx="0" cy="-15" r="15"/><polyline class="n s-on" points="-7,-15 -2,-10 7,-21" stroke-width="2"/>`;
+const seal = `<circle class="a" cx="0" cy="-15" r="15"/><path class="n s-on" d="M-5,-21 v3.5 M5,-21 v3.5 M-7.5,-12 Q0,-4.5 7.5,-12" stroke-width="2" stroke-linecap="round"/>`;
 const forms = [sq, task, stack, built, checked, seal];
 // The same heap again, tiny, beside the hopper. The belt script flies its notes from the brown one.
 const pile = `${tilt(30, 80, -8, mail(22, 15))}${tilt(36, 60, -14, issue(20, 16))}${tilt(56, 44, 9, voice(26, 10))}${tilt(70, 80, 6, bubble(20, 16))}<rect class="a" x="42" y="54" width="20" height="20" transform="rotate(-5 52 64)"/><path class="n" d="M74,46 Q95,46 96,71"/><path class="n" d="M91.500,65 L96,72 L100.500,65"/>`;
 const behind = (i: number) => `${lamp(shapes[i].lamp, shapes[i].top, lit[i])}${back(i)}`;
 const station = (i: number) => `${front(i)}${plaque(i, shapes[i].icon, 17, 0.9, 1.6)}${callout(0, -SINK, i + 1)}`;
 
-const stripLabel = "An idea's journey: a sticky note travels along a timeline through six stations, each marked with its icon on a round plaque, and ends as a finished change. An orange lamp is lit on the second, third and fifth stations, where a human decides.";
+const stripLabel = "An idea's journey: a sticky note travels along a timeline through six stations, each marked with its icon on a round plaque, and ends as a smiling face, a happy user. An orange lamp is lit on the second, third and fifth stations, where a human decides.";
 // One layout: where the six stations stand, where the still items sit, and the legs a moving item travels.
 type Leg = { f: number; x: number; y: number; a: number[]; b: number[]; pass?: 1; i?: 0; o?: 0; end?: 1 };
 type Layout = { w: number; h: number; label: string; lines: string; at: number[][]; still: [number, number, number][]; legs: Leg[] };
@@ -264,7 +264,7 @@ const steps: { label: string; into: string; out: string; xs: number[] }[] = [
     xs: [52, 262],
   },
   {
-    label: "Closeout: the checked block enters a square station and leaves as a round seal with a check mark, the finished change.",
+    label: "Closeout: the checked block enters a square station and leaves as a round smiling face, a happy user.",
     into: passed(30),
     out: `<circle class="a" cx="264" cy="${BASE - 26}" r="26"/><polyline class="n s-on" points="252,${BASE - 26} 260,${BASE - 18} 277,${BASE - 37}" stroke-width="3"/>`,
     xs: [52, 264],

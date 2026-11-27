@@ -47,7 +47,7 @@ An idea passes through six steps. At three of them, a human decides.
 <figure>
 <picture data-live>
 <source media="(max-width: 40rem)" srcset="images/journey-tall.svg">
-<img src="images/journey-wide.svg" width="824" alt="An idea's journey: a sticky note travels along a timeline through six stations, each marked with its icon on a round plaque, and ends as a finished change. An orange lamp is lit on the second, third and fifth stations, where a human decides.">
+<img src="images/journey-wide.svg" width="824" alt="An idea's journey: a sticky note travels along a timeline through six stations, each marked with its icon on a round plaque, and ends as a smiling face, a happy user. An orange lamp is lit on the second, third and fifth stations, where a human decides.">
 </picture>
 <figcaption>
 
@@ -58,7 +58,7 @@ An idea moves down the line and leaves each step in a new shape. A lit lamp mark
 3. Refine: a stack of small tasks.
 4. Implement: a built change.
 5. Review: a checked change.
-6. Closeout: a finished one.
+6. Closeout: a happy user.
 
 </figcaption>
 </figure>
@@ -174,12 +174,12 @@ A second agent, the reviewer, took no part in the building. It reads the pull re
 After the merge, an agent tidies up. It marks the task done, confirms that each thing the task asked for was delivered, and runs any steps that had to wait for the merge. It ends with a verdict, "Good to close" or "Not yet", and suggests what to pick up next. With POT-103 and POT-104 both merged, guests get their reminder, and the idea that began as a sticky note, POT-101, is finished.
 
 <figure>
-<img src="images/step-closeout.svg" width="352" alt="Closeout: the checked block enters a square station and leaves as a round seal with a check mark, the finished change.">
+<img src="images/step-closeout.svg" width="352" alt="Closeout: the checked block enters a square station and leaves as a round smiling face, a happy user.">
 <figcaption>
 
 1. A merged change.
 2. An agent confirms everything was delivered.
-3. Finished.
+3. A happy user.
 
 </figcaption>
 </figure>
